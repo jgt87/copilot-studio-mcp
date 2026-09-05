@@ -11,7 +11,7 @@ Plan: `~/.claude/plans/twinkly-inventing-hopper.md` (approved 2026-09-05).
 | 5 Authoring tools | done | topics, knowledge (3 kinds + files), tools (connector/mcp/flow), flows (experimental), triggers, variables, agent/settings edits; naming aligned to pac (`<PascalName>.mcs.yml`, `mcs.metadata`) |
 | 6 Cloud: auth, environments, publish, chat | done (code) | MSAL device-code + interactive; BAP; Dataverse; DirectLine + SDK chat; untested live |
 | 7 Evaluations | done (code) | PPAPI list/run/get/summarize; CSV builder; local conversation tests |
-| 8 Packaging + registration | in progress | README, CLAUDE.md, `.vscode/mcp.json` written; smoke test + registration pending |
+| 8 Packaging + registration | done | README, CLAUDE.md, `.vscode/mcp.json`; stdio smoke test green (33 tools); registered in Claude Code (user scope, connected) and `C:FilesApps.vscodemcp.json` |
 
 ## Verified offline (2026-09-05)
 
