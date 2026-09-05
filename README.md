@@ -50,6 +50,8 @@ with `--environment`). The authoring tools tell you when you are in a pack-only 
 ## Install and register
 
 ```sh
+git clone https://github.com/jgt87/copilot-studio-mcp.git
+cd copilot-studio-mcp
 npm install
 npm run build
 ```
@@ -62,7 +64,7 @@ VS Code (`.vscode/mcp.json` in your workspace, or the user-level `mcp.json`):
     "copilot-studio": {
       "type": "stdio",
       "command": "node",
-      "args": ["C:/Files/Apps/To Copilot Studio MCP/dist/index.js"],
+      "args": ["<path-to-this-repo>/dist/index.js"],
       "env": { "CPS_WORKSPACE": "${workspaceFolder}" }
     }
   }
@@ -72,7 +74,7 @@ VS Code (`.vscode/mcp.json` in your workspace, or the user-level `mcp.json`):
 Claude Code (user scope):
 
 ```sh
-claude mcp add-json copilot-studio '{"type":"stdio","command":"node","args":["C:/Files/Apps/To Copilot Studio MCP/dist/index.js"]}' --scope user
+claude mcp add-json copilot-studio '{"type":"stdio","command":"node","args":["<path-to-this-repo>/dist/index.js"]}' --scope user
 ```
 
 Environment variables (all optional): `CPS_WORKSPACE`, `CPS_TENANT_ID`, `CPS_CLIENT_ID`,

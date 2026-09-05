@@ -25,6 +25,14 @@
   ],
   "license": "MIT",
   "author": "JGT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jgt87/copilot-studio-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jgt87/copilot-studio-mcp/issues"
+  },
+  "homepage": "https://github.com/jgt87/copilot-studio-mcp#readme",
   "engines": {
     "node": ">=20"
   },
