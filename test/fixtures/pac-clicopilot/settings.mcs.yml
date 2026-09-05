@@ -1,0 +1,18 @@
+displayName: "Oracle Cli Agent"
+schemaName: "orc_OracleCliAgent"
+accessControlPolicy: GroupMembership
+authenticationMode: Integrated
+authenticationTrigger: Always
+configuration:
+  authoringModel: CliCopilot
+  recognizer:
+    kind: CLICopilotRecognizer
+  agentSettings:
+    model:
+      series: Sonnet46
+    instructions:
+      segments:
+        - kind: StaticSegment
+          value: ""
+template: cliagent-1.0.0
+language: 1033

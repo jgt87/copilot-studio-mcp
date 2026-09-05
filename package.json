@@ -1,0 +1,45 @@
+{
+  "name": "copilot-studio-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Microsoft Copilot Studio agent development: workspace sync via pac, YAML authoring (topics, knowledge, tools, flows), evaluations and chat-testing",
+  "type": "module",
+  "bin": {
+    "copilot-studio-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "reference"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "npm run build && node --test test/*.test.js",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "copilot-studio",
+    "power-platform",
+    "pac"
+  ],
+  "license": "MIT",
+  "author": "JGT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^6.0.0",
+    "@azure/msal-node-extensions": "^5.5.0",
+    "@microsoft/agents-activity": "^1.8.1",
+    "@microsoft/agents-copilotstudio-client": "^1.8.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "js-yaml": "^5.4.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^26.4.1",
+    "typescript": "^7.0.2"
+  }
+}
