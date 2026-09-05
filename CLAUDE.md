@@ -115,6 +115,10 @@ stdout is the MCP transport. All diagnostics go through `log()` to stderr.
   agent. `readDeploymentSettings` keeps the raw object so a rewrite never drops fields.
 - js-yaml 5 has no default export: `import * as yaml from "js-yaml"`.
 - Heredocs in the Bash tool break on non-ASCII characters; keep sources ASCII or use the Write tool.
+- `repowise update` rewrites the `repowise` entry in `.vscode/mcp.json` with an absolute path. The
+  committed form uses `${workspaceFolder}`; restore it before committing (`git diff .vscode/mcp.json`).
+- Mermaid on GitHub: no edges to subgraph ids, no `<-->`, no cylinder `[( )]` shapes, no labelled
+  self-loops; the "How it fits together" diagram failed to render with those.
 
 ## Validation policy
 

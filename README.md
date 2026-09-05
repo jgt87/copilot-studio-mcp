@@ -262,34 +262,53 @@ authentication section) and, like the other cloud calls, have not been verified 
 
 ```mermaid
 flowchart LR
-    subgraph Client["Coding agent"]
-        VS["VS Code / GitHub Copilot"]
-        CC["Claude Code"]
+    VS["VS Code / GitHub Copilot"] --> TOOLS
+    CC["Claude Code"] --> TOOLS
+    subgraph SERVER["copilot-studio-mcp"]
+        TOOLS["MCP tool call"] --> SYNC["Sync layer: pac copilot"]
+        TOOLS --> AUTH["Authoring layer: YAML + schema validation"]
+        TOOLS --> CLOUD["Cloud layer: evaluations, publish, chat"]
     end
-    subgraph MCP["copilot-studio-mcp"]
-        SYNC["Sync<br/>pac copilot"]
-        AUTH["Authoring<br/>YAML + schema validation"]
-        CLOUD["Cloud<br/>evaluations, publish, chat"]
-    end
-    WS[("Agent workspace<br/>topics/, knowledge/, actions/, workflows/")]
-    DV["Dataverse / Copilot Studio"]
-    PPAPI["Power Platform API"]
-    DL["Published agent<br/>DirectLine / SDK"]
-
-    VS --> MCP
-    CC --> MCP
-    AUTH <--> WS
-    SYNC <--> WS
-    SYNC <--> DV
-    CLOUD --> PPAPI
+    AUTH --> WS["Agent workspace on disk: topics, knowledge, actions, workflows"]
+    SYNC --> WS
+    SYNC --> DV["Dataverse / Copilot Studio"]
+    CLOUD --> PPAPI["Power Platform API"]
     CLOUD --> DV
-    CLOUD --> DL
+    CLOUD --> DL["Published agent: DirectLine or SDK"]
 ```
 
 ## Typical flows
 
 All diagrams, including existing-agent sync, chat routing and the connection step for tools, are in
-[docs/flows.md](docs/flows.md).
+[docs/flows.md](docs/flows.md). Each step below is one MCP tool; the table maps it to what a maker
+would do in Copilot Studio for the same result.
+
+### What each step does in Copilot Studio
+
+| Step (MCP tool) | The same action in Copilot Studio | How the server does it |
+| --- | --- | --- |
+| `cs_doctor` | nothing in the portal; checks pac, .NET, the pac profile and sign-in on your machine | local checks |
+| `cs_list_solutions`, `cs_create_solution` | Power Apps maker portal > Solutions: pick or create the unmanaged solution the agent lives in | `pac solution list`; empty manifest packed and imported |
+| `cs_init_agent` (with `environment`, `solutionName`) | Copilot Studio > Create > New agent, saved into that solution; the agent appears with its default system topics | `pac copilot init`, `pack`, `pac solution import`, `pac copilot clone` |
+| `cs_generate_instructions` | Overview > Instructions: the portal's "generate with AI" step, using your AI Builder prompt | `pac copilot model predict`, then `agent.mcs.yml` |
+| `cs_update_agent` | Overview: instructions, conversation starters, model | edit `agent.mcs.yml` |
+| `cs_add_topic` | Topics > Add a topic > From blank: trigger phrases and the message, question, condition and redirect nodes | YAML in `topics/` |
+| `cs_add_knowledge_source` | Knowledge > Add knowledge: public website, SharePoint, Graph connector, or file upload | YAML in `knowledge/`, files in `knowledge/files/` |
+| `cs_list_connectors`, `cs_describe_connector` | Tools > Add a tool: the connector picker and its list of actions | Power Apps connector registry |
+| `cs_add_tool` | Tools > Add a tool: connector action, MCP server, flow, prompt or agent, everything except the "Connect" sign-in | YAML in `actions/` plus `connectionreferences.mcs.yml` |
+| `cs_add_flow`, `cs_add_trigger`, `cs_add_variable` | Tools > New agent flow; Triggers > Add trigger; Settings > Variables | files in `workflows/`, `trigger/`, `variables/` |
+| `cs_validate` | the errors the portal would show on save, before anything is sent | schema and cross-file checks |
+| `cs_push` | Save: the draft agent in the portal now shows your topics, knowledge and tools | `pac copilot push` |
+| (portal step) | Tools > the new tool > Connect: sign in once so the connection exists | manual, then `cs_pull` |
+| `cs_pull` | refresh the local files from the draft agent | `pac copilot pull` |
+| `cs_publish` | the Publish button | `pac copilot publish` or Dataverse `PvaPublish` |
+| `cs_chat`, `cs_run_conversation_tests` | the Test pane, against the published agent | DirectLine or the Copilot Studio client SDK |
+| `cs_create_test_set_csv` | Evaluation > New evaluation > Import (file) | CSV in the import format |
+| `cs_list_test_sets`, `cs_run_evaluation`, `cs_get_evaluation_run` | Evaluation page: the test sets, Run, and the results view | Power Platform API |
+| `cs_pull_solution` | Solutions > Export (unmanaged and managed), plus cloning each agent | `pac solution export`, `unpack`, `pac copilot clone` |
+| `cs_create_deployment_settings` | the connection and environment variable mapping step of the import wizard | `pac solution create-settings` |
+| `cs_deploy_solution` | Solutions > Import in the target environment, then Publish on each agent | `pac solution import`, `pac copilot publish` |
+| `cs_snapshot_environment`, `cs_compare_*` | no portal equivalent: a side-by-side of what each environment holds | `pac copilot clone` per agent plus Dataverse reads |
 
 New agent (standard harness):
 

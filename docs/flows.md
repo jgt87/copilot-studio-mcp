@@ -7,32 +7,21 @@ Steps marked **confirm** only run when called with `confirm: true`; otherwise th
 
 ```mermaid
 flowchart LR
-    subgraph Client["Coding agent"]
-        VS["VS Code / GitHub Copilot agent mode"]
-        CC["Claude Code"]
+    VS["VS Code / GitHub Copilot agent mode"] --> TOOLS
+    CC["Claude Code"] --> TOOLS
+    subgraph SERVER["copilot-studio-mcp (stdio)"]
+        TOOLS["MCP tool call"] --> SYNC["Sync layer: pac copilot init, clone, pull, push, pack, publish"]
+        TOOLS --> AUTH["Authoring layer: topics, knowledge, tools, flows, triggers, variables; schema validation"]
+        TOOLS --> CLOUD["Cloud layer: MSAL, Power Platform API, Dataverse, BAP, DirectLine, SDK"]
     end
-    subgraph MCP["copilot-studio-mcp (stdio)"]
-        SYNC["Sync layer<br/>pac copilot init / clone / pull / push / pack / publish"]
-        AUTH["Authoring layer<br/>topics, knowledge, tools, flows, triggers, variables<br/>schema validation"]
-        CLOUD["Cloud layer<br/>MSAL + Power Platform API, Dataverse, BAP, DirectLine / SDK"]
-    end
-    WS[("Agent workspace<br/>agent.mcs.yml, settings.mcs.yml,<br/>topics/, knowledge/, actions/, workflows/")]
-    PAC["pac CLI"]
-    DV["Dataverse<br/>(agent definition)"]
-    CS["Copilot Studio portal"]
-    PPAPI["Power Platform API<br/>evaluations"]
-    DL["DirectLine / Copilot Studio client<br/>published agent"]
-
-    VS --> MCP
-    CC --> MCP
-    AUTH <--> WS
-    SYNC --> PAC
-    PAC <--> WS
-    PAC <--> DV
-    DV <--> CS
-    CLOUD --> PPAPI
+    AUTH --> WS["Agent workspace on disk: agent.mcs.yml, settings.mcs.yml, topics, knowledge, actions, workflows"]
+    SYNC --> PAC["pac CLI"]
+    PAC --> WS
+    PAC --> DV["Dataverse: the agent definition"]
+    DV --> CS["Copilot Studio portal"]
+    CLOUD --> PPAPI["Power Platform API: evaluations"]
     CLOUD --> DV
-    CLOUD --> DL
+    CLOUD --> DL["Published agent: DirectLine or Copilot Studio client"]
 ```
 
 ## Flow 1: new agent from scratch (standard harness)
@@ -61,6 +50,22 @@ Without `environment`, `cs_init_agent` scaffolds locally and `cs_pack` + `cs_imp
 it; on that path only settings, agent and topics are packaged (verified with pac 2.11.2), so add
 knowledge and tools after cloning the imported agent.
 
+| Step (MCP tool) | The same action in Copilot Studio |
+| --- | --- |
+| `cs_doctor`, `pac auth create` | none in the portal; signing in to Power Platform from your machine |
+| `cs_list_solutions`, `cs_create_solution` | Power Apps maker portal > Solutions: choose or create the solution the agent lives in |
+| `cs_init_agent` | Copilot Studio > Create > New agent (name, publisher) inside that solution; the default system topics are created |
+| `cs_generate_instructions` | Overview > Instructions, generated with AI and then reviewed |
+| `cs_add_topic` | Topics > Add a topic > From blank; trigger phrases and nodes in the authoring canvas |
+| `cs_add_knowledge_source` | Knowledge > Add knowledge (public website, SharePoint, Graph connector, files) |
+| `cs_add_tool` | Tools > Add a tool: pick the connector action, MCP server, flow, prompt or agent |
+| `cs_validate` | the validation the portal runs when you save a node or topic |
+| `cs_push` | Save: the draft agent in the portal reflects the local files |
+| portal: authorise the connection | Tools > the tool > Connect: sign in to the connector once |
+| `cs_pull` | refresh the local files with what the portal now holds (the connection id) |
+| `cs_publish` | Publish |
+| `cs_chat` | the Test pane against the published agent |
+
 ## Flow 2: existing agent
 
 ```mermaid
@@ -77,6 +82,16 @@ flowchart TD
     H -- ok --> I["cs_publish confirm"]
 ```
 
+| Step (MCP tool) | The same action in Copilot Studio |
+| --- | --- |
+| `cs_list_environments`, `cs_list_agents` | the environment picker and the Agents list |
+| `cs_clone_agent` | opening the agent and getting its full definition as files (what the VS Code extension's Clone does) |
+| `cs_describe_workspace` | reading the Overview, Topics, Knowledge and Tools pages at once |
+| `cs_add_*`, `cs_update_agent` | editing topics, knowledge, tools and instructions in the portal |
+| `cs_pull` | picking up edits other makers made in the portal since the clone |
+| `cs_validate`, `cs_push` | Save |
+| `cs_publish` | Publish |
+
 ## Flow 3: evaluation loop
 
 The evaluation API can list and run test sets but not create them, so the import happens once in the
@@ -91,8 +106,18 @@ flowchart TD
     E --> F{"failures?"}
     F -- yes --> G["fix topics / instructions / knowledge"] --> H["cs_push confirm"] --> D
     F -- no --> I["cs_publish confirm"]
-    D -. "20 runs per agent per 24 h" .-> D
 ```
+
+The evaluation API allows 20 runs per agent per 24 hours.
+
+| Step (MCP tool) | The same action in Copilot Studio |
+| --- | --- |
+| `cs_create_test_set_csv` | Evaluation > New evaluation > Single responses > Import: the CSV you would fill in by hand |
+| portal import | Evaluation > Import the CSV, choose test methods, Save (the one step the API cannot do) |
+| `cs_list_test_sets` | the Test sets list on the Evaluation page |
+| `cs_run_evaluation` | Run on a test set (draft or published agent) |
+| `cs_get_evaluation_run` | the results view: per test case, per test method, pass or fail |
+| `cs_push`, `cs_publish` | Save and Publish after fixing what failed |
 
 ## Flow 4: chat-testing a published agent
 
@@ -110,6 +135,12 @@ flowchart TD
     G -- yes --> H["signInUrl returned; complete sign-in, resend"]
     G -- no --> I["expectations: contains / notContains / regex / minLength"]
 ```
+
+| Step (MCP tool) | The same action in Copilot Studio |
+| --- | --- |
+| `cs_chat` | typing in the Test pane; the published agent answers through its web channel (DirectLine) or, for Entra-SSO agents, the same path a custom app uses (Copilot Studio client) |
+| sign-in card | the "Sign in" card the Test pane shows for authenticated agents |
+| `cs_run_conversation_tests` | repeating a scripted set of Test pane conversations and checking the answers |
 
 ## Flow 5: adding a tool that needs a connection
 
@@ -150,9 +181,19 @@ flowchart TD
     F -- no --> G["cs_deploy_solution confirm<br/>pac solution import with settings file"]
     G --> H["publish each agent in the target<br/>(automatic)"]
     H --> I["portal checks: tool connections,<br/>knowledge outside the solution, channels"]
-    C -. "edit agents/<name> workspaces,<br/>cs_push to the source" .-> C
-    C -. "edit src/ then cs_pack_solution" .-> G
+    C -.-> J["optional edits before deploying:<br/>agents/name workspaces (cs_push to the source),<br/>or src/ then cs_pack_solution"]
+    J -.-> G
 ```
+
+| Step (MCP tool) | The same action in Copilot Studio / Power Apps |
+| --- | --- |
+| `cs_list_solutions` | Power Apps maker portal > Solutions in the source environment |
+| `cs_describe_solution` | opening the solution and reading its component list (agents, flows, connection references, environment variables) |
+| `cs_pull_solution` | Solutions > Export solution (unmanaged and managed), plus opening each agent in Copilot Studio; the agents come down as editable workspaces |
+| `cs_list_connections` | Power Automate or Power Apps > Connections in the target environment |
+| `cs_create_deployment_settings` | the "Connections" and "Environment variables" pages of the Import solution wizard, filled in ahead of time |
+| `cs_deploy_solution` | Solutions > Import solution in the target, then Publish on each agent in Copilot Studio |
+| portal checks | Copilot Studio > agent > Tools (Connect), Knowledge, Channels in the target |
 
 ## Flow 7: compare environments in a DTAP pipeline
 
@@ -180,6 +221,13 @@ flowchart LR
 ```
 
 `cs_compare_environments` runs the whole chain in one call.
+
+| Step (MCP tool) | The same action in Copilot Studio / Power Apps |
+| --- | --- |
+| `cs_snapshot_environment` | opening each agent in every environment and noting its topics, knowledge, tools and publish state; Solutions > version; Power Automate > flow state; Connections; environment variable values |
+| `cs_compare_snapshots` | comparing those notes by hand between two environments (no portal feature does this) |
+| `cs_compare_environments` | the same across the whole DEV, TEST, ACC, PROD chain |
+| follow-up | promote again with the solution flow, fix deployment settings, or Publish in the stage that has unpublished changes |
 
 ## The confirm contract
 
