@@ -1,11 +1,32 @@
 /**
- * Tools (`actions/<name>.mcs.yml`): connector actions, MCP servers, and cloud
- * flows, plus the connection-reference registry file.
+ * Tools (`actions/<name>.mcs.yml`): every TaskAction kind the schema knows,
+ * either as a typed spec (connector, MCP, flow, prompt, connected agent,
+ * child agent) or as a raw action for the rest, plus the connection-reference
+ * registry file.
  */
 import fs from "node:fs";
 import path from "node:path";
 import * as yaml from "js-yaml";
 import { newId, pascal, readYamlFile, writeComponentFile, yamlDump } from "./util.js";
+
+/**
+ * How each schema TaskAction kind is exposed. `typed` kinds have a dedicated
+ * spec in cs_add_tool; `raw` kinds are written through `type: "raw"` with the
+ * action object supplied by the caller. A test compares this table with the
+ * schema so a new kind cannot appear without being classified here.
+ */
+export const TOOL_KIND_SUPPORT: Record<string, "typed" | "raw"> = {
+  InvokeConnectorTaskAction: "typed",
+  InvokeExternalAgentTaskAction: "typed",
+  InvokeFlowTaskAction: "typed",
+  InvokeAIBuilderModelTaskAction: "typed",
+  InvokeConnectedAgentTaskAction: "typed",
+  InvokeAgentTaskAction: "typed",
+  InvokeAIPluginTaskAction: "raw",
+  InvokeSkillTaskAction: "raw",
+  InvokeClientTaskAction: "raw",
+  InvokeComputerUsingAgentTaskAction: "raw",
+};
 
 export type ToolInput =
   | { kind: "automatic"; name: string; description: string; entity?: string; shouldPromptUser?: boolean }
@@ -45,11 +66,37 @@ export interface FlowToolSpec extends ToolSpecBase {
   flowId: string;
 }
 
-export type ToolSpec = ConnectorToolSpec | McpToolSpec | FlowToolSpec;
+export interface PromptToolSpec extends ToolSpecBase {
+  type: "prompt";
+  /** AI Builder model id (from cs_list_prompts) */
+  aiModelId: string;
+}
+
+export interface ConnectedAgentToolSpec extends ToolSpecBase {
+  type: "connected-agent";
+  /** Schema name of the other Copilot Studio agent */
+  botSchemaName: string;
+  shouldSendStartConversation?: boolean;
+}
+
+export interface ChildAgentToolSpec extends ToolSpecBase {
+  type: "child-agent";
+  /** Schema name of the child agent's GPT component, e.g. <agent>.gpt.<Name> */
+  gptComponentSchemaName: string;
+}
+
+export interface RawToolSpec extends ToolSpecBase {
+  type: "raw";
+  /** Full TaskAction object, e.g. { kind: "InvokeSkillTaskAction", skillId, actionId } */
+  action: Record<string, unknown>;
+}
+
+export type ToolSpec = ConnectorToolSpec | McpToolSpec | FlowToolSpec | PromptToolSpec | ConnectedAgentToolSpec | ChildAgentToolSpec | RawToolSpec;
 
 export interface ToolResult {
   file: string;
   componentName: string;
+  actionKind: string;
   connectionReference: string | null;
   connectionReferencesFile: string | null;
   portalStep: string | null;
@@ -114,6 +161,15 @@ export function upsertConnectionReference(root: string, entry: ConnectionReferen
   return file;
 }
 
+/** Connector name (shared_x) from a connection reference logical name such as `<schema>.shared_x.abc123`. */
+export function connectorFromReference(logicalName: string, entries: ConnectionReferenceEntry[] = []): string | null {
+  const entry = entries.find((e) => e.connectionReferenceLogicalName === logicalName);
+  const fromEntry = entry?.connectorId?.split("/").pop();
+  if (fromEntry) return fromEntry;
+  const m = /(shared_[a-z0-9_]+)/i.exec(logicalName);
+  return m ? m[1] : null;
+}
+
 export function addTool(root: string, spec: ToolSpec, agentSchemaName?: string): ToolResult {
   const componentName = pascal(spec.name);
   const header = [`Name: ${spec.name}`, `Description: ${spec.description}`];
@@ -130,48 +186,64 @@ export function addTool(root: string, spec: ToolSpec, agentSchemaName?: string):
   let connectionReference: string | null = null;
   let crFile: string | null = null;
   let portalStep: string | null = null;
+  let action: Record<string, unknown>;
 
-  if (spec.type === "flow") {
-    doc.action = { kind: "InvokeFlowTaskAction", flowId: spec.flowId };
-  } else {
-    const prefix = agentSchemaName ?? "<AGENT_SCHEMA>";
-    connectionReference = spec.connectionReference ?? `${prefix}.${spec.connectorId}.${newId("x").slice(2).toLowerCase()}`;
-    const existing = readConnectionReferences(root).entries.find((e) => e.connectionReferenceLogicalName === connectionReference);
-    crFile = upsertConnectionReference(root, {
-      connectionReferenceLogicalName: connectionReference,
-      connectorId: existing?.connectorId ?? spec.connectorId,
-      displayName: existing?.displayName ?? `${spec.name} connection`,
-      ...(existing?.connectionId ? { connectionId: existing.connectionId } : {}),
-    });
-    if (!existing?.connectionId) {
-      portalStep = [
-        `Connector '${spec.connectorId}' needs an authorised connection before this tool can run.`,
-        "In Copilot Studio open the agent > Tools > Add a tool, pick the same connector/operation, sign in to create the connection, then pull the workspace so the connection id lands in connectionreferences.mcs.yml.",
-        "Alternatively bind the connection reference after pushing, in the agent's Tools page.",
-      ].join(" ");
+  switch (spec.type) {
+    case "flow":
+      action = { kind: "InvokeFlowTaskAction", flowId: spec.flowId };
+      break;
+    case "prompt":
+      action = { kind: "InvokeAIBuilderModelTaskAction", aIModelId: spec.aiModelId };
+      break;
+    case "connected-agent":
+      action = { kind: "InvokeConnectedAgentTaskAction", botSchemaName: spec.botSchemaName, ...(spec.shouldSendStartConversation === undefined ? {} : { shouldSendStartConversation: spec.shouldSendStartConversation }) };
+      break;
+    case "child-agent":
+      action = { kind: "InvokeAgentTaskAction", gptComponentSchemaName: spec.gptComponentSchemaName };
+      break;
+    case "raw": {
+      if (typeof spec.action.kind !== "string") throw new Error("raw tool needs action.kind");
+      if (!(spec.action.kind in TOOL_KIND_SUPPORT)) throw new Error(`Unknown TaskAction kind '${spec.action.kind}'. Known: ${Object.keys(TOOL_KIND_SUPPORT).join(", ")}`);
+      action = spec.action;
+      const cr = spec.action.connectionReference;
+      if (typeof cr === "string") connectionReference = cr;
+      break;
     }
-    if (spec.type === "connector") {
-      doc.action = {
-        kind: "InvokeConnectorTaskAction",
-        connectionReference,
-        connectionProperties: { mode: spec.connectionMode ?? "Invoker" },
-        operationId: spec.operationId,
-      };
-    } else {
-      doc.action = {
-        kind: "InvokeExternalAgentTaskAction",
-        connectionReference,
-        connectionProperties: { mode: spec.connectionMode ?? "Invoker" },
-        operationDetails: { kind: "ModelContextProtocolMetadata", operationId: spec.operationId ?? "InvokeMCP" },
-      };
+    case "connector":
+    case "mcp": {
+      const prefix = agentSchemaName ?? "<AGENT_SCHEMA>";
+      connectionReference = spec.connectionReference ?? `${prefix}.${spec.connectorId}.${newId("x").slice(2).toLowerCase()}`;
+      const existing = readConnectionReferences(root).entries.find((e) => e.connectionReferenceLogicalName === connectionReference);
+      crFile = upsertConnectionReference(root, {
+        connectionReferenceLogicalName: connectionReference,
+        connectorId: existing?.connectorId ?? spec.connectorId,
+        displayName: existing?.displayName ?? `${spec.name} connection`,
+        ...(existing?.connectionId ? { connectionId: existing.connectionId } : {}),
+      });
+      if (!existing?.connectionId) {
+        portalStep = [
+          `Connector '${spec.connectorId}' needs an authorised connection before this tool can run.`,
+          "In Copilot Studio open the agent > Tools > Add a tool, pick the same connector/operation, sign in to create the connection, then pull the workspace so the connection id lands in connectionreferences.mcs.yml.",
+          "Alternatively bind the connection reference after pushing, in the agent's Tools page.",
+        ].join(" ");
+      }
+      action =
+        spec.type === "connector"
+          ? { kind: "InvokeConnectorTaskAction", connectionReference, connectionProperties: { mode: spec.connectionMode ?? "Invoker" }, operationId: spec.operationId }
+          : { kind: "InvokeExternalAgentTaskAction", connectionReference, connectionProperties: { mode: spec.connectionMode ?? "Invoker" }, operationDetails: { kind: "ModelContextProtocolMetadata", operationId: spec.operationId ?? "InvokeMCP" } };
+      break;
     }
+    default:
+      throw new Error(`Unknown tool type ${(spec as { type: string }).type}`);
   }
+  doc.action = action;
   doc.outputMode = spec.outputMode ?? "All";
 
   const file = writeComponentFile(path.join(root, "actions", `${pascal(spec.name)}.mcs.yml`), header, doc, { overwrite: spec.overwrite });
   return {
     file,
     componentName,
+    actionKind: String(action.kind),
     connectionReference,
     connectionReferencesFile: crFile,
     portalStep,

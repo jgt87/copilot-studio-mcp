@@ -100,6 +100,9 @@ try {
   const pac = await callTool("cs_pac", { args: ["solution", "import", "--path", "x.zip"] });
   check("cs_pac requires confirm for mutations", pac.json?.dryRun === true);
 
+  const connectors = await callTool("cs_list_connectors", { offline: true, search: "Office 365 Outlook" });
+  check("cs_list_connectors offline seed", connectors.json?.connectors?.[0]?.name === "shared_office365", connectors.json?.source);
+
   const fixtureSolution = path.join(here, "..", "test", "fixtures", "unpacked-solution");
   const deploy = await callTool("cs_deploy_solution", { targetEnvironment: "00000000-0000-0000-0000-000000000000", zip: "nonexistent.zip", srcFolder: fixtureSolution });
   check("cs_deploy_solution dry-run without confirm", deploy.json?.dryRun === true, deploy.json?.wouldDo?.slice(0, 60));

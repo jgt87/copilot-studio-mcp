@@ -63,6 +63,13 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   per-stage differences (connection bindings, variable values, managed flag). Dataverse reads for
   flows / connection references / variables / publish state are optional and use a silent token only.
 
+- **Catalog** (`src/catalog.ts`): connector registry and OpenAPI definitions from `api.powerapps.com`
+  (PowerApps Service token), cached under `.cs-catalog/<environment>/`; `parseSwaggerOperations`
+  flattens body schemas into parameters and detects MCP endpoints by `x-ms-agentic-protocol`;
+  `reference/connectors-seed.json` is the offline name-to-id seed (regenerate from the public
+  connector reference page when stale). `TOOL_KIND_SUPPORT` in `authoring/tools.ts` classifies every
+  schema `TaskAction` kind; `test/catalog.test.js` fails when the schema and that table diverge.
+
 Cross-cutting behaviour in `src/index.ts`:
 
 - **Confirm contract**: every tool that mutates a live environment (`cs_push`, `cs_publish`,

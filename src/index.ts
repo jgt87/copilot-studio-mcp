@@ -28,7 +28,23 @@ import { describeWorkspace, findWorkspaceRoot, readWorkspace, type WorkspaceInfo
 import { listKinds, lookupDefinition, resolveDefinition, schemaPath, searchDefinitions, summarizeDefinition, validateDocument, type Diagnostic } from "./schema.js";
 import { addTopic, type ActionSpec, type TopicSpec } from "./authoring/topics.js";
 import { addKnowledgeSource } from "./authoring/knowledge.js";
-import { addTool, readConnectionReferences, type ToolSpec } from "./authoring/tools.js";
+import { addTool, connectorFromReference, readConnectionReferences, type ToolSpec } from "./authoring/tools.js";
+import {
+  catalogDir,
+  checkOperation,
+  fetchConnectorList,
+  fetchConnectorSwagger,
+  inputsFromOperation,
+  listPrompts,
+  loadSeed,
+  readConnectorDefinition,
+  readConnectorList,
+  searchConnectors,
+  toDefinition,
+  writeConnectorDefinition,
+  writeConnectorList,
+  type ConnectorDefinition,
+} from "./catalog.js";
 import { scaffoldFlow } from "./authoring/flows.js";
 import { addTrigger } from "./authoring/triggers.js";
 import { addGlobalVariable } from "./authoring/variables.js";
@@ -181,7 +197,8 @@ function validateWorkspaceFiles(root: string, only?: string): { files: { file: s
     }
     for (const n of ["agent.mcs.yml", "agent.mcs.yaml"]) if (fs.existsSync(path.join(root, n))) files.push(path.join(root, n));
   }
-  const crNames = new Set(readConnectionReferences(root).entries.map((e) => e.connectionReferenceLogicalName));
+  const crEntries = readConnectionReferences(root).entries;
+  const crNames = new Set(crEntries.map((e) => e.connectionReferenceLogicalName));
   const topicNames = new Set(ws.topics.map((t) => t.name.replace(/[^A-Za-z0-9]/g, "")));
   let errors = 0;
   let warnings = 0;
@@ -202,6 +219,15 @@ function validateWorkspaceFiles(root: string, only?: string): { files: { file: s
       const cr = action?.connectionReference;
       if (typeof cr === "string" && cr.includes("<AGENT_SCHEMA>")) diagnostics.push({ severity: "error", message: "connectionReference still contains <AGENT_SCHEMA>" });
       else if (typeof cr === "string" && crNames.size && !crNames.has(cr)) diagnostics.push({ severity: "warning", message: `connectionReference '${cr}' is not listed in connectionreferences.mcs.yml` });
+      // Catalog check: does the operation exist on the connector (when its definition is cached)?
+      if (action?.kind === "InvokeConnectorTaskAction" && typeof cr === "string" && typeof action.operationId === "string") {
+        const connector = connectorFromReference(cr, crEntries);
+        if (connector) {
+          const chk = checkOperation(catalogDir(root), ws.sync.environmentId, connector, action.operationId);
+          if (chk.known && chk.operationFound === false) diagnostics.push({ severity: "warning", message: chk.message ?? "operation not found in catalog" });
+          else if (!chk.known) diagnostics.push({ severity: "info", message: chk.message ?? "no catalog" });
+        }
+      }
       const refs: string[] = [];
       const walk = (n: unknown) => {
         if (Array.isArray(n)) return n.forEach(walk);
@@ -747,21 +773,26 @@ const toolInput = z.union([
 server.registerTool(
   "cs_add_tool",
   {
-    title: "Add a tool (connector, MCP server, or flow)",
+    title: "Add a tool (connector, MCP server, flow, prompt, agent, or raw)",
     description:
-      "Create actions/<name>.mcs.yml. type 'connector': a Power Platform connector operation (connectorId like shared_office365, operationId like SendEmailV2). type 'mcp': an MCP server exposed through a connector. type 'flow': a cloud flow by id. Connector and MCP tools need a connection that only the portal can authorise; the tool writes the connection-reference stub and returns the portal step.",
+      "Create actions/<name>.mcs.yml. type 'connector': a connector operation (connectorId like shared_office365, operationId like SendEmailV2; use cs_list_connectors / cs_describe_connector to find them). type 'mcp': an MCP server exposed through a connector. type 'flow': a cloud flow by id. type 'prompt': an AI Builder prompt by model id (cs_list_prompts). type 'connected-agent': another Copilot Studio agent by schema name. type 'child-agent': a child agent's GPT component. type 'raw': any other TaskAction kind with the action object supplied. When the connector definition is cached, the operationId is checked and required inputs are filled from the catalog unless inputs are given. Connector and MCP tools need a connection that only the portal can authorise; the tool writes the connection-reference stub and returns the portal step.",
     inputSchema: {
       workspace: workspaceArg,
-      type: z.enum(["connector", "mcp", "flow"]),
+      type: z.enum(["connector", "mcp", "flow", "prompt", "connected-agent", "child-agent", "raw"]),
       name: z.string(),
       description: z.string().describe("Also used as modelDescription unless overridden; the orchestrator routes on it"),
       modelDescription: z.string().optional(),
-      connectorId: z.string().optional(),
+      connectorId: z.string().optional().describe("shared_<name> or a display name from the catalog"),
       operationId: z.string().optional(),
       connectionReference: z.string().optional().describe("Existing logical name from connectionreferences.mcs.yml"),
       connectionMode: z.enum(["Invoker", "Maker"]).optional().describe("Invoker = end user's connection; Maker = the maker's shared connection"),
       flowId: z.string().optional(),
+      aiModelId: z.string().optional().describe("type prompt: AI Builder model id"),
+      botSchemaName: z.string().optional().describe("type connected-agent"),
+      gptComponentSchemaName: z.string().optional().describe("type child-agent"),
+      action: z.record(z.unknown()).optional().describe("type raw: full TaskAction object with kind"),
       inputs: z.array(toolInput).optional(),
+      inputsFromCatalog: z.boolean().optional().describe("Default true: when no inputs are given and the connector definition is cached, add automatic inputs for the operation's required parameters"),
       outputs: z.array(z.string()).optional(),
       overwrite: z.boolean().optional(),
     },
@@ -770,25 +801,174 @@ server.registerTool(
     try {
       const root = resolveRoot(a.workspace);
       const ws = readWorkspace(root);
+      const catalog: Record<string, unknown> = {};
       let spec: ToolSpec;
-      if (a.type === "flow") {
-        if (!a.flowId) return fail("flowId is required for type 'flow'");
-        spec = { type: "flow", name: a.name, description: a.description, modelDescription: a.modelDescription, flowId: a.flowId, inputs: a.inputs, outputs: a.outputs, overwrite: a.overwrite };
-      } else if (a.type === "connector") {
-        if (!a.connectorId || !a.operationId) return fail("connectorId and operationId are required for type 'connector'");
-        spec = { type: "connector", name: a.name, description: a.description, modelDescription: a.modelDescription, connectorId: a.connectorId, operationId: a.operationId, connectionReference: a.connectionReference, connectionMode: a.connectionMode, inputs: a.inputs, outputs: a.outputs, overwrite: a.overwrite };
-      } else {
-        if (!a.connectorId) return fail("connectorId is required for type 'mcp' (the connector that wraps the MCP server)");
-        spec = { type: "mcp", name: a.name, description: a.description, modelDescription: a.modelDescription, connectorId: a.connectorId, operationId: a.operationId, connectionReference: a.connectionReference, connectionMode: a.connectionMode, inputs: a.inputs, overwrite: a.overwrite };
+      let inputs = a.inputs;
+      let connectorId = a.connectorId;
+      if (connectorId && !/^shared_/i.test(connectorId) && !/^[a-z0-9_]+$/i.test(connectorId)) {
+        // Display name given: resolve through the cached list or the seed.
+        const cached = ws.sync.environmentId ? readConnectorList(catalogDir(root), ws.sync.environmentId)?.connectors : null;
+        const hit = searchConnectors(connectorId, cached ?? loadSeed());
+        if (hit.length === 1) {
+          catalog.resolvedConnector = { from: connectorId, to: hit[0].name, displayName: hit[0].displayName };
+          connectorId = hit[0].name;
+        } else return fail(`connectorId '${connectorId}' is ambiguous or unknown (${hit.length} matches: ${hit.slice(0, 8).map((h) => h.name).join(", ")}). Use cs_list_connectors and pass the shared_ name.`);
+      }
+      if (a.type === "connector" && connectorId && a.operationId) {
+        const chk = checkOperation(catalogDir(root), ws.sync.environmentId, connectorId, a.operationId);
+        catalog.operationCheck = chk;
+        if (chk.known && chk.operationFound === false) return fail(chk.message ?? "operation not found in the cached connector definition");
+        if (chk.known && (!inputs || inputs.length === 0) && a.inputsFromCatalog !== false) {
+          const def = readConnectorDefinition(catalogDir(root), ws.sync.environmentId, connectorId);
+          const op = def?.operations.find((o) => o.operationId === a.operationId);
+          if (op) {
+            inputs = inputsFromOperation(op);
+            catalog.inputsFromCatalog = inputs.map((i) => i.name);
+          }
+        }
+      }
+      const base = { name: a.name, description: a.description, modelDescription: a.modelDescription, inputs, outputs: a.outputs, overwrite: a.overwrite };
+      switch (a.type) {
+        case "flow":
+          if (!a.flowId) return fail("flowId is required for type 'flow'");
+          spec = { ...base, type: "flow", flowId: a.flowId };
+          break;
+        case "connector":
+          if (!connectorId || !a.operationId) return fail("connectorId and operationId are required for type 'connector'");
+          spec = { ...base, type: "connector", connectorId, operationId: a.operationId, connectionReference: a.connectionReference, connectionMode: a.connectionMode };
+          break;
+        case "mcp":
+          if (!connectorId) return fail("connectorId is required for type 'mcp' (the connector that wraps the MCP server)");
+          spec = { ...base, type: "mcp", connectorId, operationId: a.operationId, connectionReference: a.connectionReference, connectionMode: a.connectionMode };
+          break;
+        case "prompt":
+          if (!a.aiModelId) return fail("aiModelId is required for type 'prompt' (see cs_list_prompts)");
+          spec = { ...base, type: "prompt", aiModelId: a.aiModelId };
+          break;
+        case "connected-agent":
+          if (!a.botSchemaName) return fail("botSchemaName is required for type 'connected-agent'");
+          spec = { ...base, type: "connected-agent", botSchemaName: a.botSchemaName };
+          break;
+        case "child-agent":
+          if (!a.gptComponentSchemaName) return fail("gptComponentSchemaName is required for type 'child-agent'");
+          spec = { ...base, type: "child-agent", gptComponentSchemaName: a.gptComponentSchemaName };
+          break;
+        default:
+          if (!a.action) return fail("action is required for type 'raw'");
+          spec = { ...base, type: "raw", action: a.action };
       }
       const r = addTool(root, spec, ws.schemaName ?? undefined);
       const validation = validateWorkspaceFiles(root, r.file).files[0]?.diagnostics ?? [];
-      return text({ ...r, validation, layoutNote: layoutNote(ws), yaml: fs.readFileSync(r.file, "utf8") });
+      return text({ ...r, catalog, validation, layoutNote: layoutNote(ws), yaml: fs.readFileSync(r.file, "utf8") });
     } catch (err) {
       return fail(errorMessage(err));
     }
   },
 );
+
+// ---- tool catalog ---------------------------------------------------------
+
+async function powerAppsToken(args: { tenantId?: string; clientId?: string; workspace?: string }): Promise<string> {
+  const ws = tryWorkspace(args.workspace);
+  const cfg: AuthConfig = { tenantId: resolveTenantId(args.tenantId ?? ws?.sync.tenantId ?? undefined), clientId: args.clientId };
+  return (await getToken(cfg, [BAP_SCOPE])).accessToken;
+}
+
+server.registerTool(
+  "cs_list_connectors",
+  {
+    title: "List connectors available in an environment",
+    description: "The environment's connector registry (the same list the portal's Add a tool shows): Microsoft-published and custom connectors, with an mcpLikely flag for MCP servers. Cached under .cs-catalog/<environment>/connectors.json for offline use; with search and no sign-in, falls back to the offline seed of public connectors.",
+    inputSchema: { environmentId: envArg, search: z.string().optional(), customOnly: z.boolean().optional(), mcpOnly: z.boolean().optional(), refresh: z.boolean().optional().describe("Fetch again even if cached"), offline: z.boolean().optional().describe("Use cache or seed only"), tenantId: tenantArg, clientId: clientArg, workspace: workspaceArg },
+  },
+  async (a) => {
+    try {
+      const ws = tryWorkspace(a.workspace);
+      const root = ws?.root;
+      const environmentId = a.environmentId ?? ws?.sync.environmentId ?? process.env.CPS_ENVIRONMENT_ID ?? null;
+      const dir = catalogDir(root);
+      let source = "cache";
+      let list = environmentId ? (readConnectorList(dir, environmentId)?.connectors ?? null) : null;
+      if ((!list || a.refresh) && !a.offline && environmentId) {
+        const token = await powerAppsToken(a);
+        list = await fetchConnectorList(environmentId, token);
+        writeConnectorList(dir, environmentId, list);
+        source = "registry";
+      }
+      if (!list) {
+        list = loadSeed().map((s) => ({ name: s.name, id: `/providers/Microsoft.PowerApps/apis/${s.name}`, displayName: s.displayName, description: null, publisher: "Microsoft (seed)", tier: null, isCustom: false, mcpLikely: /mcp/i.test(s.name) || /\bmcp\b/i.test(s.displayName), iconUri: null }));
+        source = "seed (public connector reference; confirm ids against the environment)";
+      }
+      let out = list;
+      if (a.customOnly) out = out.filter((c) => c.isCustom);
+      if (a.mcpOnly) out = out.filter((c) => c.mcpLikely);
+      if (a.search) out = searchConnectors(a.search, out) as typeof out;
+      return text({ environmentId, source, total: list.length, returned: Math.min(out.length, 200), connectors: out.slice(0, 200).map(({ iconUri: _i, ...c }) => c) });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+server.registerTool(
+  "cs_describe_connector",
+  {
+    title: "Describe a connector's operations",
+    description: "Fetch (or read from cache) a connector's OpenAPI definition and list its operations with operationId, parameters (required, type, description) and response fields; marks MCP-capable connectors (x-ms-agentic-protocol). Exactly what cs_add_tool needs. Cached under .cs-catalog/<environment>/connectors/<name>.json and used by cs_validate.",
+    inputSchema: { connector: z.string().describe("shared_<name> or a display name"), environmentId: envArg, operation: z.string().optional().describe("Filter operations by id or summary"), includeInternal: z.boolean().optional(), refresh: z.boolean().optional(), tenantId: tenantArg, clientId: clientArg, workspace: workspaceArg },
+  },
+  async (a) => {
+    try {
+      const ws = tryWorkspace(a.workspace);
+      const root = ws?.root;
+      const environmentId = a.environmentId ?? ws?.sync.environmentId ?? process.env.CPS_ENVIRONMENT_ID ?? null;
+      const dir = catalogDir(root);
+      let name = a.connector;
+      if (!/^shared_/i.test(name)) {
+        const pool = (environmentId ? readConnectorList(dir, environmentId)?.connectors : null) ?? loadSeed();
+        const hit = searchConnectors(name, pool);
+        if (hit.length !== 1) return fail(`'${name}' matched ${hit.length} connectors: ${hit.slice(0, 10).map((h) => `${h.name} (${h.displayName})`).join(", ")}. Pass the shared_ name.`);
+        name = hit[0].name;
+      }
+      let def: ConnectorDefinition | null = a.refresh ? null : readConnectorDefinition(dir, environmentId, name);
+      let source = "cache";
+      if (!def) {
+        if (!environmentId) return fail("environmentId is required to fetch a connector definition (or use a synced workspace)");
+        const token = await powerAppsToken(a);
+        const { api, swagger } = await fetchConnectorSwagger(environmentId, name, token);
+        def = toDefinition(api, swagger);
+        writeConnectorDefinition(dir, environmentId, def);
+        source = swagger ? "registry" : "registry (no OpenAPI definition returned)";
+      }
+      let ops = def.operations;
+      if (!a.includeInternal) ops = ops.filter((o) => o.visibility !== "internal");
+      if (a.operation) {
+        const q = a.operation.toLowerCase();
+        ops = ops.filter((o) => o.operationId.toLowerCase().includes(q) || (o.summary ?? "").toLowerCase().includes(q));
+      }
+      return text({
+        source,
+        connector: { name: def.name, displayName: def.displayName, isCustom: def.isCustom, mcp: def.mcp, fetchedAt: def.fetchedAt },
+        operationCount: def.operations.length,
+        operations: ops.slice(0, 100).map((o) => ({ operationId: o.operationId, summary: o.summary, method: o.method, mcp: o.mcp, visibility: o.visibility, requiredParameters: o.parameters.filter((p) => p.required).map((p) => `${p.name}${p.type ? `:${p.type}` : ""}`), optionalParameters: o.parameters.filter((p) => !p.required).map((p) => p.name), responseProperties: o.responseProperties })),
+        usage: def.mcp ? `cs_add_tool type=mcp connectorId=${def.name}` : `cs_add_tool type=connector connectorId=${def.name} operationId=<operationId>`,
+      });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+server.registerTool("cs_list_prompts", { title: "List AI Builder prompts / models", description: "pac copilot model list: AI Builder models (including custom prompts) in the environment, with ids for cs_add_tool type 'prompt'.", inputSchema: { environment: z.string().optional().describe("Environment id or URL; default active pac profile"), activeOnly: z.boolean().optional(), search: z.string().optional() } }, async ({ environment, activeOnly, search }) => {
+  try {
+    let rows = await listPrompts(environment);
+    if (activeOnly) rows = rows.filter((r) => /^active$/i.test(r.state));
+    if (search) rows = rows.filter((r) => r.name.toLowerCase().includes(search.toLowerCase()));
+    return text({ count: rows.length, prompts: rows });
+  } catch (err) {
+    return fail(errorMessage(err));
+  }
+});
 
 server.registerTool(
   "cs_add_flow",

@@ -70,7 +70,7 @@ Permissions for your own app registration (Entra ID > App registrations > API pe
 | --- | --- | --- | --- | --- |
 | `cs_chat` (transport `sdk`, Entra-SSO agents) | **Power Platform API** (app id `8578e004-a5c6-46e7-913e-12f58912df43`) | `CopilotStudio.Copilots.Invoke` | Delegated is what this server uses. An application permission of the same name exists for confidential clients (Microsoft 365 Agents SDK); not used here. | Admin consent is normally required. Redirect URI `http://localhost` (Mobile and desktop applications). |
 | `cs_list_test_sets`, `cs_run_evaluation`, `cs_get_evaluation_run`, `cs_list_evaluation_runs` | **Power Platform API** | Token scope `https://api.powerplatform.com/.default`. The evaluation endpoints declare only `.default`; the permission reference has no finer-grained evaluation permission. | Delegated only. Power Platform API has no application permissions; service principals get access through RBAC roles instead. | Verified with the first-party id by Microsoft's own tooling. Not yet verified with a custom registration; if calls return 403, the signed-in user needs maker access to the agent. |
-| `cs_list_environments` and automatic Dataverse URL lookup | **PowerApps Service** (app id `475226c6-020e-4fb2-8a90-7a972cbfc1d4`) | `User` ("Access the Power Apps Service API") | Delegated. | Calls the BAP environments API (`api.bap.microsoft.com`). |
+| `cs_list_environments`, automatic Dataverse URL lookup, `cs_list_connectors`, `cs_describe_connector` | **PowerApps Service** (app id `475226c6-020e-4fb2-8a90-7a972cbfc1d4`) | `User` ("Access the Power Apps Service API") | Delegated. | Calls the BAP environments API (`api.bap.microsoft.com`) and the connector registry (`api.powerapps.com`). |
 | `cs_list_agents` (via `dataverse`), `cs_publish` (via `dataverse`), authentication-mode detection in `cs_chat` | **Dynamics CRM** (Dataverse, app id `00000007-0000-0000-c000-000000000000`) | `user_impersonation` | Delegated. There is no application permission; server-to-server access to Dataverse means an **application user** with a security role in each environment. | The user still needs a Dataverse security role that can read and publish bots (System Customizer or a Copilot Studio maker role). |
 | `cs_chat` for no-auth or manual-auth agents (DirectLine) | none | none | not applicable | The DirectLine token endpoint of a published agent is anonymous. |
 | `pac` interactive sign-in | none | none | not applicable | Microsoft's own app; `pac auth create --environment <id>`. |
@@ -163,7 +163,8 @@ Authoring (files, schema-validated)
 | `cs_lookup_schema` | inspect the YAML schema (summaries, resolved definitions, kinds) |
 | `cs_add_topic` | topic from a declarative spec (phrases + message/question/condition/redirect/http/flow nodes) |
 | `cs_add_knowledge_source` | public website, SharePoint, Graph connector, or files |
-| `cs_add_tool` | connector action, MCP server, or cloud flow tool (+ connection-reference stub) |
+| `cs_add_tool` | connector action, MCP server, cloud flow, AI Builder prompt, connected agent, child agent, or any other TaskAction kind as raw (+ connection-reference stub) |
+| `cs_list_connectors`, `cs_describe_connector`, `cs_list_prompts` | tool catalog: connectors available in the environment (with MCP detection), a connector's operations and parameters, AI Builder prompts |
 | `cs_add_flow` | experimental cloud-flow scaffold (`workflows/<Name>/metadata.yaml` + `workflow.json`) |
 | `cs_add_trigger`, `cs_add_variable` | event trigger for a flow; global variable |
 | `cs_update_agent`, `cs_update_settings` | instructions, conversation starters, model, settings |
@@ -180,6 +181,37 @@ Evaluation and testing (cloud)
 Every tool that mutates a live environment (`cs_push`, `cs_publish`, `cs_import_solution`,
 `cs_run_evaluation`, bootstrap `cs_init_agent`, non-read-only `cs_pac`) returns a dry run unless
 called with `confirm: true`.
+
+## Tool catalog: knowing what an agent can use
+
+Copilot Studio agents can call any connector in the environment (more than a thousand
+Microsoft-published ones plus custom connectors), MCP servers exposed through connectors, cloud
+flows, AI Builder prompts, other agents, and a few rarer kinds. The server keeps that scope in two
+ways.
+
+**Kinds of tool** come from the YAML schema, which lists every `TaskAction` kind. `cs_add_tool`
+offers a typed spec for connector, MCP, flow, prompt, connected agent and child agent, and a `raw`
+type for the rest (AI plugin, Bot Framework skill, client action, computer-use agent). A unit test
+compares the schema with that table, so a schema update that introduces a new kind fails the build
+until the kind is classified.
+
+**Instances** come from the environment, which is the only source that knows what exists there:
+
+| Tool | Source | Cached at |
+| --- | --- | --- |
+| `cs_list_connectors` | the environment's connector registry (Power Apps API), the same list the portal's Add a tool shows; MCP servers flagged | `.cs-catalog/<environment>/connectors.json` |
+| `cs_describe_connector` | the connector's OpenAPI definition, turned into operations with `operationId`, required and optional parameters, response fields; `x-ms-agentic-protocol: mcp-streamable-1.0` marks MCP endpoints | `.cs-catalog/<environment>/connectors/<name>.json` |
+| `cs_list_prompts` | `pac copilot model list` | not cached |
+| flows, agents | `cs_describe_solution`, `cs_list_agents`, Dataverse reads in snapshots | |
+
+Once a connector definition is cached, `cs_add_tool` checks the `operationId`, fills the automatic
+inputs from the operation's required parameters, and `cs_validate` warns about tool files whose
+operation is not in the definition. Without a sign-in, `cs_list_connectors` falls back to an offline
+seed generated from the public connector reference (display name to `shared_` id, no operations);
+the seed is a starting point, not proof that a connector is enabled in your environment.
+
+The registry calls use the same PowerApps Service permission as environment listing (see the
+authentication section) and, like the other cloud calls, have not been verified against a tenant yet.
 
 ## How it fits together
 
