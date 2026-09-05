@@ -131,7 +131,9 @@ Setup and sync (pac)
 | `cs_doctor` | pac / .NET / auth profiles / sign-in / workspace detection |
 | `cs_login`, `cs_login_status`, `cs_logout` | MSAL sign-in (interactive or device code) for the cloud tools |
 | `cs_list_environments`, `cs_list_agents` | environments (BAP) and agents (pac or Dataverse) |
-| `cs_init_agent` | `pac copilot init` (classic or cli-copilot), optional bootstrap into an environment |
+| `cs_init_agent` | `pac copilot init` (classic or cli-copilot), optional bootstrap into an environment, optionally inside a chosen or new solution |
+| `cs_create_solution` | create an unmanaged solution (and publisher) as the container for new agents |
+| `cs_generate_instructions` | draft or refine the agent instructions with an AI Builder prompt (`pac copilot model predict`) and write them into the workspace |
 | `cs_clone_agent`, `cs_pull`, `cs_push`, `cs_status` | sync a live agent with the workspace |
 | `cs_pack`, `cs_import_solution`, `cs_publish` | package, import, publish |
 | `cs_pac` | run any pac command (read-only ones immediately, others with `confirm`) |
@@ -181,6 +183,49 @@ Evaluation and testing (cloud)
 Every tool that mutates a live environment (`cs_push`, `cs_publish`, `cs_import_solution`,
 `cs_run_evaluation`, bootstrap `cs_init_agent`, non-read-only `cs_pac`) returns a dry run unless
 called with `confirm: true`.
+
+## Getting started: building a new agent
+
+The end-to-end flow for a new standard-harness agent, from an empty folder to a published agent you
+can talk to. Every step is one tool call; steps that change the environment need `confirm: true`.
+
+1. **Check the machine.** `cs_doctor` reports pac, .NET, the pac auth profile and sign-in state. If
+   there is no profile, run `pac auth create --environment <id or URL>` once in a terminal.
+2. **Pick the environment.** `cs_list_environments` (needs `cs_login`) or use the environment id
+   from the Copilot Studio URL.
+3. **Pick or create the solution.** `cs_list_solutions` shows what exists. To start a new default
+   solution for your agents: `cs_create_solution uniqueName=contoso_Agents publisherPrefix=contoso
+   confirm=true`. An existing solution works as long as it is unmanaged and you use its publisher
+   prefix.
+4. **Create the agent inside that solution.**
+   `cs_init_agent name="Contoso Support" publisherPrefix=contoso projectDir=./contoso-support
+   environment=<id> solutionName=contoso_Agents confirm=true` (add `createSolution=true` to do step 3
+   in the same call). The tool scaffolds locally, packs with the solution name, imports, then clones
+   the live agent back so `projectDir` is a sync-connected workspace. Without `solutionName`, pac
+   puts the agent in a solution named after the agent.
+5. **Generate the first instructions with an AI Builder prompt.** `cs_list_prompts` shows the
+   prompts and models in the environment; create a "write agent instructions" prompt once in AI
+   Builder if you do not have one. Then
+   `cs_generate_instructions purpose="Answer IT questions and create ServiceNow tickets"
+   audience="Employees" tone="Friendly, brief" boundaries=["never reset passwords"]
+   modelName="Agent instructions"`. Review the text; call again with `apply=true` to write it into
+   `agent.mcs.yml`. Later, `refine=true` with a `changeRequest` revises what is there. AI Builder
+   capacity applies per run.
+6. **Add what the agent can do.** `cs_add_knowledge_source` (public site, SharePoint, Graph
+   connector, files), `cs_add_topic` for deterministic conversations, and `cs_add_tool`. For tools,
+   find the connector and operation first: `cs_list_connectors search=ServiceNow`, then
+   `cs_describe_connector connector=shared_service-now operation=incident`; with the definition
+   cached the tool call checks the operation and fills the inputs.
+7. **Validate and push.** `cs_validate`, then `cs_push confirm=true`. Tools with a connection
+   reference need one portal step: authorise the connection under the agent's Tools, then `cs_pull`.
+8. **Publish and try it.** `cs_publish confirm=true`, then `cs_chat utterance="my laptop is slow"`.
+   `cs_run_conversation_tests` turns a few of those into a repeatable check.
+9. **Evaluate.** `cs_create_test_set_csv suggestFromWorkspace=true`, import the CSV once in the
+   portal's Evaluation tab, then `cs_run_evaluation confirm=true wait=true` and
+   `cs_get_evaluation_run`.
+
+When the agent later moves to test and production, continue with the solution flow (`cs_pull_solution`,
+`cs_create_deployment_settings`, `cs_deploy_solution`) and the DTAP comparison below.
 
 ## Tool catalog: knowing what an agent can use
 
@@ -250,9 +295,10 @@ New agent (standard harness):
 
 ```mermaid
 flowchart TD
-    A["cs_doctor"] --> C["cs_init_agent<br/>environment + confirm"]
-    C --> D["cs_update_agent<br/>instructions"]
-    D --> E["cs_add_topic / cs_add_knowledge_source / cs_add_tool"]
+    A["cs_doctor"] --> B["cs_list_solutions<br/>pick one, or cs_create_solution"]
+    B --> C["cs_init_agent<br/>environment + solutionName + confirm"]
+    C --> D["cs_generate_instructions<br/>AI Builder prompt, then apply"]
+    D --> E["cs_add_topic / cs_add_knowledge_source / cs_add_tool<br/>(cs_list_connectors, cs_describe_connector)"]
     E --> H["cs_validate"]
     H -- errors --> E
     H -- clean --> I["cs_push confirm"]

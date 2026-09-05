@@ -40,12 +40,13 @@ flowchart LR
 ```mermaid
 flowchart TD
     A["cs_doctor<br/>pac, .NET, auth profile, sign-in"] --> B{"pac auth profile?"}
-    B -- no --> B1["terminal: pac auth create --environment ID"] --> C
-    B -- yes --> C["cs_init_agent<br/>name, publisherPrefix, projectDir,<br/>environment (bootstrap) confirm"]
-    C --> D["cs_update_agent<br/>instructions, conversation starters"]
+    B -- no --> B1["terminal: pac auth create --environment ID"] --> S
+    B -- yes --> S["cs_list_solutions<br/>pick an unmanaged solution,<br/>or cs_create_solution confirm"]
+    S --> C["cs_init_agent<br/>name, publisherPrefix, projectDir,<br/>environment + solutionName confirm<br/>(init, pack, import, clone)"]
+    C --> D["cs_generate_instructions<br/>brief -> AI Builder prompt (cs_list_prompts)<br/>review, then apply"]
     D --> E["cs_add_topic<br/>trigger phrases + message / question / condition / redirect nodes"]
     E --> F["cs_add_knowledge_source<br/>public-site | sharepoint | graph-connector | files"]
-    F --> G["cs_add_tool<br/>connector | mcp | flow"]
+    F --> G["cs_add_tool<br/>connector | mcp | flow | prompt | agent<br/>(cs_list_connectors, cs_describe_connector)"]
     G --> H["cs_validate"]
     H -- errors --> E
     H -- clean --> I["cs_push confirm"]

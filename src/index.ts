@@ -68,6 +68,7 @@ import {
 import { getEnvironment, listEnvironments } from "./cloud/bap.js";
 import { dataverseScope, getBot, listBots, listConnectionReferences, listEnvironmentVariables, listFlows, publishBot } from "./cloud/dataverse.js";
 import { captureSnapshot, compareChain, compareSnapshots, writeReport, type DataverseReads } from "./compare.js";
+import { buildInstructionsBrief, createSolution, generateWithAiBuilder, initAgentInSolution } from "./bootstrap.js";
 import { getRun, getTestSet, listRuns, listTestSets, startRun, summarizeRun } from "./cloud/ppapi.js";
 import { chatDirectLine, chatSdk, directLineTokenEndpoint, type ChatResult } from "./cloud/chat.js";
 import { buildTestSetCsv, CONVERSATION_TESTS_EXAMPLE, evaluateReplies, evaluationPageUrl, parseConversationTests, suggestTestCases, type ConversationTest } from "./evals.js";
@@ -452,22 +453,29 @@ server.registerTool(
   {
     title: "Scaffold a new agent workspace",
     description:
-      "pac copilot init: create a new agent workspace on disk. Without 'environment' it is a local scaffold (no sign-in). With 'environment' it also packs, imports and connects the workspace to a live agent (needs pac auth profile and confirm: true). authoringMode 'classic' is the standard harness (topics, evaluations); 'cli-copilot' is the GitHub Copilot harness.",
+      "pac copilot init: create a new agent workspace on disk. Without 'environment' it is a local scaffold (no sign-in). With 'environment' it also creates the live agent and connects the workspace (needs pac auth profile and confirm: true). With 'solutionName' the agent is created inside that solution (existing unmanaged solution, or a new one with createSolution: true) via init, pack, import and clone; without it, pac puts the agent in a solution named after the agent. authoringMode 'classic' is the standard harness (topics, evaluations); 'cli-copilot' is the GitHub Copilot harness.",
     inputSchema: {
       name: z.string().describe("Agent display name"),
-      publisherPrefix: z.string().describe("Solution publisher prefix, e.g. contoso"),
+      publisherPrefix: z.string().describe("Solution publisher prefix, e.g. contoso; must match the publisher of an existing target solution"),
       projectDir: z.string().describe("Target directory (must be empty or not exist)"),
       authoringMode: z.enum(["classic", "cli-copilot"]).optional(),
       template: z.enum(["default", "minimal"]).optional().describe("classic only"),
       instructions: z.string().optional(),
       schemaName: z.string().optional(),
       environment: z.string().optional().describe("Environment id or URL to bootstrap into (creates a live agent)"),
+      solutionName: z.string().optional().describe("Unique name of the solution to create the agent in (requires environment)"),
+      createSolution: z.boolean().optional().describe("Create solutionName if it does not exist"),
       confirm: confirmArg,
     },
   },
   async (a) => {
     try {
-      if (a.environment && !a.confirm) return dryRun(`pac copilot init would pack, import and create agent '${a.name}' in environment ${a.environment}`);
+      if (a.environment && !a.confirm) return dryRun(`create agent '${a.name}' in environment ${a.environment}${a.solutionName ? ` inside solution ${a.solutionName}${a.createSolution ? " (created if missing)" : ""}` : " (in a solution named after the agent)"}`);
+      if (a.environment && a.solutionName) {
+        const r = await initAgentInSolution({ name: a.name, publisherPrefix: a.publisherPrefix, projectDir: a.projectDir, solutionName: a.solutionName, environment: a.environment, createSolution: a.createSolution, instructions: a.instructions, schemaName: a.schemaName, template: a.template, authoringMode: a.authoringMode });
+        return text({ ...r, workspaceInfo: describeWorkspace(readWorkspace(r.workspace)) });
+      }
+      if (a.solutionName && !a.environment) return fail("solutionName needs environment");
       const args = ["copilot", "init", "--name", a.name, "--publisher-prefix", a.publisherPrefix, "--project-dir", a.projectDir];
       if (a.authoringMode) args.push("--authoring-mode", a.authoringMode);
       if (a.template) args.push("--template", a.template);
@@ -1227,6 +1235,82 @@ const envOrProfile = z.string().optional().describe("Environment id or URL. Defa
 function defaultSolutionWorkDir(name: string): string {
   return path.join(process.env.CPS_WORKSPACE ?? process.cwd(), ".cs-solutions", name);
 }
+
+server.registerTool(
+  "cs_create_solution",
+  {
+    title: "Create an unmanaged solution",
+    description: "Create a new unmanaged solution (and its publisher if missing) in an environment by packing an empty solution manifest and importing it with pac. Use it to prepare the container before cs_init_agent with solutionName. Requires confirm: true.",
+    inputSchema: { uniqueName: z.string().describe("e.g. contoso_Agents"), displayName: z.string().optional(), publisherPrefix: z.string().describe("2-8 lowercase characters, e.g. contoso"), publisherName: z.string().optional(), environment: envOrProfile, workDir: z.string().optional().describe("Where the manifest and zip are written (default <workspace>/.cs-solutions/<uniqueName>)"), confirm: confirmArg },
+  },
+  async (a) => {
+    try {
+      if (!a.confirm) return dryRun(`create solution ${a.uniqueName} (publisher ${a.publisherPrefix}) in ${a.environment ?? "the active profile's environment"}`);
+      const r = await createSolution({ uniqueName: a.uniqueName, displayName: a.displayName, publisherPrefix: a.publisherPrefix, publisherName: a.publisherName, environment: a.environment, workDir: a.workDir ?? defaultSolutionWorkDir(a.uniqueName) });
+      return text({ uniqueName: r.uniqueName, existed: r.existed, zip: r.zip, ...(r.import ? { import: pacSummary(r.import) } : { note: "solution already existed; nothing imported" }) });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+server.registerTool(
+  "cs_generate_instructions",
+  {
+    title: "Generate agent instructions with an AI Builder prompt",
+    description:
+      "Build a brief from purpose, audience, tone, capabilities, boundaries and examples, send it to an AI Builder prompt or model (pac copilot model predict; pick one with cs_list_prompts), and return the generated instructions. With apply: true the text is written into the agent's instructions (agent.mcs.yml, or settings.mcs.yml for cli-copilot). Pass currentInstructions/changeRequest (or refine: true to read the workspace) to revise existing instructions instead.",
+    inputSchema: {
+      workspace: workspaceArg,
+      purpose: z.string().optional().describe("What the agent is for; required unless refining"),
+      audience: z.string().optional(),
+      tone: z.string().optional(),
+      capabilities: z.array(z.string()).optional().describe("Default: derived from the workspace (topics, knowledge, tools)"),
+      boundaries: z.array(z.string()).optional(),
+      examples: z.array(z.string()).optional(),
+      language: z.string().optional(),
+      refine: z.boolean().optional().describe("Revise the workspace's current instructions using changeRequest"),
+      changeRequest: z.string().optional(),
+      modelId: z.string().optional(),
+      modelName: z.string().optional().describe("Full or partial AI Builder model / prompt name"),
+      inputMode: z.enum(["prompt", "text"]).optional(),
+      environment: envOrProfile,
+      apply: z.boolean().optional().describe("Write the result into the agent instructions"),
+    },
+  },
+  async (a) => {
+    try {
+      const root = resolveRoot(a.workspace);
+      const ws = readWorkspace(root);
+      const capabilities =
+        a.capabilities ??
+        [
+          ...ws.topics.filter((t) => (t.details.triggerKind as string) === "OnRecognizedIntent").map((t) => `topic: ${t.name}${t.description ? ` (${t.description})` : ""}`),
+          ...ws.knowledge.map((k) => `knowledge: ${k.name}${k.details.site ? ` (${k.details.site})` : ""}`),
+          ...ws.actions.map((t) => `tool: ${t.name}${t.description ? ` (${t.description})` : ""}`),
+        ];
+      let brief: string;
+      if (a.refine) {
+        let current = ws.agent?.instructions ?? "";
+        if (ws.harness === "github-copilot") {
+          const segments = (((ws.settings?.configuration as Record<string, unknown>)?.agentSettings as Record<string, unknown>)?.instructions as Record<string, unknown>)?.segments;
+          current = Array.isArray(segments) ? (segments as { value?: string }[]).map((s) => s.value ?? "").join("\n") : "";
+        }
+        if (!current.trim()) return fail("No current instructions to refine; pass purpose instead");
+        brief = buildInstructionsBrief({ purpose: "", currentInstructions: current, changeRequest: a.changeRequest });
+      } else {
+        if (!a.purpose) return fail("purpose is required (or refine: true)");
+        brief = buildInstructionsBrief({ purpose: a.purpose, audience: a.audience, tone: a.tone, capabilities, boundaries: a.boundaries, examples: a.examples, language: a.language });
+      }
+      const gen = await generateWithAiBuilder({ modelId: a.modelId, modelName: a.modelName, brief, environment: a.environment, inputMode: a.inputMode });
+      let applied: unknown = null;
+      if (a.apply) applied = ws.harness === "github-copilot" ? updateCliCopilotInstructions(root, gen.text) : updateAgent(root, { instructions: gen.text });
+      return text({ instructions: gen.text, applied, brief, model: a.modelId ?? a.modelName, next: a.apply ? "Review agent.mcs.yml, then cs_validate and cs_push." : "Review the text; call again with apply: true to write it, or edit and use cs_update_agent." });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
 
 server.registerTool("cs_list_solutions", { title: "List solutions", description: "pac solution list: solutions in an environment with version and managed flag. Needs a pac auth profile.", inputSchema: { environment: envOrProfile, includeSystem: z.boolean().optional() } }, async ({ environment, includeSystem }) => {
   try {

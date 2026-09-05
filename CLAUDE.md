@@ -70,6 +70,12 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   connector reference page when stale). `TOOL_KIND_SUPPORT` in `authoring/tools.ts` classifies every
   schema `TaskAction` kind; `test/catalog.test.js` fails when the schema and that table diverge.
 
+- **Bootstrap** (`src/bootstrap.ts`): create a solution (empty manifest packed with `pac solution
+  pack`, then imported), create an agent inside a chosen solution (init locally, pack with
+  `--solution-name`, import, clone by schema name, swap the clone in for the scaffold), and generate
+  instructions through `pac copilot model predict` (AI Builder). `cleanPredictOutput` strips pac's
+  banner; the exact predict output format is unverified live.
+
 Cross-cutting behaviour in `src/index.ts`:
 
 - **Confirm contract**: every tool that mutates a live environment (`cs_push`, `cs_publish`,
