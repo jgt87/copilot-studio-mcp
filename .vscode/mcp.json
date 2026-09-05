@@ -3,10 +3,23 @@
     "copilot-studio": {
       "type": "stdio",
       "command": "node",
-      "args": ["${workspaceFolder}/dist/index.js"],
+      "args": [
+        "${workspaceFolder}/dist/index.js"
+      ],
       "env": {
         "CPS_WORKSPACE": "${workspaceFolder}"
       }
+    },
+    "repowise": {
+      "type": "stdio",
+      "command": "repowise",
+      "args": [
+        "mcp",
+        "${workspaceFolder}",
+        "--transport",
+        "stdio"
+      ],
+      "description": "repowise: codebase intelligence — docs, graph, git signals, dead code, decisions"
     }
   },
   "inputs": []
