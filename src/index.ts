@@ -20,15 +20,16 @@ import { promisify } from "node:util";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import * as yaml from "js-yaml";
+
 
 import { errorMessage, log } from "./log.js";
 import { explainFailure, findPac, installHint, parseAuthList, parseCopilotList, pacVersion, runPac, type PacResult } from "./pac.js";
 import { describeWorkspace, findWorkspaceRoot, readWorkspace, type WorkspaceInfo } from "./workspace.js";
-import { listKinds, lookupDefinition, resolveDefinition, schemaPath, searchDefinitions, summarizeDefinition, validateDocument, type Diagnostic } from "./schema.js";
+import { listKinds, lookupDefinition, resolveDefinition, schemaPath, searchDefinitions, summarizeDefinition } from "./schema.js";
+import { validateWorkspace } from "./validate.js";
 import { addTopic, type ActionSpec, type TopicSpec } from "./authoring/topics.js";
 import { addKnowledgeSource } from "./authoring/knowledge.js";
-import { addTool, connectorFromReference, readConnectionReferences, type ToolSpec } from "./authoring/tools.js";
+import { addTool, type ToolSpec } from "./authoring/tools.js";
 import {
   catalogDir,
   checkOperation,
@@ -49,7 +50,7 @@ import { scaffoldFlow } from "./authoring/flows.js";
 import { addTrigger } from "./authoring/triggers.js";
 import { addGlobalVariable } from "./authoring/variables.js";
 import { updateAgent, updateCliCopilotInstructions, updateSettings } from "./authoring/agent.js";
-import { isYamlFile, listFilesRecursive } from "./authoring/util.js";
+
 import {
   acquireInteractive,
   BAP_SCOPE,
@@ -184,112 +185,53 @@ function layoutNote(ws: WorkspaceInfo): string | null {
   return "Workspace has no sync metadata (pac copilot init without --environment). 'pac copilot pack' packages only settings and topics; knowledge, tools, flows, triggers and variables are applied by 'pac copilot push' from a sync-connected workspace (cs_init_agent with environment, or cs_clone_agent).";
 }
 
-const COMPONENT_DIRS = ["topics", "knowledge", "actions", "tools", "trigger", "triggers", "variables"];
+// Cross-file validation lives in validate.ts; the local name is kept for the call sites below.
+const validateWorkspaceFiles = validateWorkspace;
 
-function validateWorkspaceFiles(root: string, only?: string): { files: { file: string; diagnostics: Diagnostic[] }[]; errors: number; warnings: number } {
-  const ws = readWorkspace(root);
-  const files: string[] = [];
-  if (only) {
-    files.push(path.isAbsolute(only) ? only : path.join(root, only));
-  } else {
-    for (const d of COMPONENT_DIRS) {
-      const dir = path.join(root, d);
-      if (fs.existsSync(dir)) files.push(...listFilesRecursive(dir, (f) => isYamlFile(f) && !f.includes(`${path.sep}files${path.sep}`), 2));
-    }
-    for (const n of ["agent.mcs.yml", "agent.mcs.yaml"]) if (fs.existsSync(path.join(root, n))) files.push(path.join(root, n));
-  }
-  const crEntries = readConnectionReferences(root).entries;
-  const crNames = new Set(crEntries.map((e) => e.connectionReferenceLogicalName));
-  const topicNames = new Set(ws.topics.map((t) => t.name.replace(/[^A-Za-z0-9]/g, "")));
-  let errors = 0;
-  let warnings = 0;
-  const out = files.map((file) => {
-    const raw = fs.readFileSync(file, "utf8");
-    let diagnostics: Diagnostic[];
-    let doc: unknown = null;
-    try {
-      doc = yaml.load(raw);
-      diagnostics = validateDocument(doc, raw);
-    } catch (err) {
-      diagnostics = [{ severity: "error", message: `YAML parse error: ${errorMessage(err)}` }];
-    }
-    // Cross-file checks
-    if (doc && typeof doc === "object") {
-      const d = doc as Record<string, unknown>;
-      const action = d.action as Record<string, unknown> | undefined;
-      const cr = action?.connectionReference;
-      if (typeof cr === "string" && cr.includes("<AGENT_SCHEMA>")) diagnostics.push({ severity: "error", message: "connectionReference still contains <AGENT_SCHEMA>" });
-      else if (typeof cr === "string" && crNames.size && !crNames.has(cr)) diagnostics.push({ severity: "warning", message: `connectionReference '${cr}' is not listed in connectionreferences.mcs.yml` });
-      // Catalog check: does the operation exist on the connector (when its definition is cached)?
-      if (action?.kind === "InvokeConnectorTaskAction" && typeof cr === "string" && typeof action.operationId === "string") {
-        const connector = connectorFromReference(cr, crEntries);
-        if (connector) {
-          const chk = checkOperation(catalogDir(root), ws.sync.environmentId, connector, action.operationId);
-          if (chk.known && chk.operationFound === false) diagnostics.push({ severity: "warning", message: chk.message ?? "operation not found in catalog" });
-          else if (!chk.known) diagnostics.push({ severity: "info", message: chk.message ?? "no catalog" });
-        }
-      }
-      const refs: string[] = [];
-      const walk = (n: unknown) => {
-        if (Array.isArray(n)) return n.forEach(walk);
-        if (!n || typeof n !== "object") return;
-        const o = n as Record<string, unknown>;
-        if (typeof o.dialog === "string") refs.push(o.dialog);
-        Object.values(o).forEach(walk);
-      };
-      walk(d);
-      for (const r of refs) {
-        if (r.includes("<AGENT_SCHEMA>")) diagnostics.push({ severity: "error", message: `topic reference '${r}' still contains <AGENT_SCHEMA>` });
-        const m = /\.topic\.([A-Za-z0-9_]+)$/.exec(r);
-        if (m && topicNames.size && !topicNames.has(m[1]) && !/^(Escalate|Fallback|Greeting|Goodbye|ThankYou|StartOver|ConversationStart|OnError|EndOfConversation|Signin|MultipleTopicsMatched|ResetConversation)$/i.test(m[1])) {
-          diagnostics.push({ severity: "warning", message: `redirect target '${r}' does not match any local topic (system topics are fine)` });
-        }
-      }
-    }
-    errors += diagnostics.filter((x) => x.severity === "error").length;
-    warnings += diagnostics.filter((x) => x.severity === "warning").length;
-    return { file: path.relative(root, file).split(path.sep).join("/"), diagnostics };
-  });
-  return { files: out, errors, warnings };
+type ChatArgs = { workspace?: string; conversationId?: string; transport?: string; tokenEndpoint?: string; directLineSecret?: string; environmentId?: string; schemaName?: string; tenantId?: string; clientId?: string; dataverseUrl?: string; botId?: string };
+type ChatMode = "directline" | "sdk";
+
+/** DirectLine target when the caller forced DirectLine or supplied its credentials. */
+async function explicitDirectLineTarget(args: ChatArgs): Promise<{ tokenEndpoint?: string; secret?: string } | null> {
+  const forced = args.transport === "directline" || Boolean(args.tokenEndpoint) || Boolean(args.directLineSecret);
+  if (!forced) return null;
+  if (args.tokenEndpoint || args.directLineSecret) return { tokenEndpoint: args.tokenEndpoint, secret: args.directLineSecret };
+  const ctx = await cloudContext(args, { environment: true });
+  const schemaName = args.schemaName ?? ctx.schemaName;
+  if (!schemaName) throw new Error("schemaName is required for DirectLine (from settings.mcs.yml or pass it)");
+  return { tokenEndpoint: directLineTokenEndpoint(ctx.environmentId as string, schemaName) };
 }
 
-async function runChat(utterance: string, args: { workspace?: string; conversationId?: string; transport?: string; tokenEndpoint?: string; directLineSecret?: string; environmentId?: string; schemaName?: string; tenantId?: string; clientId?: string; dataverseUrl?: string; botId?: string }): Promise<ChatResult> {
-  const transport = args.transport ?? "auto";
-  if (transport === "directline" || args.tokenEndpoint || args.directLineSecret) {
-    let tokenEndpoint = args.tokenEndpoint;
-    if (!tokenEndpoint && !args.directLineSecret) {
-      const ctx = await cloudContext(args, { environment: true });
-      const schemaName = args.schemaName ?? ctx.schemaName;
-      if (!schemaName) throw new Error("schemaName is required for DirectLine (from settings.mcs.yml or pass it)");
-      tokenEndpoint = directLineTokenEndpoint(ctx.environmentId as string, schemaName);
-    }
-    return chatDirectLine(utterance, { tokenEndpoint, secret: args.directLineSecret, conversationId: args.conversationId });
+/** Ask Dataverse which authentication mode the agent uses; falls back to DirectLine when that is not possible. */
+async function detectChatMode(args: ChatArgs, ctx: CloudContext, schemaName: string | null): Promise<{ mode: ChatMode; schemaName: string | null }> {
+  try {
+    const c2 = await cloudContext(args, { environment: true, bot: true, dataverse: true });
+    const dv = await getToken(ctx.authCfg, [dataverseScope(c2.dataverseUrl as string)]);
+    const bot = await getBot(c2.dataverseUrl as string, dv.accessToken, c2.botId as string);
+    const mode: ChatMode = bot.authenticationMode === 2 ? "sdk" : "directline";
+    log(`agent ${bot.name} authenticationmode=${bot.authenticationMode} -> ${mode}`);
+    return { mode, schemaName: schemaName ?? bot.schemaName };
+  } catch (err) {
+    log(`auth-mode detection skipped (${errorMessage(err)}); defaulting to DirectLine`);
+    return { mode: "directline", schemaName };
   }
+}
+
+async function runChat(utterance: string, args: ChatArgs): Promise<ChatResult> {
+  const explicit = await explicitDirectLineTarget(args);
+  if (explicit) return chatDirectLine(utterance, { ...explicit, conversationId: args.conversationId });
+
   const ctx = await cloudContext(args, { environment: true });
-  const schemaName = args.schemaName ?? ctx.schemaName ?? null;
-  let mode: "directline" | "sdk" = transport === "sdk" ? "sdk" : "directline";
-  let resolvedSchema = schemaName;
-  if (transport === "auto") {
-    // Ask Dataverse which authentication mode the agent uses.
-    try {
-      const c2 = await cloudContext(args, { environment: true, bot: true, dataverse: true });
-      const dv = await getToken(ctx.authCfg, [dataverseScope(c2.dataverseUrl as string)]);
-      const bot = await getBot(c2.dataverseUrl as string, dv.accessToken, c2.botId as string);
-      resolvedSchema = resolvedSchema ?? bot.schemaName;
-      mode = bot.authenticationMode === 2 ? "sdk" : "directline";
-      log(`agent ${bot.name} authenticationmode=${bot.authenticationMode} -> ${mode}`);
-    } catch (err) {
-      log(`auth-mode detection skipped (${errorMessage(err)}); defaulting to DirectLine`);
-    }
-  }
-  if (!resolvedSchema) throw new Error("schemaName is required (from settings.mcs.yml, Dataverse, or pass it)");
-  if (mode === "directline") {
-    return chatDirectLine(utterance, { tokenEndpoint: directLineTokenEndpoint(ctx.environmentId as string, resolvedSchema), conversationId: args.conversationId });
+  const requested = args.transport ?? "auto";
+  const detected = requested === "auto" ? await detectChatMode(args, ctx, args.schemaName ?? ctx.schemaName ?? null) : { mode: (requested === "sdk" ? "sdk" : "directline") as ChatMode, schemaName: args.schemaName ?? ctx.schemaName ?? null };
+  if (!detected.schemaName) throw new Error("schemaName is required (from settings.mcs.yml, Dataverse, or pass it)");
+  if (detected.mode === "directline") {
+    return chatDirectLine(utterance, { tokenEndpoint: directLineTokenEndpoint(ctx.environmentId as string, detected.schemaName), conversationId: args.conversationId });
   }
   const clientId = args.clientId ?? process.env.CPS_CLIENT_ID;
   if (!clientId) throw new Error("This agent uses Entra SSO (integrated authentication). Pass clientId of an app registration with the CopilotStudio.Copilots.Invoke delegated permission (redirect URI http://localhost).");
   const token = await getToken({ tenantId: ctx.tenantId, clientId }, [COPILOT_INVOKE_SCOPE]);
-  return chatSdk(utterance, { environmentId: ctx.environmentId as string, schemaName: resolvedSchema, tenantId: ctx.tenantId === "organizations" ? undefined : ctx.tenantId, token: token.accessToken, conversationId: args.conversationId });
+  return chatSdk(utterance, { environmentId: ctx.environmentId as string, schemaName: detected.schemaName, tenantId: ctx.tenantId === "organizations" ? undefined : ctx.tenantId, token: token.accessToken, conversationId: args.conversationId });
 }
 
 // ---------------------------------------------------------------------------
@@ -315,35 +257,57 @@ server.registerTool(
     inputSchema: { workspace: workspaceArg },
   },
   async ({ workspace }) => {
-    const report: Record<string, unknown> = { serverVersion: VERSION };
     const pacPath = findPac();
-    report.pac = pacPath ? { path: pacPath, version: await pacVersion().catch(() => null) } : { installed: false, hint: installHint() };
-    try {
-      const { stdout } = await execFileAsync("dotnet", ["--list-sdks"], { timeout: 20_000, windowsHide: true });
-      report.dotnetSdks = stdout.trim().split(/\r?\n/);
-    } catch (err) {
-      report.dotnetSdks = { error: errorMessage(err) };
-    }
-    if (pacPath) {
-      const auth = await runPac(["auth", "list"], { timeoutMs: 60_000 }).catch((e: unknown) => null);
-      report.pacAuthProfiles = auth ? parseAuthList(auth.stdout) : [];
-      if (auth && (report.pacAuthProfiles as unknown[]).length === 0) report.pacAuthHint = "No pac auth profile. In a terminal run: pac auth create --environment <environment id or URL>";
-    }
-    const env = ["CPS_TENANT_ID", "CPS_CLIENT_ID", "CPS_ENVIRONMENT_ID", "CPS_ENVIRONMENT_URL", "CPS_AGENT_ID", "CPS_WORKSPACE", "PAC_PATH", "DOTNET_ROOT"];
-    report.env = Object.fromEntries(env.map((k) => [k, process.env[k] ? (k === "CPS_CLIENT_ID" ? "(set)" : process.env[k]) : null]));
     const ws = tryWorkspace(workspace);
-    report.workspace = ws ? { root: ws.root, harness: ws.harness, schemaName: ws.schemaName, sync: ws.sync.source, environmentId: ws.sync.environmentId, agentId: ws.sync.agentId } : { found: false, searchedFrom: workspace ?? process.env.CPS_WORKSPACE ?? process.cwd() };
-    try {
-      const tenantId = resolveTenantId(ws?.sync.tenantId ?? undefined);
-      report.msalAccounts = await listAccounts({ tenantId });
-      report.pendingLogin = pendingLoginStatus();
-    } catch (err) {
-      report.msalAccounts = { error: errorMessage(err) };
-    }
-    report.schema = { path: schemaPath(), kinds: listKinds().length };
-    return text(report);
+    return text({
+      serverVersion: VERSION,
+      pac: await doctorPac(pacPath),
+      dotnetSdks: await doctorDotnet(),
+      ...(await doctorPacAuth(pacPath)),
+      env: doctorEnv(),
+      workspace: ws ? { root: ws.root, harness: ws.harness, schemaName: ws.schemaName, sync: ws.sync.source, environmentId: ws.sync.environmentId, agentId: ws.sync.agentId } : { found: false, searchedFrom: workspace ?? process.env.CPS_WORKSPACE ?? process.cwd() },
+      ...(await doctorMsal(ws)),
+      schema: { path: schemaPath(), kinds: listKinds().length },
+    });
   },
 );
+
+async function doctorPac(pacPath: string | null): Promise<Record<string, unknown>> {
+  if (!pacPath) return { installed: false, hint: installHint() };
+  return { path: pacPath, version: await pacVersion().catch(() => null) };
+}
+
+async function doctorDotnet(): Promise<unknown> {
+  try {
+    const { stdout } = await execFileAsync("dotnet", ["--list-sdks"], { timeout: 20_000, windowsHide: true });
+    return stdout.trim().split(/\r?\n/);
+  } catch (err) {
+    return { error: errorMessage(err) };
+  }
+}
+
+async function doctorPacAuth(pacPath: string | null): Promise<Record<string, unknown>> {
+  if (!pacPath) return {};
+  const auth = await runPac(["auth", "list"], { timeoutMs: 60_000 }).catch(() => null);
+  const profiles = auth ? parseAuthList(auth.stdout) : [];
+  const hint = auth && profiles.length === 0 ? { pacAuthHint: "No pac auth profile. In a terminal run: pac auth create --environment <environment id or URL>" } : {};
+  return { pacAuthProfiles: profiles, ...hint };
+}
+
+const DOCTOR_ENV_VARS = ["CPS_TENANT_ID", "CPS_CLIENT_ID", "CPS_ENVIRONMENT_ID", "CPS_ENVIRONMENT_URL", "CPS_AGENT_ID", "CPS_WORKSPACE", "PAC_PATH", "DOTNET_ROOT"];
+
+function doctorEnv(): Record<string, string | null> {
+  return Object.fromEntries(DOCTOR_ENV_VARS.map((k) => [k, process.env[k] ? (k === "CPS_CLIENT_ID" ? "(set)" : (process.env[k] as string)) : null]));
+}
+
+async function doctorMsal(ws: WorkspaceInfo | null): Promise<Record<string, unknown>> {
+  try {
+    const tenantId = resolveTenantId(ws?.sync.tenantId ?? undefined);
+    return { msalAccounts: await listAccounts({ tenantId }), pendingLogin: pendingLoginStatus() };
+  } catch (err) {
+    return { msalAccounts: { error: errorMessage(err) } };
+  }
+}
 
 server.registerTool(
   "cs_login",
@@ -810,61 +774,12 @@ server.registerTool(
       const root = resolveRoot(a.workspace);
       const ws = readWorkspace(root);
       const catalog: Record<string, unknown> = {};
-      let spec: ToolSpec;
-      let inputs = a.inputs;
-      let connectorId = a.connectorId;
-      if (connectorId && !/^shared_/i.test(connectorId) && !/^[a-z0-9_]+$/i.test(connectorId)) {
-        // Display name given: resolve through the cached list or the seed.
-        const cached = ws.sync.environmentId ? readConnectorList(catalogDir(root), ws.sync.environmentId)?.connectors : null;
-        const hit = searchConnectors(connectorId, cached ?? loadSeed());
-        if (hit.length === 1) {
-          catalog.resolvedConnector = { from: connectorId, to: hit[0].name, displayName: hit[0].displayName };
-          connectorId = hit[0].name;
-        } else return fail(`connectorId '${connectorId}' is ambiguous or unknown (${hit.length} matches: ${hit.slice(0, 8).map((h) => h.name).join(", ")}). Use cs_list_connectors and pass the shared_ name.`);
-      }
-      if (a.type === "connector" && connectorId && a.operationId) {
-        const chk = checkOperation(catalogDir(root), ws.sync.environmentId, connectorId, a.operationId);
-        catalog.operationCheck = chk;
-        if (chk.known && chk.operationFound === false) return fail(chk.message ?? "operation not found in the cached connector definition");
-        if (chk.known && (!inputs || inputs.length === 0) && a.inputsFromCatalog !== false) {
-          const def = readConnectorDefinition(catalogDir(root), ws.sync.environmentId, connectorId);
-          const op = def?.operations.find((o) => o.operationId === a.operationId);
-          if (op) {
-            inputs = inputsFromOperation(op);
-            catalog.inputsFromCatalog = inputs.map((i) => i.name);
-          }
-        }
-      }
-      const base = { name: a.name, description: a.description, modelDescription: a.modelDescription, inputs, outputs: a.outputs, overwrite: a.overwrite };
-      switch (a.type) {
-        case "flow":
-          if (!a.flowId) return fail("flowId is required for type 'flow'");
-          spec = { ...base, type: "flow", flowId: a.flowId };
-          break;
-        case "connector":
-          if (!connectorId || !a.operationId) return fail("connectorId and operationId are required for type 'connector'");
-          spec = { ...base, type: "connector", connectorId, operationId: a.operationId, connectionReference: a.connectionReference, connectionMode: a.connectionMode };
-          break;
-        case "mcp":
-          if (!connectorId) return fail("connectorId is required for type 'mcp' (the connector that wraps the MCP server)");
-          spec = { ...base, type: "mcp", connectorId, operationId: a.operationId, connectionReference: a.connectionReference, connectionMode: a.connectionMode };
-          break;
-        case "prompt":
-          if (!a.aiModelId) return fail("aiModelId is required for type 'prompt' (see cs_list_prompts)");
-          spec = { ...base, type: "prompt", aiModelId: a.aiModelId };
-          break;
-        case "connected-agent":
-          if (!a.botSchemaName) return fail("botSchemaName is required for type 'connected-agent'");
-          spec = { ...base, type: "connected-agent", botSchemaName: a.botSchemaName };
-          break;
-        case "child-agent":
-          if (!a.gptComponentSchemaName) return fail("gptComponentSchemaName is required for type 'child-agent'");
-          spec = { ...base, type: "child-agent", gptComponentSchemaName: a.gptComponentSchemaName };
-          break;
-        default:
-          if (!a.action) return fail("action is required for type 'raw'");
-          spec = { ...base, type: "raw", action: a.action };
-      }
+      const connector = resolveConnectorId(root, ws, a.connectorId, catalog);
+      if ("error" in connector) return fail(connector.error);
+      const inputs = a.type === "connector" && connector.id && a.operationId ? catalogInputs(root, ws, connector.id, a.operationId, a, catalog) : { inputs: a.inputs };
+      if ("error" in inputs) return fail(inputs.error);
+      const spec = buildToolSpec({ ...a, connectorId: connector.id, inputs: inputs.inputs });
+      if (typeof spec === "string") return fail(spec);
       const r = addTool(root, spec, ws.schemaName ?? undefined);
       const validation = validateWorkspaceFiles(root, r.file).files[0]?.diagnostics ?? [];
       return text({ ...r, catalog, validation, layoutNote: layoutNote(ws), yaml: fs.readFileSync(r.file, "utf8") });
@@ -873,6 +788,72 @@ server.registerTool(
     }
   },
 );
+
+type AddToolArgs = {
+  type: "connector" | "mcp" | "flow" | "prompt" | "connected-agent" | "child-agent" | "raw";
+  name: string;
+  description: string;
+  modelDescription?: string;
+  connectorId?: string;
+  operationId?: string;
+  connectionReference?: string;
+  connectionMode?: "Invoker" | "Maker";
+  flowId?: string;
+  aiModelId?: string;
+  botSchemaName?: string;
+  gptComponentSchemaName?: string;
+  action?: Record<string, unknown>;
+  inputs?: z.infer<typeof toolInput>[];
+  inputsFromCatalog?: boolean;
+  outputs?: string[];
+  overwrite?: boolean;
+};
+
+/** A display name such as "Office 365 Outlook" is resolved through the cached list or the seed; shared_ names pass through. */
+function resolveConnectorId(root: string, ws: WorkspaceInfo, connectorId: string | undefined, catalog: Record<string, unknown>): { id: string | undefined } | { error: string } {
+  if (!connectorId || /^shared_/i.test(connectorId) || /^[a-z0-9_]+$/i.test(connectorId)) return { id: connectorId };
+  const cached = ws.sync.environmentId ? readConnectorList(catalogDir(root), ws.sync.environmentId)?.connectors : null;
+  const hit = searchConnectors(connectorId, cached ?? loadSeed());
+  if (hit.length !== 1) return { error: `connectorId '${connectorId}' is ambiguous or unknown (${hit.length} matches: ${hit.slice(0, 8).map((h) => h.name).join(", ")}). Use cs_list_connectors and pass the shared_ name.` };
+  catalog.resolvedConnector = { from: connectorId, to: hit[0].name, displayName: hit[0].displayName };
+  return { id: hit[0].name };
+}
+
+/** Check the operation against the cached connector definition and, when no inputs were given, derive them from it. */
+function catalogInputs(root: string, ws: WorkspaceInfo, connectorId: string, operationId: string, a: Pick<AddToolArgs, "inputs" | "inputsFromCatalog">, catalog: Record<string, unknown>): { inputs: AddToolArgs["inputs"] } | { error: string } {
+  const chk = checkOperation(catalogDir(root), ws.sync.environmentId, connectorId, operationId);
+  catalog.operationCheck = chk;
+  if (chk.known && chk.operationFound === false) return { error: chk.message ?? "operation not found in the cached connector definition" };
+  if (!chk.known || (a.inputs && a.inputs.length > 0) || a.inputsFromCatalog === false) return { inputs: a.inputs };
+  const def = readConnectorDefinition(catalogDir(root), ws.sync.environmentId, connectorId);
+  const op = def?.operations.find((o) => o.operationId === operationId);
+  if (!op) return { inputs: a.inputs };
+  const inputs = inputsFromOperation(op);
+  catalog.inputsFromCatalog = inputs.map((i) => i.name);
+  return { inputs };
+}
+
+/** Per-type spec for addTool; returns an error message when a required field for the type is missing. */
+function buildToolSpec(a: AddToolArgs): ToolSpec | string {
+  const base = { name: a.name, description: a.description, modelDescription: a.modelDescription, inputs: a.inputs, outputs: a.outputs, overwrite: a.overwrite };
+  const connection = { connectionReference: a.connectionReference, connectionMode: a.connectionMode };
+  switch (a.type) {
+    case "flow":
+      return a.flowId ? { ...base, type: "flow", flowId: a.flowId } : "flowId is required for type 'flow'";
+    case "connector":
+      return a.connectorId && a.operationId ? { ...base, ...connection, type: "connector", connectorId: a.connectorId, operationId: a.operationId } : "connectorId and operationId are required for type 'connector'";
+    case "mcp":
+      return a.connectorId ? { ...base, ...connection, type: "mcp", connectorId: a.connectorId, operationId: a.operationId } : "connectorId is required for type 'mcp' (the connector that wraps the MCP server)";
+    case "prompt":
+      return a.aiModelId ? { ...base, type: "prompt", aiModelId: a.aiModelId } : "aiModelId is required for type 'prompt' (see cs_list_prompts)";
+    case "connected-agent":
+      return a.botSchemaName ? { ...base, type: "connected-agent", botSchemaName: a.botSchemaName } : "botSchemaName is required for type 'connected-agent'";
+    case "child-agent":
+      return a.gptComponentSchemaName ? { ...base, type: "child-agent", gptComponentSchemaName: a.gptComponentSchemaName } : "gptComponentSchemaName is required for type 'child-agent'";
+    default:
+      return a.action ? { ...base, type: "raw", action: a.action } : "action is required for type 'raw'";
+  }
+}
 
 // ---- tool catalog ---------------------------------------------------------
 

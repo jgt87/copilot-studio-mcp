@@ -83,8 +83,10 @@ Cross-cutting behaviour in `src/index.ts`:
   returns `dryRun()` unless `confirm: true`. Keep new mutating tools on this pattern.
 - **Context resolution** (`cloudContext`): explicit args, then workspace sync metadata, then
   `CPS_*` env vars, then a BAP lookup for the Dataverse URL. Tenant falls back to `organizations`.
-- **Validation gate**: `cs_push` runs `validateWorkspaceFiles` (schema checks plus cross-file
-  checks for connection references and topic redirects) and blocks on errors unless `force`.
+- **Validation gate**: `cs_push` runs `validateWorkspace` from `src/validate.ts` (schema checks
+  plus cross-file checks for connection references, catalog operations and topic redirects) and
+  blocks on errors unless `force`. index.ts is the registration hub only: handlers resolve context,
+  call a module function and shape the result; put logic in modules with unit tests, not in handlers.
 - **Chat routing** (`runChat`): `transport: auto` reads the bot's `authenticationmode` from
   Dataverse; 1 or 3 goes to DirectLine (token endpoint derived from environment id + schema name,
   no app needed), 2 requires the caller's own app id and the `CopilotStudio.Copilots.Invoke` scope.
