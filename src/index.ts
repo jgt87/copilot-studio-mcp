@@ -776,7 +776,7 @@ server.registerTool(
       const catalog: Record<string, unknown> = {};
       const connector = resolveConnectorId(root, ws, a.connectorId, catalog);
       if ("error" in connector) return fail(connector.error);
-      const inputs = a.type === "connector" && connector.id && a.operationId ? catalogInputs(root, ws, connector.id, a.operationId, a, catalog) : { inputs: a.inputs };
+      const inputs = a.type === "connector" && connector.id && a.operationId ? catalogInputs({ root, environmentId: ws.sync.environmentId, connectorId: connector.id, operationId: a.operationId }, a, catalog) : { inputs: a.inputs };
       if ("error" in inputs) return fail(inputs.error);
       const spec = buildToolSpec({ ...a, connectorId: connector.id, inputs: inputs.inputs });
       if (typeof spec === "string") return fail(spec);
@@ -820,39 +820,55 @@ function resolveConnectorId(root: string, ws: WorkspaceInfo, connectorId: string
 }
 
 /** Check the operation against the cached connector definition and, when no inputs were given, derive them from it. */
-function catalogInputs(root: string, ws: WorkspaceInfo, connectorId: string, operationId: string, a: Pick<AddToolArgs, "inputs" | "inputsFromCatalog">, catalog: Record<string, unknown>): { inputs: AddToolArgs["inputs"] } | { error: string } {
-  const chk = checkOperation(catalogDir(root), ws.sync.environmentId, connectorId, operationId);
+function catalogInputs(target: { root: string; environmentId: string | null; connectorId: string; operationId: string }, a: Pick<AddToolArgs, "inputs" | "inputsFromCatalog">, catalog: Record<string, unknown>): { inputs: AddToolArgs["inputs"] } | { error: string } {
+  const chk = checkOperation(catalogDir(target.root), target.environmentId, target.connectorId, target.operationId);
   catalog.operationCheck = chk;
   if (chk.known && chk.operationFound === false) return { error: chk.message ?? "operation not found in the cached connector definition" };
-  if (!chk.known || (a.inputs && a.inputs.length > 0) || a.inputsFromCatalog === false) return { inputs: a.inputs };
-  const def = readConnectorDefinition(catalogDir(root), ws.sync.environmentId, connectorId);
-  const op = def?.operations.find((o) => o.operationId === operationId);
+  const callerGaveInputs = Boolean(a.inputs && a.inputs.length > 0);
+  if (!chk.known || callerGaveInputs || a.inputsFromCatalog === false) return { inputs: a.inputs };
+  const def = readConnectorDefinition(catalogDir(target.root), target.environmentId, target.connectorId);
+  const op = def?.operations.find((o) => o.operationId === target.operationId);
   if (!op) return { inputs: a.inputs };
   const inputs = inputsFromOperation(op);
   catalog.inputsFromCatalog = inputs.map((i) => i.name);
   return { inputs };
 }
 
+/**
+ * Per-type spec builders for addTool: which arguments the type needs, the
+ * message when one is missing, and how to shape the spec.
+ */
+const TOOL_SPEC_BUILDERS: Record<AddToolArgs["type"], { requires: (keyof AddToolArgs)[]; missing: string; build: (a: AddToolArgs) => ToolSpec }> = {
+  flow: { requires: ["flowId"], missing: "flowId is required for type 'flow'", build: (a) => ({ ...toolBase(a), type: "flow", flowId: a.flowId as string }) },
+  connector: {
+    requires: ["connectorId", "operationId"],
+    missing: "connectorId and operationId are required for type 'connector'",
+    build: (a) => ({ ...toolBase(a), ...toolConnection(a), type: "connector", connectorId: a.connectorId as string, operationId: a.operationId as string }),
+  },
+  mcp: {
+    requires: ["connectorId"],
+    missing: "connectorId is required for type 'mcp' (the connector that wraps the MCP server)",
+    build: (a) => ({ ...toolBase(a), ...toolConnection(a), type: "mcp", connectorId: a.connectorId as string, operationId: a.operationId }),
+  },
+  prompt: { requires: ["aiModelId"], missing: "aiModelId is required for type 'prompt' (see cs_list_prompts)", build: (a) => ({ ...toolBase(a), type: "prompt", aiModelId: a.aiModelId as string }) },
+  "connected-agent": { requires: ["botSchemaName"], missing: "botSchemaName is required for type 'connected-agent'", build: (a) => ({ ...toolBase(a), type: "connected-agent", botSchemaName: a.botSchemaName as string }) },
+  "child-agent": { requires: ["gptComponentSchemaName"], missing: "gptComponentSchemaName is required for type 'child-agent'", build: (a) => ({ ...toolBase(a), type: "child-agent", gptComponentSchemaName: a.gptComponentSchemaName as string }) },
+  raw: { requires: ["action"], missing: "action is required for type 'raw'", build: (a) => ({ ...toolBase(a), type: "raw", action: a.action as Record<string, unknown> }) },
+};
+
+function toolBase(a: AddToolArgs) {
+  return { name: a.name, description: a.description, modelDescription: a.modelDescription, inputs: a.inputs, outputs: a.outputs, overwrite: a.overwrite };
+}
+
+function toolConnection(a: AddToolArgs) {
+  return { connectionReference: a.connectionReference, connectionMode: a.connectionMode };
+}
+
 /** Per-type spec for addTool; returns an error message when a required field for the type is missing. */
 function buildToolSpec(a: AddToolArgs): ToolSpec | string {
-  const base = { name: a.name, description: a.description, modelDescription: a.modelDescription, inputs: a.inputs, outputs: a.outputs, overwrite: a.overwrite };
-  const connection = { connectionReference: a.connectionReference, connectionMode: a.connectionMode };
-  switch (a.type) {
-    case "flow":
-      return a.flowId ? { ...base, type: "flow", flowId: a.flowId } : "flowId is required for type 'flow'";
-    case "connector":
-      return a.connectorId && a.operationId ? { ...base, ...connection, type: "connector", connectorId: a.connectorId, operationId: a.operationId } : "connectorId and operationId are required for type 'connector'";
-    case "mcp":
-      return a.connectorId ? { ...base, ...connection, type: "mcp", connectorId: a.connectorId, operationId: a.operationId } : "connectorId is required for type 'mcp' (the connector that wraps the MCP server)";
-    case "prompt":
-      return a.aiModelId ? { ...base, type: "prompt", aiModelId: a.aiModelId } : "aiModelId is required for type 'prompt' (see cs_list_prompts)";
-    case "connected-agent":
-      return a.botSchemaName ? { ...base, type: "connected-agent", botSchemaName: a.botSchemaName } : "botSchemaName is required for type 'connected-agent'";
-    case "child-agent":
-      return a.gptComponentSchemaName ? { ...base, type: "child-agent", gptComponentSchemaName: a.gptComponentSchemaName } : "gptComponentSchemaName is required for type 'child-agent'";
-    default:
-      return a.action ? { ...base, type: "raw", action: a.action } : "action is required for type 'raw'";
-  }
+  const builder = TOOL_SPEC_BUILDERS[a.type] ?? TOOL_SPEC_BUILDERS.raw;
+  const missing = builder.requires.some((key) => !a[key]);
+  return missing ? builder.missing : builder.build(a);
 }
 
 // ---- tool catalog ---------------------------------------------------------
