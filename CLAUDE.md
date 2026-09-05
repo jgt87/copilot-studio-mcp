@@ -42,7 +42,9 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   overwrite unless asked).
 - **Cloud** (`src/auth.ts`, `src/cloud/*`): MSAL public client (first-party VS Code client id by
   default, `CPS_CLIENT_ID` overrides); every HTTP client takes an injectable `fetchImpl` so it can
-  be tested with recorded responses. `ppapi.ts` is the evaluation API (list/run/get only; no
+  be tested with recorded responses. All permissions are delegated (no client-credential flow);
+  the README section "Authentication and app registration" is the source of truth for which API
+  and permission each tool needs. Keep it in sync when adding a cloud call. `ppapi.ts` is the evaluation API (list/run/get only; no
   create), `dataverse.ts` lists bots and publishes via the `PvaPublish` bound action polled on
   `publishedon`, `bap.ts` resolves environments, `chat.ts` speaks DirectLine v3 or the Copilot
   Studio client SDK.

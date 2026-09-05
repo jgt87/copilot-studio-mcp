@@ -44,8 +44,50 @@ with `--environment`). The authoring tools tell you when you are in a pack-only 
 - For sync commands: a pac auth profile, created interactively once: `pac auth create --environment <id or URL>`
 - For cloud tools (evaluations, environments, publish via Dataverse, chat): an Entra sign-in via
   `cs_login`. By default the first-party VS Code client id is used (no app registration needed);
-  set `CPS_CLIENT_ID` to use your own. Entra-SSO agents additionally need your own app registration
-  with the delegated permission `CopilotStudio.Copilots.Invoke` for `cs_chat`.
+  see [Authentication and app registration](#authentication-and-app-registration) for when you
+  need your own and which permissions it must have.
+
+## Authentication and app registration
+
+The server signs users in with an MSAL **public client** (interactive browser or device code). It
+never uses client secrets, so every permission it needs is a **delegated** permission acting as the
+signed-in user. Application permissions are listed below only where Microsoft offers them, for
+people who build a headless pipeline on top of the same APIs.
+
+Do you need your own app registration?
+
+| Situation | App registration needed? |
+| --- | --- |
+| `pac` commands (`cs_init_agent`, `cs_clone_agent`, `cs_pull`, `cs_push`, `cs_pack`, `cs_publish` via pac, all `cs_*_solution` tools) | No. `pac auth create` signs in with Microsoft's own first-party app. |
+| Cloud tools with the default client id (`cs_list_environments`, `cs_list_agents` via Dataverse, `cs_publish` via Dataverse, evaluations, `cs_chat` for no-auth or manual-auth agents) | No. The server uses the first-party VS Code client id `51f81489-12ee-4a9e-aaae-a2591f45987d`, which is pre-authorised for Power Platform API, Dataverse and the Power Apps service. Microsoft's own Copilot Studio tooling uses the same id. |
+| Same tools, but your tenant blocks that id (app consent policy, conditional access, "user assignment required") | Yes. Create the registration below and set `CPS_CLIENT_ID`. |
+| `cs_chat` with an agent that uses **integrated authentication (Entra SSO)** | Yes, always. The first-party id does not carry `CopilotStudio.Copilots.Invoke` for third parties. Pass `clientId` to `cs_chat` or set `CPS_CLIENT_ID`. |
+| Headless CI (service principal, no user) | Not supported by this server today (public client only). For pipelines use `pac auth create --applicationId ... --clientSecret ...` with a Dataverse application user, or the Power Platform API with an RBAC role assigned to the service principal. |
+
+Permissions for your own app registration (Entra ID > App registrations > API permissions > "APIs my organization uses"):
+
+| Used by | API to pick in Entra | Permission | Delegated or application | Notes |
+| --- | --- | --- | --- | --- |
+| `cs_chat` (transport `sdk`, Entra-SSO agents) | **Power Platform API** (app id `8578e004-a5c6-46e7-913e-12f58912df43`) | `CopilotStudio.Copilots.Invoke` | Delegated is what this server uses. An application permission of the same name exists for confidential clients (Microsoft 365 Agents SDK); not used here. | Admin consent is normally required. Redirect URI `http://localhost` (Mobile and desktop applications). |
+| `cs_list_test_sets`, `cs_run_evaluation`, `cs_get_evaluation_run`, `cs_list_evaluation_runs` | **Power Platform API** | Token scope `https://api.powerplatform.com/.default`. The evaluation endpoints declare only `.default`; the permission reference has no finer-grained evaluation permission. | Delegated only. Power Platform API has no application permissions; service principals get access through RBAC roles instead. | Verified with the first-party id by Microsoft's own tooling. Not yet verified with a custom registration; if calls return 403, the signed-in user needs maker access to the agent. |
+| `cs_list_environments` and automatic Dataverse URL lookup | **PowerApps Service** (app id `475226c6-020e-4fb2-8a90-7a972cbfc1d4`) | `User` ("Access the Power Apps Service API") | Delegated. | Calls the BAP environments API (`api.bap.microsoft.com`). |
+| `cs_list_agents` (via `dataverse`), `cs_publish` (via `dataverse`), authentication-mode detection in `cs_chat` | **Dynamics CRM** (Dataverse, app id `00000007-0000-0000-c000-000000000000`) | `user_impersonation` | Delegated. There is no application permission; server-to-server access to Dataverse means an **application user** with a security role in each environment. | The user still needs a Dataverse security role that can read and publish bots (System Customizer or a Copilot Studio maker role). |
+| `cs_chat` for no-auth or manual-auth agents (DirectLine) | none | none | not applicable | The DirectLine token endpoint of a published agent is anonymous. |
+| `pac` interactive sign-in | none | none | not applicable | Microsoft's own app; `pac auth create --environment <id>`. |
+
+Steps for your own registration:
+
+1. Entra ID > App registrations > New registration. Single tenant. Under **Authentication** add the
+   platform **Mobile and desktop applications** with redirect URI `http://localhost` (the loopback
+   MSAL uses for `cs_login` interactive). Set **Allow public client flows** to Yes if you plan to use
+   `cs_login` with `mode: device_code`.
+2. Add the permissions from the table. If **Power Platform API** does not appear when you search
+   by name or by the id above, its service principal is missing from your tenant; create it with
+   `az ad sp create --id 8578e004-a5c6-46e7-913e-12f58912df43` (or
+   `New-MgServicePrincipal -AppId 8578e004-a5c6-46e7-913e-12f58912df43`) and search again.
+3. **Grant admin consent** for the tenant, or let each user consent interactively on first sign-in.
+4. Put the ids in the MCP server environment: `CPS_CLIENT_ID=<application (client) id>` and
+   `CPS_TENANT_ID=<directory (tenant) id>`. `cs_chat` also accepts `clientId` per call.
 
 ## Install and register
 
