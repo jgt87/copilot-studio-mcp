@@ -133,6 +133,26 @@ sequenceDiagram
     Agent->>MCP: cs_publish confirm, then cs_chat
 ```
 
+## Flow 6: pull a whole solution and redeploy it 1:1
+
+Solution export/import is the vehicle for moving between environments; per-agent sync workspaces
+stay bound to their source environment.
+
+```mermaid
+flowchart TD
+    A["cs_list_solutions<br/>source environment"] --> B["cs_describe_solution<br/>agents, flows, connection references,<br/>environment variables, connectors"]
+    B --> C["cs_pull_solution targetDir<br/>export unmanaged + managed zips<br/>unpack to src/<br/>deployment-settings.json<br/>clone every agent to agents/"]
+    C --> D["cs_list_connections<br/>target environment"]
+    D --> E["cs_create_deployment_settings<br/>map connection references to target connection ids<br/>set environment variable values"]
+    E --> F{"anything unmapped?"}
+    F -- yes --> D
+    F -- no --> G["cs_deploy_solution confirm<br/>pac solution import with settings file"]
+    G --> H["publish each agent in the target<br/>(automatic)"]
+    H --> I["portal checks: tool connections,<br/>knowledge outside the solution, channels"]
+    C -. "edit agents/<name> workspaces,<br/>cs_push to the source" .-> C
+    C -. "edit src/ then cs_pack_solution" .-> G
+```
+
 ## The confirm contract
 
 ```mermaid

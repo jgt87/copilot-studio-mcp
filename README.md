@@ -94,6 +94,16 @@ Setup and sync (pac)
 | `cs_pack`, `cs_import_solution`, `cs_publish` | package, import, publish |
 | `cs_pac` | run any pac command (read-only ones immediately, others with `confirm`) |
 
+Solutions (pull everything, redeploy 1:1 into another environment)
+
+| Tool | Purpose |
+| --- | --- |
+| `cs_list_solutions`, `cs_list_connections` | solutions in an environment; connections available in a target environment |
+| `cs_describe_solution` | export + unpack + inventory: agents, bot components, flows, connection references, environment variables, custom connectors |
+| `cs_pull_solution` | export (unmanaged and managed), unpack to `src/`, write `solution.json`, create `deployment-settings.json`, clone every agent into `agents/` |
+| `cs_create_deployment_settings` | map connection references to target connection ids and set environment variable values |
+| `cs_pack_solution`, `cs_deploy_solution` | pack an edited `src/`; import into the target with the settings file and publish each agent (`confirm`) |
+
 Authoring (files, schema-validated)
 
 | Tool | Purpose |
@@ -182,6 +192,41 @@ flowchart TD
 ```
 
 Existing agent: `cs_clone_agent` -> edit -> `cs_pull` -> `cs_validate` -> `cs_push confirm`.
+
+Whole solution to another environment: `cs_pull_solution` -> `cs_list_connections` (target) ->
+`cs_create_deployment_settings` -> `cs_deploy_solution confirm`.
+
+### Caveats when moving a solution between environments
+
+No tooling removes these; plan for them before calling the copy "1:1":
+
+- **Connections are not part of a solution.** A solution carries connection *references*; the
+  connections themselves (the authorised links to SharePoint, Outlook, Dataverse, MCP servers, ...)
+  must already exist in the target environment, created and consented by a user there. The
+  deployment settings file maps each connection reference to one of those connection ids.
+  `cs_deploy_solution` refuses to import while any reference is unmapped unless you pass
+  `allowUnmapped: true`; in that case the tools stay unbound until someone binds them in the portal.
+- **Cloud flows land switched off** when their connection references cannot be resolved. Bind the
+  connections, then turn the flows on in the target.
+- **Environment variables need target values.** The settings file lists every variable; leave a value
+  empty and the target inherits the default from the solution, which is usually a dev value.
+- **Who can use the agent is per environment.** The settings file has a `CopilotAgents` section with
+  an `AadGroupId` per agent (verified with pac 2.11.2). Map it to the Entra security group for the
+  target (`copilotAgents` in `cs_create_deployment_settings`) or set access in the target portal after
+  import; an all-zero id means no group is set.
+- **Some agent content lives outside the solution.** Uploaded knowledge files, Dataverse tables used as
+  knowledge, SharePoint permissions, and channel configuration (Teams, web, Microsoft 365 Copilot)
+  are environment-specific. After import, check knowledge sources and re-publish to channels in the
+  target portal.
+- **Agents must be published in the target.** Importing makes the definition exist; `cs_deploy_solution`
+  runs `pac copilot publish` for each agent afterwards (`publishAgents`, default on).
+- **Managed vs unmanaged.** `cs_pull_solution` exports both. Deploy managed for downstream
+  environments (test, production) and keep unmanaged only for development environments; a managed
+  import cannot be edited in place in the target.
+- **Per-agent sync does not cross environments.** Workspaces from `cs_clone_agent` or
+  `cs_pull_solution` push back to their source environment only. Solution export/import is the
+  vehicle for moving; edit the `agents/<name>` workspace, push to the source, then pull and deploy
+  the solution again.
 
 ## Development
 

@@ -47,6 +47,14 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   `publishedon`, `bap.ts` resolves environments, `chat.ts` speaks DirectLine v3 or the Copilot
   Studio client SDK.
 
+- **Solutions** (`src/solutions.ts`): the ALM path for "pull everything" and "redeploy 1:1":
+  `pac solution list/export/unpack/pack/create-settings/import` wrappers, an inventory parser over an
+  unpacked folder (`bots/`, `botcomponents/` with the `data` YAML `kind`, `<Workflow>` and
+  `<connectionreference>` entries in `Other/Customizations.xml`, `environmentvariabledefinitions/`),
+  and the deployment settings file. `cs_pull_solution` writes `solution.json` (a `PullManifest`) that
+  `cs_deploy_solution` reads. Per-agent sync workspaces stay bound to their source environment; only
+  solution import moves things between environments.
+
 Cross-cutting behaviour in `src/index.ts`:
 
 - **Confirm contract**: every tool that mutates a live environment (`cs_push`, `cs_publish`,
@@ -79,6 +87,9 @@ stdout is the MCP transport. All diagnostics go through `log()` to stderr.
   `configuration.authoringModel: CliCopilot`; instructions live in
   `configuration.agentSettings.instructions.segments`. Never change `authoringModel`,
   `recognizer.kind` or `template` (`cs_update_settings` refuses).
+- `pac solution create-settings` (2.11.2) emits `EnvironmentVariables` (with DefaultValue, Name,
+  TypeId, IsRequired), `ConnectionReferences`, and a `CopilotAgents` section with `AadGroupId` per
+  agent. `readDeploymentSettings` keeps the raw object so a rewrite never drops fields.
 - js-yaml 5 has no default export: `import * as yaml from "js-yaml"`.
 - Heredocs in the Bash tool break on non-ASCII characters; keep sources ASCII or use the Write tool.
 
@@ -112,3 +123,8 @@ Nothing below the unit tests and the pack oracle has been run against a tenant.
    against `cs_add_tool` / `cs_add_flow` output; then drop the experimental flag on `cs_add_flow`.
 7. Check whether the clone contains evaluation test sets as YAML (`TestCaseComponent`,
    `EvaluationSet`, `EvaluationData` exist in the schema); if yes, write them instead of a CSV.
+8. `cs_pull_solution` on a solution with two agents, a flow and a connector tool; then
+   `cs_list_connections` on a second environment, `cs_create_deployment_settings`,
+   `cs_deploy_solution confirm`; confirm agents publish and tools show as connected. Check the
+   `pac connection list` column layout against `parseConnectionList` (built from documentation,
+   not a live run).

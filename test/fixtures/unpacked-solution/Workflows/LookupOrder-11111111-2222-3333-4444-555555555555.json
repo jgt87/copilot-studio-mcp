@@ -1,0 +1,1 @@
+{ "properties": { "connectionReferences": {}, "definition": { "triggers": { "manual": { "type": "Request", "kind": "Skills" } }, "actions": {} } }, "schemaVersion": "1.0.0.0" }

@@ -80,7 +80,7 @@ try {
   const list = await request("tools/list", {});
   const names = (list.result?.tools ?? []).map((t) => t.name);
   check("tools/list", names.length >= 30, `${names.length} tools`);
-  for (const n of ["cs_doctor", "cs_describe_workspace", "cs_validate", "cs_add_topic", "cs_push", "cs_run_evaluation", "cs_chat"]) check(`tool ${n} registered`, names.includes(n));
+  for (const n of ["cs_doctor", "cs_describe_workspace", "cs_validate", "cs_add_topic", "cs_push", "cs_run_evaluation", "cs_chat", "cs_pull_solution", "cs_deploy_solution", "cs_create_deployment_settings"]) check(`tool ${n} registered`, names.includes(n));
 
   const doctor = await callTool("cs_doctor", { workspace });
   check("cs_doctor", !doctor.isError && doctor.json?.serverVersion, doctor.json?.pac?.version ? `pac ${doctor.json.pac.version}` : "pac not found");
@@ -99,6 +99,10 @@ try {
 
   const pac = await callTool("cs_pac", { args: ["solution", "import", "--path", "x.zip"] });
   check("cs_pac requires confirm for mutations", pac.json?.dryRun === true);
+
+  const fixtureSolution = path.join(here, "..", "test", "fixtures", "unpacked-solution");
+  const deploy = await callTool("cs_deploy_solution", { targetEnvironment: "00000000-0000-0000-0000-000000000000", zip: "nonexistent.zip", srcFolder: fixtureSolution });
+  check("cs_deploy_solution dry-run without confirm", deploy.json?.dryRun === true, deploy.json?.wouldDo?.slice(0, 60));
 
   check("stdout carried only JSON-RPC", nonJson.length === 0, nonJson.length ? nonJson[0].slice(0, 80) : "");
 } catch (err) {

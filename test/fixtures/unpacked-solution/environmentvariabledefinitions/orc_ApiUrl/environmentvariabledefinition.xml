@@ -1,0 +1,13 @@
+<environmentvariabledefinition schemaname="orc_ApiUrl">
+  <defaultvalue>https://api.example.com</defaultvalue>
+  <displayname default="API URL">
+    <label description="API URL" languagecode="1033" />
+  </displayname>
+  <introducedversion>1.0.0.0</introducedversion>
+  <iscustomizable>1</iscustomizable>
+  <isrequired>0</isrequired>
+  <secretstore>0</secretstore>
+  <statecode>0</statecode>
+  <statuscode>1</statuscode>
+  <type>100000000</type>
+</environmentvariabledefinition>

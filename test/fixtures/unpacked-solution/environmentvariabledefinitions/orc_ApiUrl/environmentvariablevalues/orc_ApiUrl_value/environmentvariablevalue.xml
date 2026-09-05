@@ -1,0 +1,7 @@
+<environmentvariablevalue environmentvariablevalueid="{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}">
+  <iscustomizable>1</iscustomizable>
+  <schemaname>orc_ApiUrl_value</schemaname>
+  <statecode>0</statecode>
+  <statuscode>1</statuscode>
+  <value>https://api.contoso.com</value>
+</environmentvariablevalue>
