@@ -153,6 +153,33 @@ flowchart TD
     C -. "edit src/ then cs_pack_solution" .-> G
 ```
 
+## Flow 7: compare environments in a DTAP pipeline
+
+```mermaid
+flowchart LR
+    subgraph Capture["cs_snapshot_environment (per stage)"]
+        D["DEV"] --> S1["snapshots/DEV"]
+        T["TEST"] --> S2["snapshots/TEST"]
+        AC["ACC"] --> S3["snapshots/ACC"]
+        P["PROD"] --> S4["snapshots/PROD"]
+    end
+    S1 --> C1["cs_compare_snapshots<br/>DEV vs TEST"]
+    S2 --> C1
+    S2 --> C2["cs_compare_snapshots<br/>TEST vs ACC"]
+    S3 --> C2
+    S3 --> C3["cs_compare_snapshots<br/>ACC vs PROD"]
+    S4 --> C3
+    C1 --> R["reports/*.md + *.json<br/>DRIFT or no drift<br/>failOnDrift gates the pipeline"]
+    C2 --> R
+    C3 --> R
+    R --> F{"drift?"}
+    F -- "agent YAML / version" --> G["promote again: cs_pull_solution -> cs_deploy_solution"]
+    F -- "connections / variables / flows" --> H["fix deployment settings, redeploy"]
+    F -- "unpublished changes" --> I["cs_publish in that stage"]
+```
+
+`cs_compare_environments` runs the whole chain in one call.
+
 ## The confirm contract
 
 ```mermaid

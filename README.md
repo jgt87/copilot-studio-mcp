@@ -146,6 +146,14 @@ Solutions (pull everything, redeploy 1:1 into another environment)
 | `cs_create_deployment_settings` | map connection references to target connection ids and set environment variable values |
 | `cs_pack_solution`, `cs_deploy_solution` | pack an edited `src/`; import into the target with the settings file and publish each agent (`confirm`) |
 
+Environment comparison (DTAP)
+
+| Tool | Purpose |
+| --- | --- |
+| `cs_snapshot_environment` | capture one environment into a folder: solution version, every agent cloned, flows, connection references, environment variables, publish state |
+| `cs_compare_snapshots` | offline diff of two snapshots with a Markdown + JSON report; `failOnDrift` for pipeline gates |
+| `cs_compare_environments` | snapshot an ordered chain (DEV, TEST, ACC, PROD) and compare each adjacent pair |
+
 Authoring (files, schema-validated)
 
 | Tool | Purpose |
@@ -269,6 +277,77 @@ No tooling removes these; plan for them before calling the copy "1:1":
   `cs_pull_solution` push back to their source environment only. Solution export/import is the
   vehicle for moving; edit the `agents/<name>` workspace, push to the source, then pull and deploy
   the solution again.
+
+## Comparing environments in a DTAP pipeline
+
+When the same solution is promoted through development, test, acceptance and production, the
+question is whether each stage still holds what the previous one holds. The platform has no
+cross-environment diff, but every input is reachable, so the server captures each environment into a
+**snapshot folder** and compares snapshots offline.
+
+### The process
+
+1. **Snapshot each stage** with `cs_snapshot_environment` (or all at once with
+   `cs_compare_environments`). A snapshot folder contains:
+
+   ```
+   snapshots/TEST/
+     snapshot.json         label, environment, time, solution version and managed flag,
+                           agents with publish state, flows, connection references,
+                           environment variables, notes
+     agents/<Agent name>/  the agent as YAML, from pac copilot clone
+   ```
+
+   Agents are cloned with `pac copilot clone` rather than exported as a solution, because a managed
+   solution cannot be exported from test or production. Clone is a read operation and is expected to
+   work on managed agents; that has not been verified live yet (see caveats). Flows, connection
+   references, environment variables and publish state come from Dataverse and are included when
+   you are signed in with `cs_login`; otherwise the snapshot notes that they were skipped.
+2. **Compare adjacent stages** with `cs_compare_snapshots` (DEV vs TEST, TEST vs ACC, ACC vs PROD).
+   Each comparison writes `<A>-vs-<B>.md` and `.json`.
+3. **Read the verdict.** A report starts with `DRIFT` or `no drift`, then lists the drift, the
+   expected differences, and tables per layer with unified diffs for changed agent files.
+4. **Act on it.** Drift in agent YAML means the later stage is behind or was edited in place: promote
+   again with the solution flow above. Unbound connection references, missing flows, or variables
+   without a value are deployment-settings problems: fix the settings file and redeploy.
+5. **Keep history.** Snapshot folders are plain files; commit them (without `.mcs/` state) to get
+   a timeline per stage.
+
+### What counts as drift, and what is expected
+
+| Layer | Drift | Expected difference (reported, not drift) |
+| --- | --- | --- |
+| Solution | version differs, missing in a stage | managed in later stages, unmanaged in development |
+| Agent YAML (topics, instructions, knowledge, tools, triggers, variables) | any changed, added or removed file after normalisation | ids, audit info, version fields, connection ids inside `connectionreferences.mcs.yml` (removed before diffing) |
+| Publish state | modified after last publish in any stage (unpublished changes) | |
+| Flows | missing in a stage, on/off state differs | |
+| Connection references | missing, connector differs, unbound in a stage | bound to a different connection per stage |
+| Environment variables | missing, no value in a stage | different values per stage (drift only with `strictVariables`) |
+| Authentication mode | differs between stages | |
+
+### Pipeline gate
+
+`cs_compare_snapshots` and `cs_compare_environments` accept `failOnDrift`; the tool result is then
+an error, which a scripted MCP client or a pipeline step can turn into a failed job. A typical gate
+before promoting TEST to ACC:
+
+```
+cs_snapshot_environment label=TEST environment=<test id> dir=snapshots/TEST solution=<name>
+cs_snapshot_environment label=ACC  environment=<acc id>  dir=snapshots/ACC  solution=<name>
+cs_compare_snapshots a=snapshots/TEST b=snapshots/ACC failOnDrift=true
+```
+
+### Caveats
+
+- All stages must be reachable from the active pac auth profile (same tenant). For chains that span
+  tenants, run `pac auth select` between stages and snapshot them one by one.
+- Whether `pac copilot clone` succeeds on a managed agent has not been verified live yet (see
+  docs/STATUS.md); if it refuses, the fallback is reading the same component definitions through the
+  Dataverse Web API.
+- Uploaded knowledge files and channel configuration are environment-specific and outside the
+  cloned YAML; the snapshot lists files by name and size only.
+- Without a Dataverse sign-in the comparison covers solution version and agent YAML only; the
+  report says so in its notes.
 
 ## Development
 

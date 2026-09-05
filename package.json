@@ -42,6 +42,7 @@
     "@microsoft/agents-activity": "^1.8.1",
     "@microsoft/agents-copilotstudio-client": "^1.8.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "diff": "^8.0.4",
     "js-yaml": "^5.4.1",
     "zod": "^3.25.76"
   },

@@ -13,6 +13,7 @@ Plan: `~/.claude/plans/twinkly-inventing-hopper.md` (approved 2026-09-05).
 | 7 Evaluations | done (code) | PPAPI list/run/get/summarize; CSV builder; local conversation tests |
 | 8 Packaging + registration | done | README, CLAUDE.md, `.vscode/mcp.json`; stdio smoke test; registered in Claude Code (user scope, connected) and in the `C:\Files\Apps` workspace `.vscode/mcp.json`; public repo https://github.com/jgt87/copilot-studio-mcp |
 | 9 Solution ALM (added 2026-09-05 on request) | done (code) | `cs_list_solutions`, `cs_list_connections`, `cs_describe_solution`, `cs_pull_solution`, `cs_create_deployment_settings`, `cs_pack_solution`, `cs_deploy_solution`; inventory parser + settings file verified offline |
+| 10 DTAP comparison (added 2026-09-05 on request) | done (code) | `cs_snapshot_environment`, `cs_compare_snapshots`, `cs_compare_environments`; comparison logic unit-tested on synthetic snapshots; capture path (clone per agent, Dataverse reads) untested live |
 
 ## Verified offline (2026-09-05)
 

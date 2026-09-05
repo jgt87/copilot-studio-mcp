@@ -57,6 +57,12 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   `cs_deploy_solution` reads. Per-agent sync workspaces stay bound to their source environment; only
   solution import moves things between environments.
 
+- **Comparison** (`src/compare.ts`): DTAP snapshots and diffs. A snapshot is `snapshot.json` plus
+  `agents/<Agent>/` clones; `compareSnapshots` normalises YAML (drops `DEFAULT_IGNORED_KEYS`, skips
+  `.mcs/`, icons, sync markers), diffs with the `diff` package, and separates drift from expected
+  per-stage differences (connection bindings, variable values, managed flag). Dataverse reads for
+  flows / connection references / variables / publish state are optional and use a silent token only.
+
 Cross-cutting behaviour in `src/index.ts`:
 
 - **Confirm contract**: every tool that mutates a live environment (`cs_push`, `cs_publish`,

@@ -21,6 +21,7 @@ export interface BotRow {
   ownerId: string | null;
   ownedByCurrentUser: boolean;
   publishedOn: string | null;
+  modifiedOn: string | null;
   /** 1 = no auth, 2 = integrated (Entra SSO), 3 = manual */
   authenticationMode: number | null;
   isManaged: boolean | null;
@@ -35,13 +36,15 @@ export async function whoAmI(envUrl: string, token: string, fetchImpl?: FetchLik
 export async function listBots(
   envUrl: string,
   token: string,
-  opts: { ownerOnly?: boolean; fetchImpl?: FetchLike } = {},
+  opts: { ownerOnly?: boolean; includeManaged?: boolean; fetchImpl?: FetchLike } = {},
 ): Promise<BotRow[]> {
   const me = await whoAmI(envUrl, token, opts.fetchImpl);
-  const select = "botid,name,schemaname,_ownerid_value,publishedon,authenticationmode,ismanaged";
-  const filters = ["ismanaged eq false"];
+  const select = "botid,name,schemaname,_ownerid_value,publishedon,modifiedon,authenticationmode,ismanaged";
+  const filters: string[] = [];
+  if (!opts.includeManaged) filters.push("ismanaged eq false");
   if (opts.ownerOnly) filters.push(`_ownerid_value eq ${me.userId}`);
-  const url = `${api(envUrl)}/bots?$select=${encodeURIComponent(select)}&$filter=${encodeURIComponent(filters.join(" and "))}&$orderby=name`;
+  const filter = filters.length ? `&$filter=${encodeURIComponent(filters.join(" and "))}` : "";
+  const url = `${api(envUrl)}/bots?$select=${encodeURIComponent(select)}${filter}&$orderby=name`;
   const data = await requestJson<{ value?: Record<string, unknown>[] }>(url, { token, fetchImpl: opts.fetchImpl, headers: ODATA_HEADERS });
   return (data?.value ?? []).map((b) => ({
     botId: String(b.botid),
@@ -50,9 +53,76 @@ export async function listBots(
     ownerId: (b._ownerid_value as string | null) ?? null,
     ownedByCurrentUser: b._ownerid_value === me.userId,
     publishedOn: (b.publishedon as string | null) ?? null,
+    modifiedOn: (b.modifiedon as string | null) ?? null,
     authenticationMode: typeof b.authenticationmode === "number" ? b.authenticationmode : null,
     isManaged: typeof b.ismanaged === "boolean" ? b.ismanaged : null,
   }));
+}
+
+export interface FlowRow {
+  workflowId: string;
+  name: string;
+  state: "Draft" | "Activated" | "Suspended" | string;
+  modifiedOn: string | null;
+  isManaged: boolean | null;
+}
+
+/** Modern cloud flows (category 5) in the environment. */
+export async function listFlows(envUrl: string, token: string, fetchImpl?: FetchLike): Promise<FlowRow[]> {
+  const select = "workflowid,name,statecode,modifiedon,ismanaged";
+  const url = `${api(envUrl)}/workflows?$select=${select}&$filter=${encodeURIComponent("category eq 5")}&$orderby=name`;
+  const data = await requestJson<{ value?: Record<string, unknown>[] }>(url, { token, fetchImpl, headers: ODATA_HEADERS });
+  const states: Record<number, string> = { 0: "Draft", 1: "Activated", 2: "Suspended" };
+  return (data?.value ?? []).map((w) => ({
+    workflowId: String(w.workflowid),
+    name: String(w.name ?? ""),
+    state: typeof w.statecode === "number" ? (states[w.statecode] ?? String(w.statecode)) : String(w.statecode ?? ""),
+    modifiedOn: (w.modifiedon as string | null) ?? null,
+    isManaged: typeof w.ismanaged === "boolean" ? w.ismanaged : null,
+  }));
+}
+
+export interface ConnectionReferenceRow {
+  logicalName: string;
+  displayName: string | null;
+  connectorId: string | null;
+  connectionId: string | null;
+}
+
+export async function listConnectionReferences(envUrl: string, token: string, fetchImpl?: FetchLike): Promise<ConnectionReferenceRow[]> {
+  const select = "connectionreferencelogicalname,connectionreferencedisplayname,connectorid,connectionid";
+  const data = await requestJson<{ value?: Record<string, unknown>[] }>(`${api(envUrl)}/connectionreferences?$select=${select}&$orderby=connectionreferencelogicalname`, { token, fetchImpl, headers: ODATA_HEADERS });
+  return (data?.value ?? []).map((c) => ({
+    logicalName: String(c.connectionreferencelogicalname ?? ""),
+    displayName: (c.connectionreferencedisplayname as string | null) ?? null,
+    connectorId: (c.connectorid as string | null) ?? null,
+    connectionId: (c.connectionid as string | null) ?? null,
+  }));
+}
+
+export interface EnvironmentVariableRow {
+  schemaName: string;
+  displayName: string | null;
+  type: string | null;
+  defaultValue: string | null;
+  currentValue: string | null;
+}
+
+const ENV_VAR_TYPES: Record<number, string> = { 100000000: "String", 100000001: "Number", 100000002: "Boolean", 100000003: "JSON", 100000004: "DataSource", 100000005: "Secret" };
+
+export async function listEnvironmentVariables(envUrl: string, token: string, fetchImpl?: FetchLike): Promise<EnvironmentVariableRow[]> {
+  const url = `${api(envUrl)}/environmentvariabledefinitions?$select=schemaname,displayname,type,defaultvalue&$expand=environmentvariabledefinition_environmentvariablevalue($select=value)&$orderby=schemaname`;
+  const data = await requestJson<{ value?: Record<string, unknown>[] }>(url, { token, fetchImpl, headers: ODATA_HEADERS });
+  return (data?.value ?? []).map((v) => {
+    const values = (v.environmentvariabledefinition_environmentvariablevalue as { value?: string }[] | undefined) ?? [];
+    return {
+      schemaName: String(v.schemaname ?? ""),
+      displayName: (v.displayname as string | null) ?? null,
+      type: typeof v.type === "number" ? (ENV_VAR_TYPES[v.type] ?? String(v.type)) : null,
+      defaultValue: (v.defaultvalue as string | null) ?? null,
+      currentValue: values[0]?.value ?? null,
+    };
+  });
 }
 
 export interface BotDetails {

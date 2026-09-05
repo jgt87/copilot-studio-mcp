@@ -50,7 +50,8 @@ import {
   type AuthConfig,
 } from "./auth.js";
 import { getEnvironment, listEnvironments } from "./cloud/bap.js";
-import { dataverseScope, getBot, listBots, publishBot } from "./cloud/dataverse.js";
+import { dataverseScope, getBot, listBots, listConnectionReferences, listEnvironmentVariables, listFlows, publishBot } from "./cloud/dataverse.js";
+import { captureSnapshot, compareChain, compareSnapshots, writeReport, type DataverseReads } from "./compare.js";
 import { getRun, getTestSet, listRuns, listTestSets, startRun, summarizeRun } from "./cloud/ppapi.js";
 import { chatDirectLine, chatSdk, directLineTokenEndpoint, type ChatResult } from "./cloud/chat.js";
 import { buildTestSetCsv, CONVERSATION_TESTS_EXAMPLE, evaluateReplies, evaluationPageUrl, parseConversationTests, suggestTestCases, type ConversationTest } from "./evals.js";
@@ -1264,6 +1265,115 @@ server.registerTool(
           "Cloud flows are imported off unless their connection references resolve; turn them on after binding connections.",
         ],
       });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+// ---- environment comparison (DTAP) -----------------------------------------
+
+/** Dataverse reads for a snapshot; skipped (null) when no silent token is available. */
+async function dataverseReadsFor(environment: string, tenantId?: string, clientId?: string): Promise<{ reads: DataverseReads | null; note: string | null }> {
+  try {
+    const ctx = await cloudContext({ environmentId: /^[0-9a-f-]{36}$/i.test(environment) ? environment : undefined, dataverseUrl: /^https?:\/\//i.test(environment) ? environment : undefined, tenantId, clientId }, {});
+    let dataverseUrl = ctx.dataverseUrl;
+    if (!dataverseUrl && ctx.environmentId) {
+      const bap = await getToken(ctx.authCfg, [BAP_SCOPE], { interactive: false });
+      dataverseUrl = (await getEnvironment(bap.accessToken, ctx.environmentId)).dataverseUrl;
+    }
+    if (!dataverseUrl) return { reads: null, note: "could not resolve the Dataverse URL" };
+    const tok = await getToken(ctx.authCfg, [dataverseScope(dataverseUrl)], { interactive: false });
+    const [bots, flows, connectionReferences, environmentVariables] = await Promise.all([
+      listBots(dataverseUrl, tok.accessToken, { includeManaged: true }),
+      listFlows(dataverseUrl, tok.accessToken),
+      listConnectionReferences(dataverseUrl, tok.accessToken),
+      listEnvironmentVariables(dataverseUrl, tok.accessToken),
+    ]);
+    return { reads: { bots, flows, connectionReferences, environmentVariables }, note: null };
+  } catch (err) {
+    return { reads: null, note: `Dataverse details skipped: ${errorMessage(err)}` };
+  }
+}
+
+const snapshotArgs = {
+  solution: z.string().optional().describe("Solution unique name to record version/managed state for"),
+  agents: z.array(z.string()).optional().describe("Agent schema names or ids to clone; default: every agent pac copilot list returns"),
+  maxAgents: z.number().optional().describe("Default 20"),
+  includeDataverse: z.boolean().optional().describe("Default true: flows, connection references, environment variables and publish state via Dataverse (needs cs_login; skipped silently otherwise)"),
+  tenantId: tenantArg,
+  clientId: clientArg,
+};
+
+server.registerTool(
+  "cs_snapshot_environment",
+  {
+    title: "Snapshot an environment",
+    description: "Capture one environment into a folder for comparison or history: solution version, every agent cloned with pac copilot clone (agents/<name>), and, when signed in, flows, connection references, environment variables and publish state. Read-only for the environment.",
+    inputSchema: { label: z.string().describe("Short name such as DEV, TEST, ACC, PROD"), environment: z.string().describe("Environment id or URL"), dir: z.string().describe("Snapshot folder (recreated)"), ...snapshotArgs },
+  },
+  async (a) => {
+    try {
+      const dv = a.includeDataverse === false ? { reads: null, note: null } : await dataverseReadsFor(a.environment, a.tenantId, a.clientId);
+      const snap = await captureSnapshot({ label: a.label, environment: a.environment, dir: a.dir, solution: a.solution, agents: a.agents, maxAgents: a.maxAgents, dataverse: dv.reads });
+      if (dv.note) snap.notes.push(dv.note);
+      return text({ dir: path.resolve(a.dir), label: snap.label, solution: snap.solutionRow, agents: snap.agents.map(({ workspace, ...x }) => ({ ...x, workspace: workspace ? path.relative(path.resolve(a.dir), workspace) : null })), captured: { flows: snap.flows?.length ?? null, connectionReferences: snap.connectionReferences?.length ?? null, environmentVariables: snap.environmentVariables?.length ?? null }, notes: snap.notes });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+server.registerTool(
+  "cs_compare_snapshots",
+  {
+    title: "Compare two snapshots",
+    description: "Offline diff of two snapshot folders: solution version, per-agent YAML differences (noise such as ids, audit info and connection ids removed), flows, connection references, environment variables, unpublished changes. Writes <reportDir>/<a>-vs-<b>.md and .json. failOnDrift returns an error result when drift is found (for pipeline gates).",
+    inputSchema: { a: z.string().describe("Snapshot folder (earlier stage, e.g. DEV)"), b: z.string().describe("Snapshot folder (later stage, e.g. TEST)"), reportDir: z.string().optional().describe("Default: parent of b"), includeDiffs: z.boolean().optional().describe("Default true: unified diffs in the report"), strictVariables: z.boolean().optional().describe("Treat differing environment variable values as drift"), ignoredKeys: z.array(z.string()).optional(), failOnDrift: z.boolean().optional() },
+  },
+  async (a) => {
+    try {
+      const report = compareSnapshots(a.a, a.b, { includeDiffs: a.includeDiffs, strictVariables: a.strictVariables, ignoredKeys: a.ignoredKeys });
+      const out = writeReport(a.reportDir ?? path.dirname(path.resolve(a.b)), `${report.a.label}-vs-${report.b.label}`, report);
+      const payload = { drift: report.drift, driftSummary: report.driftSummary, expectedDifferences: report.expectedDifferences, solution: report.solution, agents: report.agents.map((x) => ({ schemaName: x.schemaName, status: x.status, changedFiles: x.changedFiles, files: x.files.map((f) => `${f.status}: ${f.path}`), publish: x.publish })), flows: report.flows, connectionReferences: report.connectionReferences, environmentVariables: report.environmentVariables, notes: report.notes, report: out };
+      if (a.failOnDrift && report.drift) return { ...text(payload), isError: true as const };
+      return text(payload);
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+server.registerTool(
+  "cs_compare_environments",
+  {
+    title: "Compare a DTAP chain",
+    description: "Snapshot every environment in an ordered chain (e.g. DEV, TEST, ACC, PROD) and compare each adjacent pair. Returns one report per pair plus the first stage where drift appears. Snapshots go to <dir>/<label>, reports to <dir>/reports.",
+    inputSchema: { chain: z.array(z.object({ label: z.string(), environment: z.string() })).min(2), dir: z.string(), includeDiffs: z.boolean().optional(), strictVariables: z.boolean().optional(), failOnDrift: z.boolean().optional(), ...snapshotArgs },
+  },
+  async (a) => {
+    try {
+      const dirs: string[] = [];
+      const captured: Record<string, unknown>[] = [];
+      for (const stage of a.chain) {
+        const dir = path.join(a.dir, stage.label);
+        const dv = a.includeDataverse === false ? { reads: null, note: null } : await dataverseReadsFor(stage.environment, a.tenantId, a.clientId);
+        const snap = await captureSnapshot({ label: stage.label, environment: stage.environment, dir, solution: a.solution, agents: a.agents, maxAgents: a.maxAgents, dataverse: dv.reads });
+        if (dv.note) snap.notes.push(dv.note);
+        dirs.push(dir);
+        captured.push({ label: stage.label, agents: snap.agents.length, cloneErrors: snap.agents.filter((x) => x.cloneError).length, notes: snap.notes });
+      }
+      const reports = compareChain(dirs, { includeDiffs: a.includeDiffs, strictVariables: a.strictVariables });
+      const written = reports.map((r) => writeReport(path.join(a.dir, "reports"), `${r.a.label}-vs-${r.b.label}`, r));
+      const firstDrift = reports.find((r) => r.drift);
+      const payload = {
+        drift: Boolean(firstDrift),
+        firstDriftBetween: firstDrift ? `${firstDrift.a.label} -> ${firstDrift.b.label}` : null,
+        stages: captured,
+        pairs: reports.map((r, i) => ({ pair: `${r.a.label} -> ${r.b.label}`, drift: r.drift, driftSummary: r.driftSummary, expectedDifferences: r.expectedDifferences, report: written[i].markdown })),
+      };
+      if (a.failOnDrift && firstDrift) return { ...text(payload), isError: true as const };
+      return text(payload);
     } catch (err) {
       return fail(errorMessage(err));
     }
