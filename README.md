@@ -121,16 +121,67 @@ Every tool that mutates a live environment (`cs_push`, `cs_publish`, `cs_import_
 `cs_run_evaluation`, bootstrap `cs_init_agent`, non-read-only `cs_pac`) returns a dry run unless
 called with `confirm: true`.
 
+## How it fits together
+
+```mermaid
+flowchart LR
+    subgraph Client["Coding agent"]
+        VS["VS Code / GitHub Copilot"]
+        CC["Claude Code"]
+    end
+    subgraph MCP["copilot-studio-mcp"]
+        SYNC["Sync<br/>pac copilot"]
+        AUTH["Authoring<br/>YAML + schema validation"]
+        CLOUD["Cloud<br/>evaluations, publish, chat"]
+    end
+    WS[("Agent workspace<br/>topics/, knowledge/, actions/, workflows/")]
+    DV["Dataverse / Copilot Studio"]
+    PPAPI["Power Platform API"]
+    DL["Published agent<br/>DirectLine / SDK"]
+
+    VS --> MCP
+    CC --> MCP
+    AUTH <--> WS
+    SYNC <--> WS
+    SYNC <--> DV
+    CLOUD --> PPAPI
+    CLOUD --> DV
+    CLOUD --> DL
+```
+
 ## Typical flows
 
+All diagrams, including existing-agent sync, chat routing and the connection step for tools, are in
+[docs/flows.md](docs/flows.md).
+
 New agent (standard harness):
-`cs_init_agent` (with `environment` + `confirm`) -> `cs_add_topic` / `cs_add_knowledge_source` /
-`cs_update_agent` -> `cs_validate` -> `cs_push confirm` -> `cs_publish confirm` -> `cs_chat`.
 
-Existing agent: `cs_clone_agent` -> edit -> `cs_pull` -> `cs_push confirm`.
+```mermaid
+flowchart TD
+    A["cs_doctor"] --> C["cs_init_agent<br/>environment + confirm"]
+    C --> D["cs_update_agent<br/>instructions"]
+    D --> E["cs_add_topic / cs_add_knowledge_source / cs_add_tool"]
+    E --> H["cs_validate"]
+    H -- errors --> E
+    H -- clean --> I["cs_push confirm"]
+    I --> J{"tool needs a connection?"}
+    J -- yes --> J1["portal: authorise once"] --> J2["cs_pull"] --> K
+    J -- no --> K["cs_publish confirm"]
+    K --> L["cs_chat"]
+```
 
-Evaluations: `cs_create_test_set_csv` -> import once in the portal -> `cs_list_test_sets` ->
-`cs_run_evaluation confirm wait` -> `cs_get_evaluation_run`.
+Evaluation loop (test sets are imported once in the portal; runs and results are automated):
+
+```mermaid
+flowchart TD
+    A["cs_create_test_set_csv"] --> B["portal: Evaluation > Import CSV"]
+    B --> C["cs_list_test_sets"] --> D["cs_run_evaluation confirm wait"]
+    D --> E["cs_get_evaluation_run"] --> F{"failures?"}
+    F -- yes --> G["fix topics / instructions / knowledge"] --> H["cs_push confirm"] --> D
+    F -- no --> I["cs_publish confirm"]
+```
+
+Existing agent: `cs_clone_agent` -> edit -> `cs_pull` -> `cs_validate` -> `cs_push confirm`.
 
 ## Development
 
