@@ -67,6 +67,7 @@ import {
   resolveTenantId,
   signOut,
   startDeviceCodeLogin,
+  startInteractiveLogin,
   waitForPendingLogin,
   type AuthConfig,
 } from "./auth.js";
@@ -379,7 +380,7 @@ server.registerTool(
   {
     title: "Sign in (MSAL)",
     description:
-      "Acquire a Microsoft Entra token for the cloud tools (evaluations, environments, agents, publish, chat). mode 'interactive' opens a browser and waits; mode 'device_code' returns a code immediately and completes in the background (check cs_login_status). Not needed for pac commands, which use 'pac auth create'.",
+      "Acquire a Microsoft Entra token for the cloud tools (evaluations, environments, agents, publish, chat, drift). mode 'interactive' (default) starts a browser sign-in and returns within waitSeconds: status 'ok' when it completed, otherwise status 'pending' with the sign-in URL. If no browser opened, show the user that URL to open on the machine running this server; the page redirects to localhost and the login completes in the background (check cs_login_status or call any cloud tool). mode 'device_code' returns a code to enter at microsoft.com/devicelogin (some tenants block this flow). Not needed for pac commands, which use 'pac auth create'.",
     inputSchema: {
       mode: z.enum(["interactive", "device_code"]).optional().describe("Default interactive"),
       tenantId: tenantArg,
@@ -387,9 +388,11 @@ server.registerTool(
       scope: z.enum(["powerplatform", "bap", "dataverse", "copilot_invoke"]).optional().describe("Which resource to pre-authorise. Default powerplatform (evaluations). Others are acquired silently later when possible."),
       dataverseUrl: z.string().optional().describe("Required when scope is dataverse, e.g. https://org.crm.dynamics.com"),
       workspace: workspaceArg,
+      openBrowser: z.boolean().optional().describe("interactive: try to open the browser from the server (default true). Set false when the server runs where no browser can appear."),
+      waitSeconds: z.number().optional().describe("interactive: how long to wait for the sign-in before returning 'pending' (default 15; keep it below the client's tool timeout)"),
     },
   },
-  async ({ mode, tenantId, clientId, scope, dataverseUrl, workspace }) => {
+  async ({ mode, tenantId, clientId, scope, dataverseUrl, workspace, openBrowser, waitSeconds }) => {
     try {
       const ws = tryWorkspace(workspace);
       const cfg: AuthConfig = { tenantId: resolveTenantId(tenantId ?? ws?.sync.tenantId ?? undefined), clientId };
@@ -399,8 +402,18 @@ server.registerTool(
         const info = await startDeviceCodeLogin(cfg, scopes);
         return text({ status: "device_code", ...info, next: "Tell the user to open verificationUri and enter userCode. Then call cs_login_status or any cloud tool." });
       }
-      const tok = await acquireInteractive(cfg, scopes);
-      return text({ status: "ok", account: tok.account, expiresOn: tok.expiresOn, scopes: tok.scopes, clientId: effectiveClientId(clientId) === "51f81489-12ee-4a9e-aaae-a2591f45987d" ? "first-party (VS Code)" : "custom" });
+      const clientKind = effectiveClientId(clientId) === "51f81489-12ee-4a9e-aaae-a2591f45987d" ? "first-party (VS Code)" : "custom";
+      const started = await startInteractiveLogin(cfg, scopes, { launch: openBrowser !== false });
+      const tok = await waitForPendingLogin(Math.max(1, waitSeconds ?? 15) * 1000).catch(() => null);
+      if (tok) return text({ status: "ok", account: tok.account, expiresOn: tok.expiresOn, scopes: tok.scopes, clientId: clientKind });
+      const status = pendingLoginStatus();
+      if (status.done && status.error) return fail(`sign-in failed: ${status.error}`);
+      return text({
+        status: "pending",
+        url: started.url,
+        next: "No token yet. If no browser opened, open this URL on the machine running the MCP server and sign in; the page redirects to localhost and completes the login in the background. Then call cs_login_status (wait: true) or any cloud tool.",
+        clientId: clientKind,
+      });
     } catch (err) {
       return fail(errorMessage(err));
     }
@@ -409,7 +422,7 @@ server.registerTool(
 
 server.registerTool(
   "cs_login_status",
-  { title: "Sign-in status", description: "Show cached MSAL accounts and whether a device-code login is still pending; optionally wait for it.", inputSchema: { wait: z.boolean().optional(), tenantId: tenantArg, workspace: workspaceArg } },
+  { title: "Sign-in status", description: "Show cached MSAL accounts and whether a sign-in (browser or device code) is still pending, with its URL or code; optionally wait for it to complete.", inputSchema: { wait: z.boolean().optional().describe("Block until the pending sign-in completes (up to 10 minutes)"), tenantId: tenantArg, workspace: workspaceArg } },
   async ({ wait, tenantId, workspace }) => {
     try {
       const ws = tryWorkspace(workspace);

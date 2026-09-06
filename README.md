@@ -54,6 +54,16 @@ never uses client secrets, so every permission it needs is a **delegated** permi
 signed-in user. Application permissions are listed below only where Microsoft offers them, for
 people who build a headless pipeline on top of the same APIs.
 
+How sign-in behaves inside an MCP client: `cs_login` starts the browser flow, tries to open the
+browser from the server, and returns within `waitSeconds` (default 15). When the token has not
+arrived by then the result is `status: pending` with the sign-in URL, so the calling agent can show
+it and you can open it yourself on the machine running the server (the page redirects to
+`localhost`, where the server is listening, and the login completes in the background;
+`cs_login_status` or any cloud tool picks the token up). This is what makes sign-in work from
+clients that cap tool-call duration or run the server where no browser can be launched. Device code
+(`mode: device_code`) is the alternative where tenants allow it; many tenants block that flow by
+Conditional Access policy.
+
 Do you need your own app registration?
 
 | Situation | App registration needed? |

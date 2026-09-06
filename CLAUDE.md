@@ -106,8 +106,11 @@ Cross-cutting behaviour in `src/index.ts`:
 - **Chat routing** (`runChat`): `transport: auto` reads the bot's `authenticationmode` from
   Dataverse; 1 or 3 goes to DirectLine (token endpoint derived from environment id + schema name,
   no app needed), 2 requires the caller's own app id and the `CopilotStudio.Copilots.Invoke` scope.
-- **Device-code login** is non-blocking: `startDeviceCodeLogin` returns the code immediately and
-  `getToken` awaits the pending promise later.
+- **Logins are non-blocking**: `startDeviceCodeLogin` returns the code and `startInteractiveLogin`
+  returns the authorize URL as soon as MSAL has it; both register one pending login that
+  `waitForPendingLogin`, `getToken` and `cs_login_status` pick up later. `cs_login` waits at most
+  `waitSeconds` (default 15) and otherwise returns `status: pending` with the URL, because MCP
+  clients cap tool-call duration and cannot always open a browser from the server.
 
 stdout is the MCP transport. All diagnostics go through `log()` to stderr.
 
