@@ -133,6 +133,9 @@ stdout is the MCP transport. All diagnostics go through `log()` to stderr.
   workspace root (`Unsupported file: .cs-sync.json`); that is why the sync stamp lives in
   `.mcs/cs-sync.json`.
 - js-yaml 5 has no default export: `import * as yaml from "js-yaml"`.
+- Never open a URL with `cmd /c start <url>`: cmd splits the command at every `&`, so the browser
+  receives the authorize request without `scope` (AADSTS900144). `auth.browserLaunchSpec` uses
+  PowerShell `Start-Process` with an encoded command on Windows; reuse it for any future launch.
 - Heredocs in the Bash tool break on non-ASCII characters; keep sources ASCII or use the Write tool.
 - `repowise update` rewrites the `repowise` entry in `.vscode/mcp.json` with an absolute path. The
   committed form uses `${workspaceFolder}`; restore it before committing (`git diff .vscode/mcp.json`).

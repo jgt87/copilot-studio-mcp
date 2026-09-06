@@ -120,15 +120,27 @@ export async function acquireSilent(cfg: AuthConfig, scopes: string[]): Promise<
   }
 }
 
+/**
+ * How to hand a URL to the default browser without a shell parsing it.
+ * On Windows `cmd /c start <url>` cuts the URL at the first `&` (and expands
+ * `%` sequences), which strips `scope` from the Entra authorize request and
+ * makes the sign-in page fail with AADSTS900144 ("The request body must
+ * contain the following parameter: 'scope'"). PowerShell with an encoded
+ * command passes the URL through untouched.
+ */
+export function browserLaunchSpec(url: string, platform: NodeJS.Platform = process.platform): { command: string; args: string[] } {
+  if (platform === "win32") {
+    const script = `Start-Process -FilePath '${url.replace(/'/g, "''")}'`;
+    return { command: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")] };
+  }
+  if (platform === "darwin") return { command: "open", args: [url] };
+  return { command: "xdg-open", args: [url] };
+}
+
 function openBrowser(url: string): void {
   try {
-    if (process.platform === "win32") {
-      spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore", windowsHide: true }).unref();
-    } else if (process.platform === "darwin") {
-      spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
-    } else {
-      spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
-    }
+    const { command, args } = browserLaunchSpec(url);
+    spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true }).unref();
   } catch (err) {
     log(`could not open browser: ${(err as Error).message}`);
   }
