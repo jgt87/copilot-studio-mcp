@@ -57,6 +57,13 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   `cs_deploy_solution` reads. Per-agent sync workspaces stay bound to their source environment; only
   solution import moves things between environments.
 
+- **Day-two authoring** (`src/authoring/edit.ts`): find a component by name, stem or path; edit
+  topics (phrases, priority, nodes by position or id), tools (descriptions, inputs, connection),
+  knowledge (site, trigger condition); remove components with connection-reference pruning and
+  dangling-redirect notes. Headers are preserved through `loadWithHeader` / `saveWithHeader` in
+  `authoring/util.ts`.
+- **Review** (`src/review.ts`): rules-based `reviewWorkspace` with a 10-point score; each finding
+  names a rule and a fix. Add rules as functions in the `rules` array; keep them conservative.
 - **Comparison** (`src/compare.ts`): DTAP snapshots and diffs. A snapshot is `snapshot.json` plus
   `agents/<Agent>/` clones; `compareSnapshots` normalises YAML (drops `DEFAULT_IGNORED_KEYS`, skips
   `.mcs/`, icons, sync markers), diffs with the `diff` package, and separates drift from expected

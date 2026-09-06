@@ -39,9 +39,12 @@ export type ActionSpec =
   | { type: "condition"; cases: { condition: string; actions: ActionSpec[] }[]; else?: ActionSpec[] }
   | { type: "redirect"; topic: string; replace?: boolean }
   | { type: "setVariable"; variable: string; value: string | number | boolean }
-  | { type: "searchKnowledge"; variable?: string; endIfAnswered?: boolean }
+  | { type: "searchKnowledge"; variable?: string; endIfAnswered?: boolean; sources?: string[]; autoSend?: boolean }
   | { type: "http"; method?: "Get" | "Post" | "Put" | "Patch" | "Delete"; url: string; headers?: Record<string, string>; body?: unknown; responseVariable: string }
   | { type: "invokeFlow"; flowId: string; input?: Record<string, string>; output?: Record<string, string> }
+  | { type: "card"; card: Record<string, unknown> | string; outputs?: Record<string, string>; outputTypes?: Record<string, "String" | "Number" | "Boolean"> }
+  | { type: "transfer"; message?: string; phoneNumber?: string }
+  | { type: "endConversation" }
   | { type: "end"; clearTopicQueue?: boolean }
   | { type: "raw"; node: Record<string, unknown> };
 
@@ -134,9 +137,13 @@ export function buildActions(specs: ActionSpec[], agentSchemaName?: string): Rec
         };
       case "searchKnowledge": {
         const variable = scoped(a.variable ?? "Answer");
-        const nodes: Record<string, unknown>[] = [
-          { kind: "SearchAndSummarizeContent", id: newId("searchContent"), userInput: "=System.Activity.Text", variable },
-        ];
+        const search: Record<string, unknown> = { kind: "SearchAndSummarizeContent", id: newId("searchContent"), userInput: "=System.Activity.Text", variable };
+        if (a.autoSend !== undefined) search.autoSend = a.autoSend;
+        if (a.sources?.length) {
+          // Reference format documented by Microsoft's authoring skills: <agentSchema>.topic.<knowledge file stem>
+          search.knowledgeSources = { kind: "SearchSpecificKnowledgeSources", knowledgeSources: a.sources.map((s) => (s.includes(".") ? s : `${agentSchemaName ?? "<AGENT_SCHEMA>"}.topic.${pascal(s)}`)) };
+        }
+        const nodes: Record<string, unknown>[] = [search];
         if (a.endIfAnswered !== false) {
           nodes.push({
             kind: "ConditionGroup",
@@ -164,6 +171,30 @@ export function buildActions(specs: ActionSpec[], agentSchemaName?: string): Rec
           ...(a.input ? { input: { binding: a.input } } : {}),
           ...(a.output ? { output: { binding: a.output } } : {}),
         };
+      case "card": {
+        const cardJson = typeof a.card === "string" ? a.card : JSON.stringify(a.card, null, 2);
+        const outputs = a.outputs ?? {};
+        const fields = Object.keys(outputs);
+        if (fields.length === 0) {
+          // Display-only card: an attachment on a message.
+          return { kind: "SendActivity", id: newId("sendMessage"), activity: { attachments: [{ kind: "AdaptiveCardTemplate", cardContent: cardJson }] } };
+        }
+        return {
+          kind: "AdaptiveCardPrompt",
+          id: newId("adaptiveCardPrompt"),
+          card: cardJson,
+          output: { binding: Object.fromEntries(fields.map((f) => [f, scoped(outputs[f])])) },
+          outputType: { properties: Object.fromEntries(fields.map((f) => [f, { type: a.outputTypes?.[f] ?? "String" }])) },
+        };
+      }
+      case "transfer":
+        return {
+          kind: "TransferConversationV2",
+          id: newId("transferConversation"),
+          transferType: a.phoneNumber ? { kind: "TransferToPhoneNumber", phoneNumber: a.phoneNumber } : { kind: "TransferToAgent", ...(a.message ? { messageToAgent: a.message } : {}) },
+        };
+      case "endConversation":
+        return { kind: "EndConversation", id: newId("endConversation") };
       case "end":
         return { kind: "EndDialog", id: newId("endDialog"), ...(a.clearTopicQueue ? { clearTopicQueue: true } : {}) };
       case "raw":

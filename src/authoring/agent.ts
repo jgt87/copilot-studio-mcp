@@ -4,26 +4,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import * as yaml from "js-yaml";
-import { yamlDump } from "./util.js";
-
-function splitHeader(text: string): { header: string; body: string } {
-  const lines = text.split(/\r?\n/);
-  let i = 0;
-  while (i < lines.length && (lines[i].startsWith("#") || lines[i].trim() === "")) i++;
-  return { header: lines.slice(0, i).join("\n"), body: lines.slice(i).join("\n") };
-}
-
-function loadWithHeader(file: string): { header: string; doc: Record<string, unknown> } {
-  const text = fs.readFileSync(file, "utf8");
-  const { header, body } = splitHeader(text);
-  const doc = (yaml.load(body) as Record<string, unknown>) ?? {};
-  return { header: header.trim(), doc };
-}
-
-function saveWithHeader(file: string, header: string, doc: Record<string, unknown>): void {
-  fs.writeFileSync(file, `${header ? header + "\n" : ""}${yamlDump(doc)}`, "utf8");
-}
+import { loadWithHeader, saveWithHeader } from "./util.js";
 
 function agentFile(root: string): string {
   for (const n of ["agent.mcs.yml", "agent.mcs.yaml"]) {

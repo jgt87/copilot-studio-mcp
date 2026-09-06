@@ -170,6 +170,9 @@ Authoring (files, schema-validated)
 | `cs_add_flow` | experimental cloud-flow scaffold (`workflows/<Name>/metadata.yaml` + `workflow.json`) |
 | `cs_add_trigger`, `cs_add_variable` | event trigger for a flow; global variable |
 | `cs_update_agent`, `cs_update_settings` | instructions, conversation starters, model, settings |
+| `cs_edit_topic`, `cs_edit_tool`, `cs_edit_knowledge` | change existing components in place: trigger phrases, nodes, descriptions, inputs, sites |
+| `cs_remove_component`, `cs_delete_agent`, `cs_delete_solution` | remove a component from the workspace; delete an agent or a solution in the environment (`confirm`) |
+| `cs_review_agent` | rules-based review: instructions, escalation and fallback, phrase overlap, tool descriptions, connections, authentication versus private knowledge, secrets |
 
 Evaluation and testing (cloud)
 
@@ -216,8 +219,11 @@ can talk to. Every step is one tool call; steps that change the environment need
    find the connector and operation first: `cs_list_connectors search=ServiceNow`, then
    `cs_describe_connector connector=shared_service-now operation=incident`; with the definition
    cached the tool call checks the operation and fills the inputs.
-7. **Validate and push.** `cs_validate`, then `cs_push confirm=true`. Tools with a connection
-   reference need one portal step: authorise the connection under the agent's Tools, then `cs_pull`.
+7. **Review, validate and push.** `cs_review_agent` flags the mistakes evaluations only show later
+   (missing escalation, weak tool descriptions, overlapping trigger phrases, private knowledge with no
+   authentication). Then `cs_validate` and `cs_push confirm=true`. Tools with a connection reference
+   need one portal step: authorise the connection under the agent's Tools, then `cs_pull`. Later
+   changes go through `cs_edit_topic`, `cs_edit_tool`, `cs_edit_knowledge` and `cs_remove_component`.
 8. **Publish and try it.** `cs_publish confirm=true`, then `cs_chat utterance="my laptop is slow"`.
    `cs_run_conversation_tests` turns a few of those into a repeatable check.
 9. **Evaluate.** `cs_create_test_set_csv suggestFromWorkspace=true`, import the CSV once in the
@@ -297,6 +303,9 @@ would do in Copilot Studio for the same result.
 | `cs_list_connectors`, `cs_describe_connector` | Tools > Add a tool: the connector picker and its list of actions | Power Apps connector registry |
 | `cs_add_tool` | Tools > Add a tool: connector action, MCP server, flow, prompt or agent, everything except the "Connect" sign-in | YAML in `actions/` plus `connectionreferences.mcs.yml` |
 | `cs_add_flow`, `cs_add_trigger`, `cs_add_variable` | Tools > New agent flow; Triggers > Add trigger; Settings > Variables | files in `workflows/`, `trigger/`, `variables/` |
+| `cs_edit_topic`, `cs_edit_tool`, `cs_edit_knowledge` | editing a topic's trigger phrases and nodes, a tool's description and inputs, or a knowledge source's URL in the portal | in-place YAML edits |
+| `cs_remove_component` | deleting a topic, knowledge source, tool, trigger or variable from the agent | file removal, applied on push |
+| `cs_review_agent` | a maker's pre-publish walkthrough of the agent (no single portal page does this) | rules over the workspace |
 | `cs_validate` | the errors the portal would show on save, before anything is sent | schema and cross-file checks |
 | `cs_push` | Save: the draft agent in the portal now shows your topics, knowledge and tools | `pac copilot push` |
 | (portal step) | Tools > the new tool > Connect: sign in once so the connection exists | manual, then `cs_pull` |

@@ -68,6 +68,23 @@ export function writeComponentFile(file: string, headerLines: string[], doc: unk
   return file;
 }
 
+/** Leading `#` comment lines (and blank lines) of a component file, kept verbatim across edits. */
+export function splitHeader(text: string): { header: string; body: string } {
+  const lines = text.split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length && (lines[i].startsWith("#") || lines[i].trim() === "")) i++;
+  return { header: lines.slice(0, i).join("\n").trim(), body: lines.slice(i).join("\n") };
+}
+
+export function loadWithHeader<T = Record<string, unknown>>(file: string): { header: string; doc: T } {
+  const { header, body } = splitHeader(fs.readFileSync(file, "utf8"));
+  return { header, doc: (yaml.load(body) as T) ?? ({} as T) };
+}
+
+export function saveWithHeader(file: string, header: string, doc: unknown): void {
+  fs.writeFileSync(file, `${header ? header + "\n" : ""}${yamlDump(doc)}`, "utf8");
+}
+
 /** Component name from `# Name:` header, else `mcs.metadata.componentName`, else file stem. */
 export function componentNameFromText(text: string, doc: unknown, file: string): string {
   const m = /^#\s*Name:\s*(.+?)\s*$/m.exec(text);
