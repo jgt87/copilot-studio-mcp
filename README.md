@@ -63,6 +63,22 @@ Verified offline against pac 2.11.2: `pac copilot pack` on a workspace created b
 Those folders are handled by `pac copilot push` from a sync-connected workspace (clone, or init
 with `--environment`). The authoring tools tell you when you are in a pack-only workspace.
 
+## Approval before anything changes
+
+The server never changes a live Copilot Studio environment on its own. Every tool that can
+(`cs_push`, `cs_publish`, `cs_run_evaluation`, `cs_import_solution`, `cs_deploy_solution`,
+`cs_init_agent` with an environment, the delete tools, and the environment-changing pac wrappers)
+returns a **dry run** describing what it would do, and does nothing else, until it is called again
+with `confirm: true`. The calling agent is instructed, in the MCP handshake, to show that dry run
+and pass `confirm` only after you agree. Writing YAML, editing and validating are local file
+operations and need no approval; sending them to Copilot Studio does.
+
+For a hard lock, set `CPS_READ_ONLY=1` in the server's environment: the environment-changing tools
+are then not registered at all, so no confirmation can reach the environment, while authoring,
+validation, review and the read-only tools keep working. `cs_doctor` reports the mode and which
+tools are withheld. `test/policy.test.js` fails if a tool that declares `confirm` is missing from
+that list, so the two layers cannot drift apart.
+
 ## Prerequisites
 
 - Node.js 20+
@@ -159,12 +175,23 @@ claude mcp add-json copilot-studio '{"type":"stdio","command":"node","args":["<p
 
 Environment variables (all optional): `CPS_WORKSPACE`, `CPS_TENANT_ID`, `CPS_CLIENT_ID`,
 `CPS_ENVIRONMENT_ID`, `CPS_ENVIRONMENT_URL`, `CPS_AGENT_ID`, `CPS_CACHE_DIR`, `PAC_PATH`, `DOTNET_ROOT`,
-`CPS_TOOLS` and `CPS_TOOLS_EXCLUDE`. The last two trim the tool list for clients with small context
+`CPS_READ_ONLY` (see "Approval before anything changes"), `CPS_TOOLS` and `CPS_TOOLS_EXCLUDE`. The last two trim the tool list for clients with small context
 windows: comma-separated tool names with `*` wildcards, for example
 `CPS_TOOLS=cs_doctor,cs_describe_workspace,cs_add_*,cs_edit_*,cs_review_agent,cs_validate,cs_push,cs_pull`
 or `CPS_TOOLS_EXCLUDE=cs_*_pipeline,cs_env_*,cs_*_auth_profile`.
 
 ## Tools
+
+Guidance (start here)
+
+| Tool | Purpose |
+| --- | --- |
+| `cs_guide` | walkthrough for one topic: `getting-started`, `instructions`, `knowledge`, `tools`, `topics`, `evaluations`, `publish-and-test`, `drift`, `solutions`, `troubleshooting`; each names the tool per step and the portal steps that cannot be automated, and ends with next steps for your workspace |
+
+The server also sends usage instructions in the MCP handshake, `cs_doctor` and
+`cs_describe_workspace` end with next steps for the workspace they found, and six MCP prompts
+(new agent, add knowledge, add tool, write instructions, review and push, check drift) are
+available in clients that show prompts as commands.
 
 Setup and sync (pac)
 

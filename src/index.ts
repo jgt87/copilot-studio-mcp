@@ -54,6 +54,8 @@ import { editKnowledge, editTool, editTopic, removeComponent } from "./authoring
 import { renderReviewMarkdown, reviewWorkspace } from "./review.js";
 import { PAC_COMMANDS, buildPacArgs, describeSpec, isMutating, redactArgs, secretValues, zodShapeFor } from "./pacCommands.js";
 import { toolEnabled } from "./toolFilter.js";
+import { GUIDE_TOPICS, SERVER_INSTRUCTIONS, TOPIC_SUMMARY, guide, nextSteps, type GuideTopic } from "./guide.js";
+import { ENVIRONMENT_WRITE_TOOLS, readOnlyMode, readOnlyRefusal } from "./policy.js";
 import { briefQuick, fullDrift, gitState, quickDrift, readStamp, remoteStateFrom, STAMP_REL, writeStamp, type QuickDriftReport, type SyncOperation } from "./drift.js";
 
 import {
@@ -305,13 +307,20 @@ async function runChat(utterance: string, args: ChatArgs): Promise<ChatResult> {
 // Server
 // ---------------------------------------------------------------------------
 
-const server = new McpServer({ name: "copilot-studio-mcp", version: VERSION });
+const server = new McpServer({ name: "copilot-studio-mcp", version: VERSION }, { instructions: SERVER_INSTRUCTIONS });
 
-// Optional tool filter (CPS_TOOLS allow-list, CPS_TOOLS_EXCLUDE deny-list; see toolFilter.ts).
+// Two registration gates (see policy.ts and toolFilter.ts):
+//  - read-only mode hides every tool that can change a live environment;
+//  - CPS_TOOLS / CPS_TOOLS_EXCLUDE trim the list for clients with small context windows.
 const skippedTools: string[] = [];
+const withheldTools: string[] = [];
 {
   const original = server.registerTool.bind(server) as (...a: unknown[]) => unknown;
   server.registerTool = ((name: string, ...rest: unknown[]) => {
+    if (readOnlyMode() && ENVIRONMENT_WRITE_TOOLS.has(name)) {
+      withheldTools.push(name);
+      return undefined;
+    }
     if (!toolEnabled(name)) {
       skippedTools.push(name);
       return undefined;
@@ -340,15 +349,22 @@ server.registerTool(
   async ({ workspace }) => {
     const pacPath = findPac();
     const ws = tryWorkspace(workspace);
+    const pacAuth = await doctorPacAuth(pacPath);
+    const msal = await doctorMsal(ws);
+    const pacProfiles = (pacAuth.pacAuthProfiles as unknown[] | undefined) ?? [];
+    const msalAccounts = Array.isArray(msal.msalAccounts) ? (msal.msalAccounts as unknown[]) : [];
     return text({
       serverVersion: VERSION,
       pac: await doctorPac(pacPath),
       dotnetSdks: await doctorDotnet(),
-      ...(await doctorPacAuth(pacPath)),
+      ...pacAuth,
       env: doctorEnv(),
       workspace: ws ? { root: ws.root, harness: ws.harness, schemaName: ws.schemaName, sync: ws.sync.source, environmentId: ws.sync.environmentId, agentId: ws.sync.agentId } : { found: false, searchedFrom: workspace ?? process.env.CPS_WORKSPACE ?? process.cwd() },
-      ...(await doctorMsal(ws)),
+      ...msal,
       schema: { path: schemaPath(), kinds: listKinds().length },
+      writePolicy: { confirmRequired: "Every tool that changes a live environment returns a dry run until confirm: true, which the user must approve.", readOnlyMode: readOnlyMode(), ...(withheldTools.length ? { toolsWithheld: withheldTools } : {}) },
+      nextSteps: nextSteps(ws, { pacFound: Boolean(pacPath), pacProfile: pacProfiles.length > 0, signedIn: msalAccounts.length > 0 }),
+      guide: "cs_guide topic='getting-started' walks through cloning or creating an agent and taking it to a published, tested state.",
     });
   },
 );
@@ -527,6 +543,7 @@ server.registerTool(
   },
   async (a) => {
     try {
+      if (a.environment && readOnlyMode()) return fail(readOnlyRefusal(`create agent '${a.name}' in environment ${a.environment}`));
       if (a.environment && !a.confirm) return dryRun(`create agent '${a.name}' in environment ${a.environment}${a.solutionName ? ` inside solution ${a.solutionName}${a.createSolution ? " (created if missing)" : ""}` : " (in a solution named after the agent)"}`);
       if (a.environment && a.solutionName) {
         const r = await initAgentInSolution({ name: a.name, publisherPrefix: a.publisherPrefix, projectDir: a.projectDir, solutionName: a.solutionName, environment: a.environment, createSolution: a.createSolution, instructions: a.instructions, schemaName: a.schemaName, template: a.template, authoringMode: a.authoringMode });
@@ -742,6 +759,7 @@ server.registerTool(
     try {
       const head = args.slice(0, 3).join(" ");
       const readOnly = READ_ONLY_PAC.some((re) => re.test(args.slice(0, 2).join(" ")) || re.test(head) || re.test(args[0] ?? ""));
+      if (!readOnly && readOnlyMode()) return fail(readOnlyRefusal(`pac ${args.join(" ")}`));
       if (!readOnly && !confirm) return dryRun(`pac ${args.join(" ")}`);
       return text(pacSummary(await runPac(args, { cwd, timeoutMs: (timeoutSeconds ?? 600) * 1000 })));
     } catch (err) {
@@ -749,6 +767,46 @@ server.registerTool(
     }
   },
 );
+
+// ---- guidance -------------------------------------------------------------
+
+server.registerTool(
+  "cs_guide",
+  {
+    title: "How to use this server",
+    description: `Walkthrough for one part of Copilot Studio agent development, written for this server's tools: ${GUIDE_TOPICS.map((t) => `'${t}' (${TOPIC_SUMMARY[t]})`).join(", ")}. Read the relevant topic before planning a sequence of calls; it names the tool for each step, the order that works, and the manual portal steps that cannot be automated. Also returns next steps for the workspace at hand.`,
+    inputSchema: {
+      topic: z.enum(GUIDE_TOPICS as [GuideTopic, ...GuideTopic[]]).optional().describe("Default getting-started"),
+      workspace: workspaceArg,
+    },
+  },
+  async ({ topic, workspace }) => {
+    try {
+      const t = (topic ?? "getting-started") as GuideTopic;
+      const ws = tryWorkspace(workspace);
+      const steps = nextSteps(ws, { pacFound: Boolean(findPac()) });
+      return text(`${guide(t)}\n\n---\n\n## Next steps here\n\n${steps.map((s) => `- ${s}`).join("\n")}\n\nOther topics: ${GUIDE_TOPICS.filter((x) => x !== t).join(", ")}.`);
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+// Prompts: the same walkthroughs as ready-made requests, for clients that show them as commands.
+const PROMPTS: { name: string; title: string; description: string; topic: GuideTopic; ask: string }[] = [
+  { name: "new-agent", title: "Build a new agent", topic: "getting-started", description: "Create an agent in a solution and take it to a published, tested state.", ask: "Help me build a new Copilot Studio agent. Ask me what it should do and who it is for, then work through the steps: check prerequisites, pick or create the solution, create the agent, draft the instructions, add knowledge and tools, review, validate, push, publish and chat-test. Show me each dry run before confirming anything." },
+  { name: "add-knowledge", title: "Add a knowledge source", topic: "knowledge", description: "Add website, SharePoint, Graph connector or file knowledge to the current agent.", ask: "Add a knowledge source to the agent in my workspace. Ask which kind and which URL or files, check whether the agent's authentication mode supports it, write it, validate, and tell me what still has to happen in the portal." },
+  { name: "add-tool", title: "Add a tool", topic: "tools", description: "Find a connector operation and add it as a tool, with its connection step.", ask: "Add a tool to the agent in my workspace. Find the connector and operation first, show me the parameters, write the tool with a specific model description, then tell me exactly which connection I have to authorise in the portal." },
+  { name: "write-instructions", title: "Write the instructions", topic: "instructions", description: "Draft or refine the agent's instructions with AI Builder.", ask: "Draft the instructions for the agent in my workspace. Ask me for the purpose, audience, tone and boundaries, generate them, show me the text for review, and only apply them when I agree." },
+  { name: "review-and-push", title: "Review, validate and push", topic: "publish-and-test", description: "Run the review and validation, then push and publish with confirmation.", ask: "Review the agent in my workspace, fix what is safe to fix, validate it, then show me the push dry run including any portal drift. After I confirm, push, publish and chat-test it." },
+  { name: "check-drift", title: "Check for portal changes", topic: "drift", description: "See what makers changed in Copilot Studio since the last sync.", ask: "Check whether anyone changed the agent in Copilot Studio since my last sync. Summarise what changed, by whom, and whether it collides with my local edits, then tell me whether to pull." },
+];
+
+for (const p of PROMPTS) {
+  server.registerPrompt(p.name, { title: p.title, description: p.description }, () => ({
+    messages: [{ role: "user" as const, content: { type: "text" as const, text: `${p.ask}\n\nFollow the walkthrough from cs_guide topic '${p.topic}'.` } }],
+  }));
+}
 
 // ---- remaining pac commands (declarative wrappers, see pacCommands.ts) ------
 
@@ -759,7 +817,10 @@ for (const spec of PAC_COMMANDS) {
       const args = buildPacArgs(spec, input);
       const secrets = secretValues(spec, input);
       const shown = redactArgs(args, secrets);
-      if (isMutating(spec, input) && !input.confirm) return dryRun(`pac ${shown.join(" ")}`, spec.note ? { note: spec.note } : {});
+      if (isMutating(spec, input)) {
+        if (readOnlyMode()) return fail(readOnlyRefusal(`pac ${shown.join(" ")}`));
+        if (!input.confirm) return dryRun(`pac ${shown.join(" ")}`, spec.note ? { note: spec.note } : {});
+      }
       const r = await runPac(args, { cwd: input.cwd as string | undefined, timeoutMs: ((input.timeoutSeconds as number | undefined) ?? (spec.timeoutMs ?? 600_000) / 1000) * 1000, redact: secrets });
       const summary = pacSummary(r);
       for (const s of secrets) for (const k of ["command", "stdout", "stderr"] as const) if (typeof summary[k] === "string") summary[k] = (summary[k] as string).split(s).join("***");
@@ -775,8 +836,9 @@ for (const spec of PAC_COMMANDS) {
 server.registerTool("cs_describe_workspace", { title: "Describe the workspace", description: "Inventory of an agent workspace: settings, instructions, topics (with trigger phrases), knowledge sources, tools, flows, triggers, variables, connection references, sync metadata.", inputSchema: { workspace: workspaceArg } }, async ({ workspace }) => {
   try {
     const root = resolveRoot(workspace);
+    const ws = readWorkspace(root);
     const stamp = readStamp(root);
-    return text({ ...describeWorkspace(readWorkspace(root)), lastSync: stamp ? { operation: stamp.operation, syncedAt: stamp.syncedAt, remoteComponents: stamp.remote ? Object.keys(stamp.remote.components).length : null } : null });
+    return text({ ...describeWorkspace(ws), lastSync: stamp ? { operation: stamp.operation, syncedAt: stamp.syncedAt, remoteComponents: stamp.remote ? Object.keys(stamp.remote.components).length : null } : null, nextSteps: nextSteps(ws) });
   } catch (err) {
     return fail(errorMessage(err));
   }
@@ -1941,6 +2003,7 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log(`copilot-studio-mcp ${VERSION} ready (pac: ${findPac() ?? "not found"})`);
+  if (withheldTools.length) log(`read-only mode (CPS_READ_ONLY): ${withheldTools.length} environment-changing tool(s) not registered`);
   if (skippedTools.length) log(`tool filter: ${skippedTools.length} tool(s) hidden by CPS_TOOLS / CPS_TOOLS_EXCLUDE`);
 }
 

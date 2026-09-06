@@ -18,6 +18,7 @@ npm test                                        # build, then node --test test/*
 node --test test/parsers.test.js                # one file (build first; tests import from dist/)
 node --test --test-name-pattern "addTopic" test/authoring.test.js   # one test by name
 node scripts/smoke.mjs [workspace]              # drive dist/index.js over stdio: initialize, tools/list, read-only calls
+CPS_READ_ONLY=1 node scripts/smoke.mjs          # same, asserting the environment-changing tools are withheld
 node scripts/oracle-pack.mjs [scratchDir]       # pac copilot init + every authoring tool + pac copilot pack (needs pac)
 ```
 
@@ -86,6 +87,10 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   results. Add a command by adding a spec and a `buildPacArgs` assertion in
   `test/pac-commands.test.js`; flags come from `pac <group> <command> help`. Groups outside Copilot
   Studio work are deliberately left to `cs_pac`.
+- **Guidance** (`src/guide.ts`): `SERVER_INSTRUCTIONS` goes out in the MCP handshake,
+  `GUIDES` backs the `cs_guide` tool and the six MCP prompts, and `nextSteps(ws)` is appended to
+  `cs_doctor` and `cs_describe_workspace`. `test/guide.test.js` fails when a guide names a tool
+  the server does not register, so update the guides together with the tool list.
 - **Tool filter** (`src/toolFilter.ts`): `CPS_TOOLS` / `CPS_TOOLS_EXCLUDE` glob lists applied by a
   wrapper around `server.registerTool`; hidden tools are logged at startup.
 
@@ -104,6 +109,12 @@ Three layers behind one tool list, all registered in `src/index.ts`:
 
 Cross-cutting behaviour in `src/index.ts`:
 
+- **Write policy** (`src/policy.ts`): `ENVIRONMENT_WRITE_TOOLS` is the single list of tools that
+  can change an environment (bespoke names plus every `PAC_COMMANDS` spec whose `mutating` is not
+  `false`). `CPS_READ_ONLY` makes the registration wrapper in index.ts skip them entirely;
+  `cs_pac` stays registered and refuses non-read-only commands itself. `test/policy.test.js`
+  cross-checks the list against the tools that declare `confirm` in `dist/index.js`, so adding a
+  mutating tool without listing it fails the build.
 - **Confirm contract**: every tool that mutates a live environment (`cs_push`, `cs_publish`,
   `cs_import_solution`, `cs_run_evaluation`, bootstrap `cs_init_agent`, non-read-only `cs_pac`)
   returns `dryRun()` unless `confirm: true`. Keep new mutating tools on this pattern.
