@@ -70,6 +70,15 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   per-stage differences (connection bindings, variable values, managed flag). Dataverse reads for
   flows / connection references / variables / publish state are optional and use a silent token only.
 
+- **Drift** (`src/drift.ts`): portal changes since the last sync. `writeStamp` records
+  `.mcs/cs-sync.json` (file fingerprints from `compare.workspaceFingerprints` plus the Dataverse
+  component stamps when a silent token exists) after clone / pull / push / init; `quickDrift`
+  compares `listBotComponents` rows with the stamp and maps them to files through
+  `componentFileFor` (`<agent>.<kind>.<Stem>`); `compareWithClone` / `fullDrift` classify files
+  three ways (`classifyFiles`). `cs_push` runs the quick check in its dry run and blocks on
+  conflicts unless `force`. Dataverse access for all of this goes through `silentDataverse` in
+  index.ts and must stay non-interactive.
+
 - **Catalog** (`src/catalog.ts`): connector registry and OpenAPI definitions from `api.powerapps.com`
   (PowerApps Service token), cached under `.cs-catalog/<environment>/`; `parseSwaggerOperations`
   flattens body schemas into parameters and detects MCP endpoints by `x-ms-agentic-protocol`;
@@ -120,6 +129,9 @@ stdout is the MCP transport. All diagnostics go through `log()` to stderr.
 - `pac solution create-settings` (2.11.2) emits `EnvironmentVariables` (with DefaultValue, Name,
   TypeId, IsRequired), `ConnectionReferences`, and a `CopilotAgents` section with `AadGroupId` per
   agent. `readDeploymentSettings` keeps the raw object so a rewrite never drops fields.
+- `pac copilot pack` (2.11.2) tolerates extra files inside `.mcs/` but rejects unknown files at the
+  workspace root (`Unsupported file: .cs-sync.json`); that is why the sync stamp lives in
+  `.mcs/cs-sync.json`.
 - js-yaml 5 has no default export: `import * as yaml from "js-yaml"`.
 - Heredocs in the Bash tool break on non-ASCII characters; keep sources ASCII or use the Write tool.
 - `repowise update` rewrites the `repowise` entry in `.vscode/mcp.json` with an absolute path. The
@@ -162,3 +174,8 @@ Nothing below the unit tests and the pack oracle has been run against a tenant.
    `cs_deploy_solution confirm`; confirm agents publish and tools show as connected. Check the
    `pac connection list` column layout against `parseConnectionList` (built from documentation,
    not a live run).
+9. Edit a topic in the portal, then `cs_check_drift` (quick and full): confirm that
+   `bots({id})/bot_botcomponent` (or the `_parentbotid_value` fallback) returns rows whose
+   `schemaname` has the `<agent>.<kind>.<Stem>` form for every component kind, that the
+   formatted-value annotations arrive, and that `pac copilot push` refuses when the server changed
+   (the `explainFailure` regex for that message is a guess).

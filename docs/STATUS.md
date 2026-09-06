@@ -16,17 +16,20 @@ Plan: `~/.claude/plans/twinkly-inventing-hopper.md` (approved 2026-09-05).
 | 10 DTAP comparison (added 2026-09-05 on request) | done (code) | `cs_snapshot_environment`, `cs_compare_snapshots`, `cs_compare_environments`; comparison logic unit-tested on synthetic snapshots; capture path (clone per agent, Dataverse reads) untested live |
 | 12 Getting started (added 2026-09-05 on request) | done (code) | `cs_create_solution`, `cs_init_agent solutionName/createSolution` (init, pack, import, clone), `cs_generate_instructions` via `pac copilot model predict`; empty-solution manifest packs offline; import/clone/predict unverified live |
 | 13 Day-two authoring + review (added 2026-09-06 on request) | done (code) | `cs_edit_topic`, `cs_edit_tool`, `cs_edit_knowledge`, `cs_remove_component`, `cs_delete_agent`, `cs_delete_solution`, `cs_review_agent`; new topic nodes: adaptive card (display and input), transfer, end conversation, scoped generative answers; node shapes from the schema, unverified live |
+| 14 Portal drift (added 2026-09-06 on request) | done (code) | `cs_check_drift` quick (Dataverse component stamps) and full (temporary clone, three-way file diff); sync stamp `.mcs/cs-sync.json` written by clone / pull / push / init; drift preflight in `cs_push`; stamp placement verified with `pac copilot pack`; `botcomponent` query and formatted-value annotations unverified live |
 | 11 Tool catalog (added 2026-09-05 on request) | done (code) | `cs_list_connectors`, `cs_describe_connector`, `cs_list_prompts`; `cs_add_tool` covers all 10 schema TaskAction kinds (6 typed, 4 raw) with catalog-backed operation checks and input filling; offline seed of public connectors; registry endpoint (`api.powerapps.com` apis + `$expand=swagger`) unverified live |
 
 ## Verified offline (2026-09-05)
 
-- `npm test`: 28 unit tests over dist/ (parsers, CSV, schema validation, every authoring tool on fixtures, solution inventory and settings).
+- `npm test`: 63 unit tests over dist/ (parsers, CSV, schema validation, every authoring tool on fixtures, solution inventory and settings, comparison, catalog, bootstrap, validation, day-two edits and review, drift).
 - `pac copilot init` (default, minimal, cli-copilot) and `pac copilot pack` on the classic scaffold.
 - `pac copilot pack` accepts settings + agent + topics only on an init workspace; every other folder
   is "Unsupported directory". Authoring tools report this via `layoutNote`.
 - pac assemblies (`Microsoft.CopilotStudio.McsCore.dll`, `Microsoft.CopilotStudio.Sync.dll`) contain the
   sync layout names: `topics/`, `actions/`, `tools/`, `trigger/`, `knowledge/files`, `behaviors/`,
   `variables/`, `workflows`, `connectionreferences.mcs.yml`, `.mcs/conn.json`, `agent.sync.yaml`.
+- `pac copilot pack` accepts extra files inside `.mcs/` and rejects a dotfile at the workspace root
+  (`Unsupported file: .cs-sync.json`), 2026-09-06.
 - `pac solution unpack` of the packed oracle solution (fixture `test/fixtures/unpacked-solution`, with
   synthetic flow, connection reference, environment variable and connector entries), `pac solution pack`
   of that fixture, and `pac solution create-settings` on the result (shape includes `CopilotAgents.AadGroupId`).
@@ -41,3 +44,7 @@ Plan: `~/.claude/plans/twinkly-inventing-hopper.md` (approved 2026-09-05).
 - Evaluation API response field names for the summary buckets.
 - `pac connection list` column layout (parser anchors on the GUID and connector name only).
 - Whether `pac solution import` proceeds with the all-zero `AadGroupId` placeholder (treated as informational, not blocking).
+- Which component query an environment accepts (`bots({id})/bot_botcomponent` navigation or the
+  `_parentbotid_value` filter), whether `schemaname` follows `<agent>.<kind>.<Stem>` for every
+  component kind (the drift-to-file mapping relies on it), and whether `pac copilot push` refuses
+  when the server changed since the last pull.

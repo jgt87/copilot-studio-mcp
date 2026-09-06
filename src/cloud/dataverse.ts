@@ -2,7 +2,7 @@
  * Dataverse Web API calls the server needs: list agents (bots table), read one
  * bot, and publish via the PvaPublish bound action.
  */
-import { requestJson, type FetchLike } from "./http.js";
+import { HttpError, requestJson, type FetchLike } from "./http.js";
 
 export function dataverseScope(envUrl: string): string {
   return `${envUrl.replace(/\/+$/, "")}/.default`;
@@ -13,6 +13,13 @@ function api(envUrl: string): string {
 }
 
 const ODATA_HEADERS = { "OData-MaxVersion": "4.0", "OData-Version": "4.0" };
+/** Same, plus display names for lookups and option sets (`<field>@OData.Community.Display.V1.FormattedValue`). */
+const FORMATTED_HEADERS = { ...ODATA_HEADERS, Prefer: 'odata.include-annotations="OData.Community.Display.V1.FormattedValue"' };
+
+function formatted(row: Record<string, unknown>, field: string): string | null {
+  const v = row[`${field}@OData.Community.Display.V1.FormattedValue`];
+  return typeof v === "string" && v.trim() ? v : null;
+}
 
 export interface BotRow {
   botId: string;
@@ -130,20 +137,84 @@ export interface BotDetails {
   name: string;
   schemaName: string | null;
   publishedOn: string | null;
+  modifiedOn: string | null;
+  /** Display name of the user who last changed the bot row (formatted value), when returned. */
+  modifiedBy: string | null;
   authenticationMode: number | null;
 }
 
 export async function getBot(envUrl: string, token: string, botId: string, fetchImpl?: FetchLike): Promise<BotDetails> {
-  const select = "botid,name,schemaname,publishedon,authenticationmode";
-  const b = await requestJson<Record<string, unknown>>(`${api(envUrl)}/bots(${botId})?$select=${select}`, { token, fetchImpl, headers: ODATA_HEADERS });
+  const select = "botid,name,schemaname,publishedon,modifiedon,_modifiedby_value,authenticationmode";
+  const b = await requestJson<Record<string, unknown>>(`${api(envUrl)}/bots(${botId})?$select=${select}`, { token, fetchImpl, headers: FORMATTED_HEADERS });
   if (!b) throw new Error(`Bot ${botId} not found`);
   return {
     botId: String(b.botid),
     name: String(b.name ?? ""),
     schemaName: (b.schemaname as string | null) ?? null,
     publishedOn: (b.publishedon as string | null) ?? null,
+    modifiedOn: (b.modifiedon as string | null) ?? null,
+    modifiedBy: formatted(b, "_modifiedby_value"),
     authenticationMode: typeof b.authenticationmode === "number" ? b.authenticationmode : null,
   };
+}
+
+export interface BotComponentRow {
+  componentId: string;
+  name: string;
+  schemaName: string | null;
+  componentType: number | null;
+  /** Option-set label from the formatted value (e.g. "Topic", "Knowledge Source"), when returned. */
+  componentTypeLabel: string | null;
+  modifiedOn: string | null;
+  modifiedBy: string | null;
+  modifiedById: string | null;
+  state: number | null;
+}
+
+function toComponentRow(c: Record<string, unknown>): BotComponentRow {
+  return {
+    componentId: String(c.botcomponentid),
+    name: String(c.name ?? ""),
+    schemaName: (c.schemaname as string | null) ?? null,
+    componentType: typeof c.componenttype === "number" ? c.componenttype : null,
+    componentTypeLabel: formatted(c, "componenttype"),
+    modifiedOn: (c.modifiedon as string | null) ?? null,
+    modifiedBy: formatted(c, "_modifiedby_value"),
+    modifiedById: (c._modifiedby_value as string | null) ?? null,
+    state: typeof c.statecode === "number" ? c.statecode : null,
+  };
+}
+
+/**
+ * Every component row (topics, knowledge sources, tools, triggers, variables, ...)
+ * of one agent with its modification stamp. The bot-to-component link is the
+ * `bot_botcomponent` relationship; the navigation form is tried first and the
+ * `parentbotid` filter second, because which one an environment accepts has not
+ * been verified live. Follows `@odata.nextLink` paging.
+ */
+export async function listBotComponents(envUrl: string, token: string, botId: string, fetchImpl?: FetchLike): Promise<BotComponentRow[]> {
+  const select = "botcomponentid,name,schemaname,componenttype,modifiedon,_modifiedby_value,statecode";
+  const candidates = [
+    `${api(envUrl)}/bots(${botId})/bot_botcomponent?$select=${select}&$orderby=modifiedon desc`,
+    `${api(envUrl)}/botcomponents?$select=${select}&$filter=${encodeURIComponent(`_parentbotid_value eq ${botId}`)}&$orderby=modifiedon desc`,
+  ];
+  let lastError: unknown = null;
+  for (const first of candidates) {
+    try {
+      const rows: BotComponentRow[] = [];
+      let url: string | null = first;
+      while (url) {
+        const data: { value?: Record<string, unknown>[]; "@odata.nextLink"?: string } | null = await requestJson(url, { token, fetchImpl, headers: FORMATTED_HEADERS });
+        rows.push(...(data?.value ?? []).map(toComponentRow));
+        url = data?.["@odata.nextLink"] ?? null;
+      }
+      return rows;
+    } catch (err) {
+      lastError = err;
+      if (!(err instanceof HttpError) || (err.status !== 400 && err.status !== 404)) throw err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("listBotComponents failed");
 }
 
 export interface PublishResult {

@@ -243,6 +243,21 @@ export function compareWorkspaces(rootA: string, rootB: string, opts: { ignoredK
   });
 }
 
+/**
+ * One fingerprint per workspace file (sha1 of the normalised YAML, or of the
+ * bytes for binaries), keyed by posix-style relative path. `.mcs/`, icons and
+ * sync markers are skipped like everywhere else in this module.
+ */
+export function workspaceFingerprints(root: string, ignoredKeys?: string[]): Record<string, string> {
+  const ignored = new Set(ignoredKeys ?? DEFAULT_IGNORED_KEYS);
+  const out: Record<string, string> = {};
+  for (const rel of listFiles(root)) {
+    const c = contentFor(path.join(root, rel), ignored);
+    out[rel] = c.binary ? c.text : createHash("sha1").update(c.text).digest("hex");
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Snapshot comparison
 // ---------------------------------------------------------------------------

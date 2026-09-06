@@ -58,8 +58,8 @@ Do you need your own app registration?
 
 | Situation | App registration needed? |
 | --- | --- |
-| `pac` commands (`cs_init_agent`, `cs_clone_agent`, `cs_pull`, `cs_push`, `cs_pack`, `cs_publish` via pac, all `cs_*_solution` tools) | No. `pac auth create` signs in with Microsoft's own first-party app. |
-| Cloud tools with the default client id (`cs_list_environments`, `cs_list_agents` via Dataverse, `cs_publish` via Dataverse, evaluations, `cs_chat` for no-auth or manual-auth agents) | No. The server uses the first-party VS Code client id `51f81489-12ee-4a9e-aaae-a2591f45987d`, which is pre-authorised for Power Platform API, Dataverse and the Power Apps service. Microsoft's own Copilot Studio tooling uses the same id. |
+| `pac` commands (`cs_init_agent`, `cs_clone_agent`, `cs_pull`, `cs_push`, `cs_pack`, `cs_publish` via pac, `cs_check_drift` in `full` mode, all `cs_*_solution` tools) | No. `pac auth create` signs in with Microsoft's own first-party app. |
+| Cloud tools with the default client id (`cs_list_environments`, `cs_list_agents` via Dataverse, `cs_publish` via Dataverse, `cs_check_drift`, evaluations, `cs_chat` for no-auth or manual-auth agents) | No. The server uses the first-party VS Code client id `51f81489-12ee-4a9e-aaae-a2591f45987d`, which is pre-authorised for Power Platform API, Dataverse and the Power Apps service. Microsoft's own Copilot Studio tooling uses the same id. |
 | Same tools, but your tenant blocks that id (app consent policy, conditional access, "user assignment required") | Yes. Create the registration below and set `CPS_CLIENT_ID`. |
 | `cs_chat` with an agent that uses **integrated authentication (Entra SSO)** | Yes, always. The first-party id does not carry `CopilotStudio.Copilots.Invoke` for third parties. Pass `clientId` to `cs_chat` or set `CPS_CLIENT_ID`. |
 | Headless CI (service principal, no user) | Not supported by this server today (public client only). For pipelines use `pac auth create --applicationId ... --clientSecret ...` with a Dataverse application user, or the Power Platform API with an RBAC role assigned to the service principal. |
@@ -71,7 +71,7 @@ Permissions for your own app registration (Entra ID > App registrations > API pe
 | `cs_chat` (transport `sdk`, Entra-SSO agents) | **Power Platform API** (app id `8578e004-a5c6-46e7-913e-12f58912df43`) | `CopilotStudio.Copilots.Invoke` | Delegated is what this server uses. An application permission of the same name exists for confidential clients (Microsoft 365 Agents SDK); not used here. | Admin consent is normally required. Redirect URI `http://localhost` (Mobile and desktop applications). |
 | `cs_list_test_sets`, `cs_run_evaluation`, `cs_get_evaluation_run`, `cs_list_evaluation_runs` | **Power Platform API** | Token scope `https://api.powerplatform.com/.default`. The evaluation endpoints declare only `.default`; the permission reference has no finer-grained evaluation permission. | Delegated only. Power Platform API has no application permissions; service principals get access through RBAC roles instead. | Verified with the first-party id by Microsoft's own tooling. Not yet verified with a custom registration; if calls return 403, the signed-in user needs maker access to the agent. |
 | `cs_list_environments`, automatic Dataverse URL lookup, `cs_list_connectors`, `cs_describe_connector` | **PowerApps Service** (app id `475226c6-020e-4fb2-8a90-7a972cbfc1d4`) | `User` ("Access the Power Apps Service API") | Delegated. | Calls the BAP environments API (`api.bap.microsoft.com`) and the connector registry (`api.powerapps.com`). |
-| `cs_list_agents` (via `dataverse`), `cs_publish` (via `dataverse`), authentication-mode detection in `cs_chat` | **Dynamics CRM** (Dataverse, app id `00000007-0000-0000-c000-000000000000`) | `user_impersonation` | Delegated. There is no application permission; server-to-server access to Dataverse means an **application user** with a security role in each environment. | The user still needs a Dataverse security role that can read and publish bots (System Customizer or a Copilot Studio maker role). |
+| `cs_list_agents` (via `dataverse`), `cs_publish` (via `dataverse`), authentication-mode detection in `cs_chat`, `cs_check_drift` (quick mode), the drift preflight in `cs_push` and the component stamps recorded by `cs_clone_agent` / `cs_pull` / `cs_push` | **Dynamics CRM** (Dataverse, app id `00000007-0000-0000-c000-000000000000`) | `user_impersonation` | Delegated. There is no application permission; server-to-server access to Dataverse means an **application user** with a security role in each environment. | The user still needs a Dataverse security role that can read and publish bots (System Customizer or a Copilot Studio maker role). The drift checks only read the `bot` and `botcomponent` tables, which every maker role can read; they never write to Dataverse. When a workspace has no Dataverse URL in its sync metadata the URL is looked up through the PowerApps Service permission above. |
 | `cs_chat` for no-auth or manual-auth agents (DirectLine) | none | none | not applicable | The DirectLine token endpoint of a published agent is anonymous. |
 | `pac` interactive sign-in | none | none | not applicable | Microsoft's own app; `pac auth create --environment <id>`. |
 
@@ -134,7 +134,8 @@ Setup and sync (pac)
 | `cs_init_agent` | `pac copilot init` (classic or cli-copilot), optional bootstrap into an environment, optionally inside a chosen or new solution |
 | `cs_create_solution` | create an unmanaged solution (and publisher) as the container for new agents |
 | `cs_generate_instructions` | draft or refine the agent instructions with an AI Builder prompt (`pac copilot model predict`) and write them into the workspace |
-| `cs_clone_agent`, `cs_pull`, `cs_push`, `cs_status` | sync a live agent with the workspace |
+| `cs_clone_agent`, `cs_pull`, `cs_push`, `cs_status` | sync a live agent with the workspace; clone, pull and push record a sync stamp |
+| `cs_check_drift` | changes made in Copilot Studio since the last clone, pull or push: quick (Dataverse component stamps: who, what, when) or full (temporary clone, three-way file diff); the `cs_push` dry run runs the quick check |
 | `cs_pack`, `cs_import_solution`, `cs_publish` | package, import, publish |
 | `cs_pac` | run any pac command (read-only ones immediately, others with `confirm`) |
 
@@ -163,7 +164,7 @@ Authoring (files, schema-validated)
 | `cs_describe_workspace` | inventory of settings, topics, knowledge, tools, flows, triggers, variables |
 | `cs_validate` | structural + cross-file validation; `cs_push` runs it first |
 | `cs_lookup_schema` | inspect the YAML schema (summaries, resolved definitions, kinds) |
-| `cs_add_topic` | topic from a declarative spec (phrases + message/question/condition/redirect/http/flow nodes) |
+| `cs_add_topic` | topic from a declarative spec: trigger phrases plus message, question, condition, set variable, redirect, HTTP, flow, generative answers (optionally scoped to named knowledge sources), adaptive card (display or input), transfer to agent or phone, end conversation, and raw nodes |
 | `cs_add_knowledge_source` | public website, SharePoint, Graph connector, or files |
 | `cs_add_tool` | connector action, MCP server, cloud flow, AI Builder prompt, connected agent, child agent, or any other TaskAction kind as raw (+ connection-reference stub) |
 | `cs_list_connectors`, `cs_describe_connector`, `cs_list_prompts` | tool catalog: connectors available in the environment (with MCP detection), a connector's operations and parameters, AI Builder prompts |
@@ -298,16 +299,18 @@ would do in Copilot Studio for the same result.
 | `cs_init_agent` (with `environment`, `solutionName`) | Copilot Studio > Create > New agent, saved into that solution; the agent appears with its default system topics | `pac copilot init`, `pack`, `pac solution import`, `pac copilot clone` |
 | `cs_generate_instructions` | Overview > Instructions: the portal's "generate with AI" step, using your AI Builder prompt | `pac copilot model predict`, then `agent.mcs.yml` |
 | `cs_update_agent` | Overview: instructions, conversation starters, model | edit `agent.mcs.yml` |
-| `cs_add_topic` | Topics > Add a topic > From blank: trigger phrases and the message, question, condition and redirect nodes | YAML in `topics/` |
+| `cs_add_topic` | Topics > Add a topic > From blank: trigger phrases and the message, question, condition, set variable, redirect, HTTP, generative answers, adaptive card, transfer and end conversation nodes | YAML in `topics/` |
 | `cs_add_knowledge_source` | Knowledge > Add knowledge: public website, SharePoint, Graph connector, or file upload | YAML in `knowledge/`, files in `knowledge/files/` |
 | `cs_list_connectors`, `cs_describe_connector` | Tools > Add a tool: the connector picker and its list of actions | Power Apps connector registry |
 | `cs_add_tool` | Tools > Add a tool: connector action, MCP server, flow, prompt or agent, everything except the "Connect" sign-in | YAML in `actions/` plus `connectionreferences.mcs.yml` |
 | `cs_add_flow`, `cs_add_trigger`, `cs_add_variable` | Tools > New agent flow; Triggers > Add trigger; Settings > Variables | files in `workflows/`, `trigger/`, `variables/` |
 | `cs_edit_topic`, `cs_edit_tool`, `cs_edit_knowledge` | editing a topic's trigger phrases and nodes, a tool's description and inputs, or a knowledge source's URL in the portal | in-place YAML edits |
 | `cs_remove_component` | deleting a topic, knowledge source, tool, trigger or variable from the agent | file removal, applied on push |
+| `cs_delete_agent`, `cs_delete_solution` | Agents > delete the agent; Power Apps maker portal > Solutions > delete the solution (`confirm`) | `pac copilot delete`, `pac solution delete` |
 | `cs_review_agent` | a maker's pre-publish walkthrough of the agent (no single portal page does this) | rules over the workspace |
 | `cs_validate` | the errors the portal would show on save, before anything is sent | schema and cross-file checks |
-| `cs_push` | Save: the draft agent in the portal now shows your topics, knowledge and tools | `pac copilot push` |
+| `cs_push` | Save: the draft agent in the portal now shows your topics, knowledge and tools; refused when a maker changed the same component in the portal since your last pull | `pac copilot push` after a quick drift check |
+| `cs_check_drift` | opening each topic, tool and knowledge source to read its "modified by" line and see what colleagues changed since you last synced | Dataverse component rows against the sync stamp; or `pac copilot clone` plus a three-way file diff |
 | (portal step) | Tools > the new tool > Connect: sign in once so the connection exists | manual, then `cs_pull` |
 | `cs_pull` | refresh the local files from the draft agent | `pac copilot pull` |
 | `cs_publish` | the Publish button | `pac copilot publish` or Dataverse `PvaPublish` |
@@ -327,7 +330,8 @@ flowchart TD
     B --> C["cs_init_agent<br/>environment + solutionName + confirm"]
     C --> D["cs_generate_instructions<br/>AI Builder prompt, then apply"]
     D --> E["cs_add_topic / cs_add_knowledge_source / cs_add_tool<br/>(cs_list_connectors, cs_describe_connector)"]
-    E --> H["cs_validate"]
+    E --> R["cs_review_agent"]
+    R --> H["cs_validate"]
     H -- errors --> E
     H -- clean --> I["cs_push confirm"]
     I --> J{"tool needs a connection?"}
@@ -347,7 +351,13 @@ flowchart TD
     F -- no --> I["cs_publish confirm"]
 ```
 
-Existing agent: `cs_clone_agent` -> edit -> `cs_pull` -> `cs_validate` -> `cs_push confirm`.
+Existing agent: `cs_clone_agent` -> edit (`cs_edit_topic`, `cs_edit_tool`, `cs_edit_knowledge`,
+`cs_remove_component confirm`, or `cs_add_*`) -> `cs_review_agent` -> `cs_pull` -> `cs_validate` ->
+`cs_push confirm`.
+
+Portal drift (a maker edited the agent in Copilot Studio): `cs_check_drift` -> `cs_pull` -> commit.
+Every `cs_push` dry run repeats the quick check and blocks when a portal change collides with a
+local edit; see "Keeping the workspace and the portal in sync" below.
 
 Whole solution to another environment: `cs_pull_solution` -> `cs_list_connections` (target) ->
 `cs_create_deployment_settings` -> `cs_deploy_solution confirm`.
@@ -383,6 +393,46 @@ No tooling removes these; plan for them before calling the copy "1:1":
   `cs_pull_solution` push back to their source environment only. Solution export/import is the
   vehicle for moving; edit the `agents/<name>` workspace, push to the source, then pull and deploy
   the solution again.
+
+## Keeping the workspace and the portal in sync
+
+Makers can keep editing an agent in Copilot Studio after it was cloned; nothing stops them and the
+platform sends no notification. Every portal edit lands in Dataverse rows: the `bot` row for
+settings and instructions, and one `botcomponent` row per topic, knowledge source, tool, trigger
+and variable, each with a modified-on stamp and the user who changed it. The server uses those rows
+to see drift without a re-scan, and a clone to confirm it when the details matter.
+
+1. **Sync stamp.** `cs_clone_agent`, `cs_pull`, `cs_push` and `cs_init_agent` (with
+   `environment`) write `.mcs/cs-sync.json`: a fingerprint of every workspace file and, when a
+   Dataverse sign-in is cached, the modified-on stamp of every component. `pac copilot pack`
+   ignores `.mcs/` (verified with pac 2.11.2; a dotfile at the workspace root is rejected).
+   `cs_describe_workspace` shows the last sync.
+2. **Quick check.** `cs_check_drift` (default `mode: quick`) reads the bot row and its component
+   rows and compares them with the stamp: which components were modified, added or removed in the
+   portal, by whom and when, whether the agent settings changed, and whether the live agent has
+   unpublished changes. Each component is mapped to its workspace file; when that file also changed
+   locally the entry is a conflict. Seconds, no pac; needs `cs_login`.
+3. **Full check.** `cs_check_drift mode=full` runs `pac copilot clone` into a temporary folder and
+   classifies every file three ways against the stamp: `local-modified`, `remote-modified`,
+   `both-modified` (conflict), added or deleted on either side, with unified diffs. Use it when the
+   quick check reports drift and you want the exact content, or when there is no Dataverse sign-in
+   (only the pac profile is needed). Uploaded knowledge files are covered here, not in the quick
+   check.
+4. **Push preflight.** The `cs_push` dry run includes the quick check, so the caller sees "three
+   components changed in Copilot Studio since your last pull" before confirming. With `confirm`,
+   the push is blocked when a portal change and a local edit touch the same component; `cs_pull`
+   (pac's three-way merge) resolves it and `force: true` overrides it.
+5. **Git as the ledger.** Keep the workspace in a git repository and commit after every `cs_pull`
+   (the tool result reminds you). Portal drift then shows up as a diff you can review: accepting it
+   is a commit, rejecting it is a push of the local version. `cs_check_drift` reports whether the
+   workspace is in a repository and how many of its files are uncommitted.
+
+Limits. The quick check does not see connections (a maker connecting a tool is expected, and
+connection ids are ignored in every comparison), uploaded knowledge files, channel configuration or
+the security group. When the stamp has no per-component baseline (no Dataverse sign-in at sync
+time) it falls back to the sync time with a two-minute margin, so edits made right after a sync
+count as the sync itself. The component query (`bots({id})/bot_botcomponent`, falling back to a
+`parentbotid` filter) has not been verified against a live environment yet; see docs/STATUS.md.
 
 ## Comparing environments in a DTAP pipeline
 

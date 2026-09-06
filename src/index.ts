@@ -52,9 +52,11 @@ import { addGlobalVariable } from "./authoring/variables.js";
 import { updateAgent, updateCliCopilotInstructions, updateSettings } from "./authoring/agent.js";
 import { editKnowledge, editTool, editTopic, removeComponent } from "./authoring/edit.js";
 import { renderReviewMarkdown, reviewWorkspace } from "./review.js";
+import { briefQuick, fullDrift, gitState, quickDrift, readStamp, remoteStateFrom, STAMP_REL, writeStamp, type QuickDriftReport, type SyncOperation } from "./drift.js";
 
 import {
   acquireInteractive,
+  acquireSilent,
   BAP_SCOPE,
   COPILOT_INVOKE_SCOPE,
   effectiveClientId,
@@ -69,7 +71,7 @@ import {
   type AuthConfig,
 } from "./auth.js";
 import { getEnvironment, listEnvironments } from "./cloud/bap.js";
-import { dataverseScope, getBot, listBots, listConnectionReferences, listEnvironmentVariables, listFlows, publishBot } from "./cloud/dataverse.js";
+import { dataverseScope, getBot, listBotComponents, listBots, listConnectionReferences, listEnvironmentVariables, listFlows, publishBot, type BotComponentRow, type BotDetails } from "./cloud/dataverse.js";
 import { captureSnapshot, compareChain, compareSnapshots, writeReport, type DataverseReads } from "./compare.js";
 import { buildInstructionsBrief, createSolution, generateWithAiBuilder, initAgentInSolution } from "./bootstrap.js";
 import { getRun, getTestSet, listRuns, listTestSets, startRun, summarizeRun } from "./cloud/ppapi.js";
@@ -185,6 +187,61 @@ function dryRun(summary: string, extra: Record<string, unknown> = {}) {
 function layoutNote(ws: WorkspaceInfo): string | null {
   if (ws.sync.source !== "none") return null;
   return "Workspace has no sync metadata (pac copilot init without --environment). 'pac copilot pack' packages only settings and topics; knowledge, tools, flows, triggers and variables are applied by 'pac copilot push' from a sync-connected workspace (cs_init_agent with environment, or cs_clone_agent).";
+}
+
+/** Dataverse URL and token for the workspace's environment without any interaction; null when not signed in or unresolvable. */
+async function silentDataverse(ws: WorkspaceInfo, o: { tenantId?: string; clientId?: string } = {}): Promise<{ url: string; token: string } | null> {
+  try {
+    const authCfg: AuthConfig = { tenantId: resolveTenantId(o.tenantId ?? ws.sync.tenantId ?? undefined), clientId: effectiveClientId(o.clientId) };
+    let url = ws.sync.dataverseUrl ?? process.env.CPS_ENVIRONMENT_URL ?? null;
+    if (!url && ws.sync.environmentId) {
+      const bap = await acquireSilent(authCfg, [BAP_SCOPE]);
+      if (!bap) return null;
+      url = (await getEnvironment(bap.accessToken, ws.sync.environmentId)).dataverseUrl;
+    }
+    if (!url) return null;
+    const tok = await acquireSilent(authCfg, [dataverseScope(url)]);
+    return tok ? { url, token: tok.accessToken } : null;
+  } catch (err) {
+    log(`silent Dataverse access skipped: ${errorMessage(err)}`);
+    return null;
+  }
+}
+
+type RemoteAgentState = { bot: BotDetails; components: BotComponentRow[]; note: null } | { bot: null; components: null; note: string };
+
+/** Bot row plus component rows for the workspace's agent, read silently; a note says why when that is not possible. */
+async function remoteAgentState(ws: WorkspaceInfo, o: { tenantId?: string; clientId?: string } = {}): Promise<RemoteAgentState> {
+  if (!ws.sync.agentId) return { bot: null, components: null, note: "workspace has no sync metadata (agent id unknown)" };
+  const dv = await silentDataverse(ws, o);
+  if (!dv) return { bot: null, components: null, note: "no cached Dataverse sign-in for this environment (run cs_login) or Dataverse URL unresolved; drift check skipped" };
+  try {
+    const [bot, components] = await Promise.all([getBot(dv.url, dv.token, ws.sync.agentId), listBotComponents(dv.url, dv.token, ws.sync.agentId)]);
+    return { bot, components, note: null };
+  } catch (err) {
+    return { bot: null, components: null, note: `Dataverse read failed: ${errorMessage(err)}` };
+  }
+}
+
+/** Record the post-sync state in .mcs/cs-sync.json (file fingerprints, remote component stamps when reachable). Never throws. */
+async function stampAfterSync(root: string, operation: SyncOperation): Promise<Record<string, unknown>> {
+  try {
+    const ws = readWorkspace(root);
+    if (ws.sync.source === "none") return { stamped: false, reason: "not a sync-connected workspace" };
+    const remote = await remoteAgentState(ws);
+    const stamp = writeStamp(root, { operation, botId: ws.sync.agentId, environmentId: ws.sync.environmentId, remote: remote.bot ? remoteStateFrom(remote.bot, remote.components) : null });
+    return { stamped: true, file: STAMP_REL, syncedAt: stamp.syncedAt, files: Object.keys(stamp.files).length, remoteComponents: remote.components?.length ?? null, ...(remote.note ? { note: remote.note } : {}) };
+  } catch (err) {
+    log(`sync stamp skipped: ${errorMessage(err)}`);
+    return { stamped: false, reason: errorMessage(err) };
+  }
+}
+
+/** Quick drift report for a workspace, or the reason it could not run. */
+async function quickDriftFor(ws: WorkspaceInfo, o: { tenantId?: string; clientId?: string } = {}): Promise<{ report: QuickDriftReport | null; note: string | null }> {
+  const remote = await remoteAgentState(ws, o);
+  if (!remote.bot) return { report: null, note: remote.note };
+  return { report: quickDrift({ ws, stamp: readStamp(ws.root), bot: remote.bot, components: remote.components }), note: null };
 }
 
 // Cross-file validation lives in validate.ts; the local name is kept for the call sites below.
@@ -440,7 +497,7 @@ server.registerTool(
       if (a.environment && !a.confirm) return dryRun(`create agent '${a.name}' in environment ${a.environment}${a.solutionName ? ` inside solution ${a.solutionName}${a.createSolution ? " (created if missing)" : ""}` : " (in a solution named after the agent)"}`);
       if (a.environment && a.solutionName) {
         const r = await initAgentInSolution({ name: a.name, publisherPrefix: a.publisherPrefix, projectDir: a.projectDir, solutionName: a.solutionName, environment: a.environment, createSolution: a.createSolution, instructions: a.instructions, schemaName: a.schemaName, template: a.template, authoringMode: a.authoringMode });
-        return text({ ...r, workspaceInfo: describeWorkspace(readWorkspace(r.workspace)) });
+        return text({ ...r, workspaceInfo: describeWorkspace(readWorkspace(r.workspace)), syncStamp: await stampAfterSync(r.workspace, "init") });
       }
       if (a.solutionName && !a.environment) return fail("solutionName needs environment");
       const args = ["copilot", "init", "--name", a.name, "--publisher-prefix", a.publisherPrefix, "--project-dir", a.projectDir];
@@ -451,7 +508,7 @@ server.registerTool(
       if (a.environment) args.push("--environment", a.environment);
       const r = await runPac(args, { timeoutMs: 15 * 60_000 });
       const root = fs.existsSync(a.projectDir) ? findWorkspaceRoot(a.projectDir) : null;
-      return text({ ...pacSummary(r), workspace: root ? describeWorkspace(readWorkspace(root)) : null });
+      return text({ ...pacSummary(r), workspace: root ? describeWorkspace(readWorkspace(root)) : null, ...(root && r.ok && a.environment ? { syncStamp: await stampAfterSync(root, "init") } : {}) });
     } catch (err) {
       return fail(errorMessage(err));
     }
@@ -462,7 +519,7 @@ server.registerTool(
   "cs_clone_agent",
   {
     title: "Clone an agent to disk",
-    description: "pac copilot clone: download an existing agent into a sync-connected workspace (a subfolder named after the agent under outputDir). Needs a pac auth profile.",
+    description: "pac copilot clone: download an existing agent into a sync-connected workspace (a subfolder named after the agent under outputDir). Needs a pac auth profile. Records a sync stamp (.mcs/cs-sync.json) that cs_check_drift and the cs_push preflight compare against.",
     inputSchema: { bot: z.string().describe("Agent id (GUID) or schema name"), environment: z.string().optional().describe("Environment id or URL; default active profile"), outputDir: z.string().optional(), displayName: z.string().optional().describe("Folder name override"), componentCollections: z.array(z.string()).optional() },
   },
   async (a) => {
@@ -474,23 +531,27 @@ server.registerTool(
       for (const cc of a.componentCollections ?? []) args.push("--component-collection", cc);
       const r = await runPac(args, { timeoutMs: 15 * 60_000 });
       let workspace: unknown = null;
+      let syncStamp: Record<string, unknown> | undefined;
       if (r.ok) {
         const base = a.outputDir ?? process.cwd();
         const root = findWorkspaceRoot(base);
-        if (root) workspace = describeWorkspace(readWorkspace(root));
+        if (root) {
+          workspace = describeWorkspace(readWorkspace(root));
+          syncStamp = await stampAfterSync(root, "clone");
+        }
       }
-      return text({ ...pacSummary(r), workspace });
+      return text({ ...pacSummary(r), workspace, ...(syncStamp ? { syncStamp } : {}) });
     } catch (err) {
       return fail(errorMessage(err));
     }
   },
 );
 
-server.registerTool("cs_pull", { title: "Pull remote changes", description: "pac copilot pull: three-way merge of server changes into the local workspace (also downloads knowledge files). Run before editing and before pushing.", inputSchema: { workspace: workspaceArg } }, async ({ workspace }) => {
+server.registerTool("cs_pull", { title: "Pull remote changes", description: "pac copilot pull: three-way merge of server changes into the local workspace (also downloads knowledge files). Run before editing and before pushing. Records a sync stamp (.mcs/cs-sync.json) so cs_check_drift can tell later portal changes from yours; commit the workspace afterwards to keep a reviewable history.", inputSchema: { workspace: workspaceArg } }, async ({ workspace }) => {
   try {
     const root = resolveRoot(workspace);
     const r = await runPac(["copilot", "pull", "--project-dir", root], { cwd: root, timeoutMs: 15 * 60_000 });
-    return text(pacSummary(r));
+    return text({ ...pacSummary(r), ...(r.ok ? { syncStamp: await stampAfterSync(root, "pull"), hint: "Commit the workspace now so changes made in Copilot Studio show up as a reviewable diff." } : {}) });
   } catch (err) {
     return fail(errorMessage(err));
   }
@@ -500,8 +561,8 @@ server.registerTool(
   "cs_push",
   {
     title: "Push local changes",
-    description: "pac copilot push: upload local workspace changes to the live agent (topics, knowledge files, flows, connection references). Validates YAML first and blocks on errors unless force. Mutates the live agent: requires confirm: true.",
-    inputSchema: { workspace: workspaceArg, force: z.boolean().optional().describe("Push even if validation reports errors"), confirm: confirmArg },
+    description: "pac copilot push: upload local workspace changes to the live agent (topics, knowledge files, flows, connection references). Validates YAML first and blocks on errors unless force. The dry run also reports components changed in Copilot Studio since the last sync (quick drift check, needs a cached cs_login); when one of those also changed locally the push is blocked unless force. Mutates the live agent: requires confirm: true.",
+    inputSchema: { workspace: workspaceArg, force: z.boolean().optional().describe("Push even if validation reports errors or portal changes conflict with local edits"), confirm: confirmArg },
   },
   async ({ workspace, force, confirm }) => {
     try {
@@ -511,9 +572,14 @@ server.registerTool(
         return { ...text({ blocked: true, reason: `${validation.errors} validation error(s); fix them or pass force: true`, validation }), isError: true as const };
       }
       const ws = readWorkspace(root);
-      if (!confirm) return dryRun(`pac copilot push from ${root} to agent ${ws.sync.agentId ?? "(from sync metadata)"} in environment ${ws.sync.environmentId ?? "(from sync metadata)"}`, { validation: { errors: validation.errors, warnings: validation.warnings } });
+      const drift = await quickDriftFor(ws);
+      const driftInfo = drift.report ? briefQuick(drift.report) : { skipped: drift.note };
+      if (!confirm) return dryRun(`pac copilot push from ${root} to agent ${ws.sync.agentId ?? "(from sync metadata)"} in environment ${ws.sync.environmentId ?? "(from sync metadata)"}`, { validation: { errors: validation.errors, warnings: validation.warnings }, drift: driftInfo });
+      if (drift.report && drift.report.conflicts.length > 0 && !force) {
+        return { ...text({ blocked: true, reason: `${drift.report.conflicts.length} component(s) changed in Copilot Studio since the last sync and also changed locally: ${drift.report.conflicts.map((c) => c.name).join(", ")}. Run cs_pull (three-way merge) first, or pass force: true to push over the portal changes.`, drift: driftInfo }), isError: true as const };
+      }
       const r = await runPac(["copilot", "push", "--project-dir", root], { cwd: root, timeoutMs: 15 * 60_000 });
-      return text({ ...pacSummary(r), validation: { errors: validation.errors, warnings: validation.warnings } });
+      return text({ ...pacSummary(r), validation: { errors: validation.errors, warnings: validation.warnings }, drift: driftInfo, ...(r.ok ? { syncStamp: await stampAfterSync(root, "push") } : {}) });
     } catch (err) {
       return fail(errorMessage(err));
     }
@@ -598,6 +664,42 @@ server.registerTool("cs_status", { title: "Agent provisioning status", descripti
   }
 });
 
+server.registerTool(
+  "cs_check_drift",
+  {
+    title: "Detect portal changes since the last sync",
+    description:
+      "Find changes made directly in Copilot Studio after the workspace was last cloned, pulled or pushed. mode 'quick' (default) reads the agent's component rows from Dataverse and compares them with the sync stamp: which topics, tools and knowledge sources changed, by whom, when, whether the agent settings changed and whether there are unpublished changes; needs a cached cs_login, no pac. mode 'full' runs pac copilot clone into a temporary folder and classifies every file as local-modified, remote-modified or both (conflict) against the stamp, with unified diffs. Both are read-only. Resolve drift with cs_pull (three-way merge), then commit.",
+    inputSchema: {
+      workspace: workspaceArg,
+      mode: z.enum(["quick", "full"]).optional(),
+      includeDiffs: z.boolean().optional().describe("full: include unified diffs (default true)"),
+      keepClone: z.boolean().optional().describe("full: keep the temporary clone and return its path"),
+      tenantId: tenantArg,
+      clientId: clientArg,
+    },
+  },
+  async (a) => {
+    try {
+      const root = resolveRoot(a.workspace);
+      const ws = readWorkspace(root);
+      const stamp = readStamp(root);
+      const git = await gitState(root);
+      const lastSync = stamp ? { operation: stamp.operation, syncedAt: stamp.syncedAt, baseline: stamp.remote ? "components" : "syncedAt" } : null;
+      if (a.mode === "full") {
+        if (!ws.sync.agentId) return fail("The workspace has no sync metadata (agent id unknown); clone the agent first.");
+        const report = await fullDrift({ root, botId: ws.sync.agentId, environment: ws.sync.environmentId, includeDiffs: a.includeDiffs, keepClone: a.keepClone });
+        return text({ mode: "full", lastSync, git, ...report });
+      }
+      const quick = await quickDriftFor(ws, { tenantId: a.tenantId, clientId: a.clientId });
+      if (!quick.report) return text({ mode: "quick", lastSync, git, skipped: quick.note, hint: "Sign in with cs_login for the quick check, or use mode: 'full' (pac copilot clone) which only needs the pac auth profile." });
+      return text({ mode: "quick", lastSync, git, ...quick.report });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
 const READ_ONLY_PAC = [/^(help|--version|-v)$/, /^auth (list|who)$/, /^org (who|list|fetch)$/, /^env (list|who|fetch)$/, /^copilot (list|status|model list)$/, /^solution (list|version)$/, /^admin (list|list-tenant-settings|status)$/, /^connection list$/, /^connector list$/];
 
 server.registerTool(
@@ -619,7 +721,9 @@ server.registerTool(
 
 server.registerTool("cs_describe_workspace", { title: "Describe the workspace", description: "Inventory of an agent workspace: settings, instructions, topics (with trigger phrases), knowledge sources, tools, flows, triggers, variables, connection references, sync metadata.", inputSchema: { workspace: workspaceArg } }, async ({ workspace }) => {
   try {
-    return text(describeWorkspace(readWorkspace(resolveRoot(workspace))));
+    const root = resolveRoot(workspace);
+    const stamp = readStamp(root);
+    return text({ ...describeWorkspace(readWorkspace(root)), lastSync: stamp ? { operation: stamp.operation, syncedAt: stamp.syncedAt, remoteComponents: stamp.remote ? Object.keys(stamp.remote.components).length : null } : null });
   } catch (err) {
     return fail(errorMessage(err));
   }

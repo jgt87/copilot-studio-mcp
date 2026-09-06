@@ -33,10 +33,11 @@ flowchart TD
     B -- yes --> S["cs_list_solutions<br/>pick an unmanaged solution,<br/>or cs_create_solution confirm"]
     S --> C["cs_init_agent<br/>name, publisherPrefix, projectDir,<br/>environment + solutionName confirm<br/>(init, pack, import, clone)"]
     C --> D["cs_generate_instructions<br/>brief -> AI Builder prompt (cs_list_prompts)<br/>review, then apply"]
-    D --> E["cs_add_topic<br/>trigger phrases + message / question / condition / redirect nodes"]
+    D --> E["cs_add_topic<br/>trigger phrases + message / question / condition / set variable /<br/>redirect / HTTP / flow / generative answers / adaptive card / transfer / end nodes"]
     E --> F["cs_add_knowledge_source<br/>public-site | sharepoint | graph-connector | files"]
     F --> G["cs_add_tool<br/>connector | mcp | flow | prompt | agent<br/>(cs_list_connectors, cs_describe_connector)"]
-    G --> H["cs_validate"]
+    G --> R["cs_review_agent<br/>score and fixes"]
+    R --> H["cs_validate"]
     H -- errors --> E
     H -- clean --> I["cs_push confirm"]
     I --> J{"tool needs a connection?"}
@@ -56,9 +57,10 @@ knowledge and tools after cloning the imported agent.
 | `cs_list_solutions`, `cs_create_solution` | Power Apps maker portal > Solutions: choose or create the solution the agent lives in |
 | `cs_init_agent` | Copilot Studio > Create > New agent (name, publisher) inside that solution; the default system topics are created |
 | `cs_generate_instructions` | Overview > Instructions, generated with AI and then reviewed |
-| `cs_add_topic` | Topics > Add a topic > From blank; trigger phrases and nodes in the authoring canvas |
+| `cs_add_topic` | Topics > Add a topic > From blank; trigger phrases and the message, question, condition, set variable, redirect, HTTP, generative answers, adaptive card, transfer and end conversation nodes in the authoring canvas |
 | `cs_add_knowledge_source` | Knowledge > Add knowledge (public website, SharePoint, Graph connector, files) |
 | `cs_add_tool` | Tools > Add a tool: pick the connector action, MCP server, flow, prompt or agent |
+| `cs_review_agent` | a maker's pre-publish walkthrough: instructions, escalation, tool descriptions, phrase overlap, authentication versus knowledge; no single portal page does this |
 | `cs_validate` | the validation the portal runs when you save a node or topic |
 | `cs_push` | Save: the draft agent in the portal reflects the local files |
 | portal: authorise the connection | Tools > the tool > Connect: sign in to the connector once |
@@ -73,8 +75,11 @@ flowchart TD
     A["cs_list_environments"] --> B["cs_list_agents<br/>pac or Dataverse"]
     B --> C["cs_clone_agent<br/>bot id or schema name"]
     C --> D["cs_describe_workspace<br/>inventory: topics, knowledge, tools, flows, triggers"]
-    D --> E["edit: cs_add_* / cs_update_agent<br/>or hand-edit YAML"]
-    E --> F["cs_pull<br/>merge server changes first"]
+    D --> D2{"cs_check_drift<br/>changed in the portal since the last sync?"}
+    D2 -- yes --> D3["cs_pull, then commit"] --> E
+    D2 -- no --> E["edit: cs_edit_topic / cs_edit_tool / cs_edit_knowledge<br/>cs_remove_component confirm / cs_add_* / cs_update_agent<br/>or hand-edit YAML"]
+    E --> E2["cs_review_agent"]
+    E2 --> F["cs_pull<br/>merge server changes first"]
     F --> G["cs_validate"]
     G -- errors --> E
     G -- clean --> H["cs_push confirm"]
@@ -87,8 +92,13 @@ flowchart TD
 | `cs_list_environments`, `cs_list_agents` | the environment picker and the Agents list |
 | `cs_clone_agent` | opening the agent and getting its full definition as files (what the VS Code extension's Clone does) |
 | `cs_describe_workspace` | reading the Overview, Topics, Knowledge and Tools pages at once |
-| `cs_add_*`, `cs_update_agent` | editing topics, knowledge, tools and instructions in the portal |
+| `cs_check_drift` | reading the "modified by" line of each topic, tool and knowledge source to see what colleagues changed since you last synced (Flow 8) |
+| `cs_add_*`, `cs_update_agent` | adding topics, knowledge and tools, editing instructions in the portal |
+| `cs_edit_topic`, `cs_edit_tool`, `cs_edit_knowledge` | opening an existing topic, tool or knowledge source and changing its phrases, nodes, description, inputs or site |
+| `cs_remove_component` | deleting a topic, knowledge source, tool, trigger or variable from the agent; unused connection references go with the tool |
+| `cs_review_agent` | a maker's pre-publish walkthrough of the agent |
 | `cs_pull` | picking up edits other makers made in the portal since the clone |
+| `cs_delete_agent`, `cs_delete_solution` | Agents > delete; Power Apps maker portal > Solutions > delete (both behind `confirm`) |
 | `cs_validate`, `cs_push` | Save |
 | `cs_publish` | Publish |
 
@@ -228,6 +238,31 @@ flowchart LR
 | `cs_compare_snapshots` | comparing those notes by hand between two environments (no portal feature does this) |
 | `cs_compare_environments` | the same across the whole DEV, TEST, ACC, PROD chain |
 | follow-up | promote again with the solution flow, fix deployment settings, or Publish in the stage that has unpublished changes |
+
+## Flow 8: portal drift (changes made directly in Copilot Studio)
+
+```mermaid
+flowchart TD
+    A["cs_clone_agent / cs_pull / cs_push<br/>write .mcs/cs-sync.json<br/>file fingerprints + component stamps"] --> B["a maker edits the agent<br/>in Copilot Studio"]
+    B --> C["cs_check_drift quick<br/>Dataverse: bot row + component rows vs stamp"]
+    C --> D{"changed in the portal?"}
+    D -- no --> E["edit locally"]
+    D -- "yes, not touched locally" --> F["cs_pull (three-way merge)<br/>git commit"] --> E
+    D -- "yes, also changed locally" --> G["cs_check_drift full<br/>temporary clone, per-file diff"]
+    G --> H["decide per file: keep local, take portal, merge"] --> F
+    E --> I["cs_push dry run<br/>repeats the quick check"]
+    I -- conflict --> F
+    I -- clean --> J["cs_push confirm"]
+```
+
+| Step (MCP tool) | The same action in Copilot Studio |
+| --- | --- |
+| sync stamp (automatic) | none; the portal keeps a modified-on and modified-by stamp per topic, tool and knowledge source |
+| `cs_check_drift` quick | opening each topic, tool and knowledge source and reading its "modified by" line, plus the agent's unpublished-changes banner |
+| `cs_check_drift` full | opening the agent side by side with your local files and comparing them node by node |
+| `cs_pull` | taking over the portal version of what changed there, merged with your local edits |
+| git commit | none; the portal has no history of who changed what over time |
+| `cs_push` | Save; refused when a maker changed the same component since your last pull |
 
 ## The confirm contract
 
