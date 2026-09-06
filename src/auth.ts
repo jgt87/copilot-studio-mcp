@@ -131,19 +131,38 @@ export async function acquireSilent(cfg: AuthConfig, scopes: string[]): Promise<
 export function browserLaunchSpec(url: string, platform: NodeJS.Platform = process.platform): { command: string; args: string[] } {
   if (platform === "win32") {
     const script = `Start-Process -FilePath '${url.replace(/'/g, "''")}'`;
-    return { command: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")] };
+    return { command: windowsPowerShell(), args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")] };
   }
   if (platform === "darwin") return { command: "open", args: [url] };
   return { command: "xdg-open", args: [url] };
 }
 
-function openBrowser(url: string): void {
+/** Absolute path of Windows PowerShell where Windows installs it; falls back to PATH lookup. */
+function windowsPowerShell(): string {
+  const root = process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows";
+  const full = path.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  return fs.existsSync(full) ? full : "powershell.exe";
+}
+
+/**
+ * Start a fire-and-forget process. A launch failure (ENOENT, EACCES) is
+ * logged, never thrown: the 'error' event of a child process is emitted
+ * asynchronously, and without a listener it takes the whole server down,
+ * which MCP clients only see as a broken pipe.
+ */
+export function launchDetached(command: string, args: string[]): void {
   try {
-    const { command, args } = browserLaunchSpec(url);
-    spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true }).unref();
+    const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
+    child.on("error", (err) => log(`could not start ${command}: ${err.message}`));
+    child.unref();
   } catch (err) {
-    log(`could not open browser: ${(err as Error).message}`);
+    log(`could not start ${command}: ${(err as Error).message}`);
   }
+}
+
+function openBrowser(url: string): void {
+  const { command, args } = browserLaunchSpec(url);
+  launchDetached(command, args);
 }
 
 export async function acquireInteractive(cfg: AuthConfig, scopes: string[], timeoutMs = 300_000): Promise<TokenInfo> {

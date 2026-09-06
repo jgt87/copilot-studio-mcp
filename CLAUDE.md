@@ -136,6 +136,10 @@ stdout is the MCP transport. All diagnostics go through `log()` to stderr.
 - Never open a URL with `cmd /c start <url>`: cmd splits the command at every `&`, so the browser
   receives the authorize request without `scope` (AADSTS900144). `auth.browserLaunchSpec` uses
   PowerShell `Start-Process` with an encoded command on Windows; reuse it for any future launch.
+- Fire-and-forget processes go through `auth.launchDetached`: a child process emits `error`
+  asynchronously (ENOENT when the command is missing) and an unlistened `error` event kills the
+  server, which clients report only as a broken pipe. index.ts also logs `uncaughtException` /
+  `unhandledRejection` instead of exiting.
 - Heredocs in the Bash tool break on non-ASCII characters; keep sources ASCII or use the Write tool.
 - `repowise update` rewrites the `repowise` entry in `.vscode/mcp.json` with an absolute path. The
   committed form uses `${workspaceFolder}`; restore it before committing (`git diff .vscode/mcp.json`).

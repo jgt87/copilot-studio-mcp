@@ -99,6 +99,11 @@ import {
 const execFileAsync = promisify(execFile);
 const VERSION = "0.1.0";
 
+// A crash shows up in MCP clients as a broken pipe with no explanation. Log and keep serving;
+// the affected call fails on its own and every other tool stays reachable.
+process.on("uncaughtException", (err) => log(`uncaught exception (server kept running): ${errorMessage(err)}`));
+process.on("unhandledRejection", (reason) => log(`unhandled rejection (server kept running): ${errorMessage(reason)}`));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

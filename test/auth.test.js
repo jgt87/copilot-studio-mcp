@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { isAbsolute } from "node:path";
 import test from "node:test";
 
-import { browserLaunchSpec } from "../dist/auth.js";
+import { browserLaunchSpec, launchDetached } from "../dist/auth.js";
 
 // An Entra authorize URL as MSAL builds it: several `&`-separated parameters, percent-encoding, and (for the escaping check) an apostrophe.
 const AUTHORIZE_URL =
@@ -9,7 +10,8 @@ const AUTHORIZE_URL =
 
 test("browserLaunchSpec on Windows passes the whole URL through an encoded PowerShell command", () => {
   const spec = browserLaunchSpec(AUTHORIZE_URL, "win32");
-  assert.equal(spec.command, "powershell.exe");
+  assert.match(spec.command, /powershell\.exe$/i);
+  if (process.platform === "win32") assert.ok(isAbsolute(spec.command), "on Windows the launcher is addressed by its full path, not by PATH lookup");
   assert.ok(!spec.args.includes("start") && !spec.args.includes("/c"), "cmd start must not be used: it truncates the URL at the first &");
   const i = spec.args.indexOf("-EncodedCommand");
   assert.ok(i > 0);
@@ -22,4 +24,11 @@ test("browserLaunchSpec on Windows passes the whole URL through an encoded Power
 test("browserLaunchSpec on macOS and Linux hands the URL straight to open / xdg-open", () => {
   assert.deepEqual(browserLaunchSpec(AUTHORIZE_URL, "darwin"), { command: "open", args: [AUTHORIZE_URL] });
   assert.deepEqual(browserLaunchSpec(AUTHORIZE_URL, "linux"), { command: "xdg-open", args: [AUTHORIZE_URL] });
+});
+
+test("launchDetached survives a launcher that does not exist instead of crashing the process", async () => {
+  // Without an 'error' listener the asynchronous ENOENT would be an unhandled event and end the test process.
+  launchDetached("no-such-launcher-xyz.exe", ["x"]);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.ok(true, "still running");
 });
