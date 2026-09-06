@@ -52,6 +52,8 @@ import { addGlobalVariable } from "./authoring/variables.js";
 import { updateAgent, updateCliCopilotInstructions, updateSettings } from "./authoring/agent.js";
 import { editKnowledge, editTool, editTopic, removeComponent } from "./authoring/edit.js";
 import { renderReviewMarkdown, reviewWorkspace } from "./review.js";
+import { PAC_COMMANDS, buildPacArgs, describeSpec, isMutating, redactArgs, secretValues, zodShapeFor } from "./pacCommands.js";
+import { toolEnabled } from "./toolFilter.js";
 import { briefQuick, fullDrift, gitState, quickDrift, readStamp, remoteStateFrom, STAMP_REL, writeStamp, type QuickDriftReport, type SyncOperation } from "./drift.js";
 
 import {
@@ -304,6 +306,19 @@ async function runChat(utterance: string, args: ChatArgs): Promise<ChatResult> {
 // ---------------------------------------------------------------------------
 
 const server = new McpServer({ name: "copilot-studio-mcp", version: VERSION });
+
+// Optional tool filter (CPS_TOOLS allow-list, CPS_TOOLS_EXCLUDE deny-list; see toolFilter.ts).
+const skippedTools: string[] = [];
+{
+  const original = server.registerTool.bind(server) as (...a: unknown[]) => unknown;
+  server.registerTool = ((name: string, ...rest: unknown[]) => {
+    if (!toolEnabled(name)) {
+      skippedTools.push(name);
+      return undefined;
+    }
+    return original(name, ...rest);
+  }) as unknown as typeof server.registerTool;
+}
 
 const workspaceArg = z.string().optional().describe("Path to (or inside) the agent workspace. Defaults to CPS_WORKSPACE or the current directory.");
 const tenantArg = z.string().optional().describe("Entra tenant id. Defaults to the workspace sync metadata, then CPS_TENANT_ID.");
@@ -718,7 +733,7 @@ server.registerTool(
   },
 );
 
-const READ_ONLY_PAC = [/^(help|--version|-v)$/, /^auth (list|who)$/, /^org (who|list|fetch)$/, /^env (list|who|fetch)$/, /^copilot (list|status|model list)$/, /^solution (list|version)$/, /^admin (list|list-tenant-settings|status)$/, /^connection list$/, /^connector list$/];
+const READ_ONLY_PAC = [/^(help|--version|-v)$/, /^auth (list|who)$/, /^org (who|list|fetch)$/, /^env (list|who|fetch)$/, /^copilot (list|status|model list)$/, /^solution (list|version)$/, /^admin (list|list-tenant-settings|status)$/, /^connection list$/, /^connector list$/, /^pipeline list$/];
 
 server.registerTool(
   "cs_pac",
@@ -734,6 +749,26 @@ server.registerTool(
     }
   },
 );
+
+// ---- remaining pac commands (declarative wrappers, see pacCommands.ts) ------
+
+for (const spec of PAC_COMMANDS) {
+  server.registerTool(spec.tool, { title: spec.title, description: describeSpec(spec), inputSchema: zodShapeFor(spec) }, async (raw) => {
+    const input = raw as Record<string, unknown>;
+    try {
+      const args = buildPacArgs(spec, input);
+      const secrets = secretValues(spec, input);
+      const shown = redactArgs(args, secrets);
+      if (isMutating(spec, input) && !input.confirm) return dryRun(`pac ${shown.join(" ")}`, spec.note ? { note: spec.note } : {});
+      const r = await runPac(args, { cwd: input.cwd as string | undefined, timeoutMs: ((input.timeoutSeconds as number | undefined) ?? (spec.timeoutMs ?? 600_000) / 1000) * 1000, redact: secrets });
+      const summary = pacSummary(r);
+      for (const s of secrets) for (const k of ["command", "stdout", "stderr"] as const) if (typeof summary[k] === "string") summary[k] = (summary[k] as string).split(s).join("***");
+      return text({ ...summary, ...(spec.note ? { note: spec.note } : {}) });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  });
+}
 
 // ---- authoring ------------------------------------------------------------
 
@@ -1906,6 +1941,7 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log(`copilot-studio-mcp ${VERSION} ready (pac: ${findPac() ?? "not found"})`);
+  if (skippedTools.length) log(`tool filter: ${skippedTools.length} tool(s) hidden by CPS_TOOLS / CPS_TOOLS_EXCLUDE`);
 }
 
 main().catch((err) => {

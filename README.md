@@ -9,6 +9,34 @@ It wraps the official Power Platform CLI (`pac copilot`) for sync, writes the sa
 the Copilot Studio VS Code extension uses, and calls the Power Platform, Dataverse, BAP and
 DirectLine APIs directly for everything the CLI does not cover.
 
+## How this differs from Microsoft's own pac MCP server
+
+The Power Platform CLI ships a built-in MCP server (`pac copilot mcp --run`, preview, named
+"Power Platform Management MCP Server"). It is a natural-language front end to pac itself: each
+of its tools runs one pac command. Probed on pac 2.11.2 it exposes 70 tools, of which exactly one
+is about Copilot Studio (`copilot_publish`); 51 are tenant administration, managed identity,
+model-driven apps and generated pages, Power Pages, code apps and code generation.
+
+| | pac MCP server (`pac copilot mcp`) | copilot-studio-mcp (this repo) |
+| --- | --- | --- |
+| Purpose | run pac commands in natural language; tenant and environment administration | build, test, ship and maintain Copilot Studio agents from the editor |
+| Copilot Studio commands | `copilot_publish` only | init, clone, pull, push, pack, publish, status, list, delete, templates, translations, quarantine, AI Builder instructions |
+| Authoring | none | topics, knowledge sources, tools (connector / MCP / flow / prompt / agent), flows, triggers, variables, agent settings as YAML; day-two edit and remove; schema validation (744 definitions); rules-based review with a score |
+| Testing | none | evaluation test sets and runs (Power Platform API), chat through DirectLine or the client SDK, local conversation tests |
+| ALM | solution list, export, import, check | pull a whole solution with a deployment settings file and redeploy it 1:1, Solution Checker, versioning, staged upgrades, pipelines, DTAP snapshots and comparison |
+| Drift | none | portal changes since the last sync (quick Dataverse check, full clone diff) and a push preflight that blocks on conflicts |
+| Safety | no dry run in the server; the client's approval prompt is the only gate | every environment-changing tool returns a dry run until `confirm: true`; secrets are masked in logs and results |
+| Other pac groups | admin, managed-identity, model, pages, code, modelbuilder as native tools | reachable through `cs_pac` (read-only commands run immediately, others need `confirm`) |
+| Sign-in | pac auth profile | pac auth profile, plus MSAL for the APIs pac does not cover (evaluations, Dataverse reads, environments, chat) |
+| Tool list | fixed | `CPS_TOOLS` / `CPS_TOOLS_EXCLUDE` trim it per client |
+
+Both are stdio servers and can be registered side by side: pac's for tenant administration, this
+one for agent work. One practical note: pac's server prints a non-JSON line on stdout at startup,
+which strict MCP clients may reject.
+
+Sources: [Use Power Platform CLI with built-in MCP server](https://learn.microsoft.com/en-us/power-platform/developer/howto/use-mcp)
+and a `tools/list` probe of pac 2.11.2 (2026-09-07).
+
 ## What is and is not possible (feasibility summary)
 
 | Capability | How | Status |
@@ -68,7 +96,7 @@ Do you need your own app registration?
 
 | Situation | App registration needed? |
 | --- | --- |
-| `pac` commands (`cs_init_agent`, `cs_clone_agent`, `cs_pull`, `cs_push`, `cs_pack`, `cs_publish` via pac, `cs_check_drift` in `full` mode, all `cs_*_solution` tools) | No. `pac auth create` signs in with Microsoft's own first-party app. |
+| `pac` commands (`cs_init_agent`, `cs_clone_agent`, `cs_pull`, `cs_push`, `cs_pack`, `cs_publish` via pac, `cs_check_drift` in `full` mode, all `cs_*_solution` tools, and every tool in the "Remaining pac commands" table) | No. `pac auth create` signs in with Microsoft's own first-party app. |
 | Cloud tools with the default client id (`cs_list_environments`, `cs_list_agents` via Dataverse, `cs_publish` via Dataverse, `cs_check_drift`, evaluations, `cs_chat` for no-auth or manual-auth agents) | No. The server uses the first-party VS Code client id `51f81489-12ee-4a9e-aaae-a2591f45987d`, which is pre-authorised for Power Platform API, Dataverse and the Power Apps service. Microsoft's own Copilot Studio tooling uses the same id. |
 | Same tools, but your tenant blocks that id (app consent policy, conditional access, "user assignment required") | Yes. Create the registration below and set `CPS_CLIENT_ID`. |
 | `cs_chat` with an agent that uses **integrated authentication (Entra SSO)** | Yes, always. The first-party id does not carry `CopilotStudio.Copilots.Invoke` for third parties. Pass `clientId` to `cs_chat` or set `CPS_CLIENT_ID`. |
@@ -130,7 +158,11 @@ claude mcp add-json copilot-studio '{"type":"stdio","command":"node","args":["<p
 ```
 
 Environment variables (all optional): `CPS_WORKSPACE`, `CPS_TENANT_ID`, `CPS_CLIENT_ID`,
-`CPS_ENVIRONMENT_ID`, `CPS_ENVIRONMENT_URL`, `CPS_AGENT_ID`, `CPS_CACHE_DIR`, `PAC_PATH`, `DOTNET_ROOT`.
+`CPS_ENVIRONMENT_ID`, `CPS_ENVIRONMENT_URL`, `CPS_AGENT_ID`, `CPS_CACHE_DIR`, `PAC_PATH`, `DOTNET_ROOT`,
+`CPS_TOOLS` and `CPS_TOOLS_EXCLUDE`. The last two trim the tool list for clients with small context
+windows: comma-separated tool names with `*` wildcards, for example
+`CPS_TOOLS=cs_doctor,cs_describe_workspace,cs_add_*,cs_edit_*,cs_review_agent,cs_validate,cs_push,cs_pull`
+or `CPS_TOOLS_EXCLUDE=cs_*_pipeline,cs_env_*,cs_*_auth_profile`.
 
 ## Tools
 
@@ -166,6 +198,27 @@ Environment comparison (DTAP)
 | `cs_snapshot_environment` | capture one environment into a folder: solution version, every agent cloned, flows, connection references, environment variables, publish state |
 | `cs_compare_snapshots` | offline diff of two snapshots with a Markdown + JSON report; `failOnDrift` for pipeline gates |
 | `cs_compare_environments` | snapshot an ordered chain (DEV, TEST, ACC, PROD) and compare each adjacent pair |
+
+Remaining pac commands (declarative wrappers over `pac <group> <command>`; flags from pac 2.11.2)
+
+| Tool | Purpose |
+| --- | --- |
+| `cs_extract_agent_template`, `cs_create_agent_from_template` | template an existing agent and create new agents from it |
+| `cs_extract_translations`, `cs_merge_translations` | localisation round trip (.resx / .json), with `whatIf` |
+| `cs_quarantine_agent` | quarantine or release an agent (`confirm`) |
+| `cs_init_solution_project`, `cs_clone_solution`, `cs_sync_solution`, `cs_add_solution_reference`, `cs_add_solution_license` | source-controlled solution projects (.cdsproj) |
+| `cs_check_solution` | Solution Checker as a quality gate before deploying |
+| `cs_set_solution_version`, `cs_solution_online_version`, `cs_upgrade_solution`, `cs_publish_customizations`, `cs_add_solution_component` | release numbering, staged upgrades, publish all, add components (`confirm` where the environment changes) |
+| `cs_list_pipelines`, `cs_deploy_pipeline` | Power Platform pipelines as the alternative to `cs_deploy_solution` (`confirm`) |
+| `cs_create_connection`, `cs_update_connection`, `cs_delete_connection` | service-principal Dataverse connections, the only kind pac can create (`confirm`) |
+| `cs_create_auth_profile`, `cs_select_auth_profile`, `cs_auth_who`, `cs_delete_auth_profile` | pac auth profiles, including service-principal, certificate, managed-identity and federated profiles for pipelines |
+| `cs_env_list`, `cs_env_who`, `cs_env_fetch`, `cs_env_select` | environments through pac (no MSAL sign-in needed), including FetchXML queries |
+
+Every other pac group (admin, application, canvas, catalog, code, data, managed-identity, model,
+modelbuilder, package, pages, pcf, plugin, power-fx, telemetry, test, tool) is outside Copilot
+Studio work and stays reachable through `cs_pac`; `pac copilot mcp` is pac's own MCP server and
+is not wrapped. With that many tools, `CPS_TOOLS` / `CPS_TOOLS_EXCLUDE` (see Install) can hide the
+ones a session does not need.
 
 Authoring (files, schema-validated)
 
@@ -378,7 +431,10 @@ No tooling removes these; plan for them before calling the copy "1:1":
 
 - **Connections are not part of a solution.** A solution carries connection *references*; the
   connections themselves (the authorised links to SharePoint, Outlook, Dataverse, MCP servers, ...)
-  must already exist in the target environment, created and consented by a user there. The
+  must already exist in the target environment, created and consented by a user there.
+  `cs_create_connection` (`pac connection create`) is the one exception and only covers
+  service-principal Dataverse connections; SharePoint, Outlook, MCP-server and other connector
+  connections still come from the portal. The
   deployment settings file maps each connection reference to one of those connection ids.
   `cs_deploy_solution` refuses to import while any reference is unmapped unless you pass
   `allowUnmapped: true`; in that case the tools stay unbound until someone binds them in the portal.

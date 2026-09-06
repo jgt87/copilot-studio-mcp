@@ -237,6 +237,8 @@ flowchart LR
 | `cs_snapshot_environment` | opening each agent in every environment and noting its topics, knowledge, tools and publish state; Solutions > version; Power Automate > flow state; Connections; environment variable values |
 | `cs_compare_snapshots` | comparing those notes by hand between two environments (no portal feature does this) |
 | `cs_compare_environments` | the same across the whole DEV, TEST, ACC, PROD chain |
+| `cs_list_pipelines`, `cs_deploy_pipeline` | Power Platform pipelines: Deploy to the next stage from the pipelines app, when the tenant uses pipelines instead of solution import |
+| `cs_check_solution` | Solution Checker on the exported zip before promoting |
 | follow-up | promote again with the solution flow, fix deployment settings, or Publish in the stage that has unpublished changes |
 
 ## Flow 8: portal drift (changes made directly in Copilot Studio)

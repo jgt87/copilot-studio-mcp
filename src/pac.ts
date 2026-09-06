@@ -19,6 +19,8 @@ export interface PacResult {
 }
 
 export interface PacRunOptions {
+  /** Argument values to mask in the log line and the returned command string (secrets). */
+  redact?: string[];
   cwd?: string;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
@@ -83,7 +85,8 @@ export function runPac(args: string[], options: PacRunOptions = {}): Promise<Pac
   const exe = findPac();
   if (!exe) return Promise.reject(new Error(installHint()));
   const started = Date.now();
-  const command = `${path.basename(exe)} ${args.join(" ")}`;
+  const shownArgs = options.redact?.length ? args.map((a) => (options.redact!.includes(a) ? "***" : a)) : args;
+  const command = `${path.basename(exe)} ${shownArgs.join(" ")}`;
   log(`run: ${command}${options.cwd ? ` (cwd ${options.cwd})` : ""}`);
 
   return new Promise((resolve, reject) => {

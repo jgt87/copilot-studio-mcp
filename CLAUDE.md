@@ -79,6 +79,16 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   conflicts unless `force`. Dataverse access for all of this goes through `silentDataverse` in
   index.ts and must stay non-interactive.
 
+- **pac wrappers** (`src/pacCommands.ts`): every pac command without a bespoke tool is one entry in
+  `PAC_COMMANDS` (tool name, `pac` argv, typed params with flags, `mutating` as a boolean or a
+  per-input function, secrets). index.ts registers them in one loop: `zodShapeFor` builds the
+  schema, `buildPacArgs` the argv, secrets are masked in logs (`runPac` `redact`), dry runs and
+  results. Add a command by adding a spec and a `buildPacArgs` assertion in
+  `test/pac-commands.test.js`; flags come from `pac <group> <command> help`. Groups outside Copilot
+  Studio work are deliberately left to `cs_pac`.
+- **Tool filter** (`src/toolFilter.ts`): `CPS_TOOLS` / `CPS_TOOLS_EXCLUDE` glob lists applied by a
+  wrapper around `server.registerTool`; hidden tools are logged at startup.
+
 - **Catalog** (`src/catalog.ts`): connector registry and OpenAPI definitions from `api.powerapps.com`
   (PowerApps Service token), cached under `.cs-catalog/<environment>/`; `parseSwaggerOperations`
   flattens body schemas into parameters and detects MCP endpoints by `x-ms-agentic-protocol`;
