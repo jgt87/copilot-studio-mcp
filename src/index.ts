@@ -52,7 +52,9 @@ import { addGlobalVariable } from "./authoring/variables.js";
 import { updateAgent, updateCliCopilotInstructions, updateSettings } from "./authoring/agent.js";
 import { editKnowledge, editTool, editTopic, removeComponent } from "./authoring/edit.js";
 import { renderReviewMarkdown, reviewWorkspace } from "./review.js";
-import { PAC_COMMANDS, buildPacArgs, describeSpec, isMutating, redactArgs, secretValues, zodShapeFor } from "./pacCommands.js";
+import { PAC_COMMANDS, buildPacArgs, describeSpec, isAdminCommand, isMutating, redactArgs, secretValues, zodShapeFor } from "./pacCommands.js";
+import { adminProfileDefault, listProfiles, makerProfileDefault, runPacAs, withPacProfile } from "./pacProfile.js";
+import { backupTenant, summarizeBackup, type EnvironmentTarget } from "./tenantBackup.js";
 import { toolEnabled } from "./toolFilter.js";
 import { GUIDE_TOPICS, SERVER_INSTRUCTIONS, TOPIC_SUMMARY, guide, nextSteps, type GuideTopic } from "./guide.js";
 import { ENVIRONMENT_WRITE_TOOLS, readOnlyMode, readOnlyRefusal } from "./policy.js";
@@ -363,6 +365,7 @@ server.registerTool(
       workspace: ws ? { root: ws.root, harness: ws.harness, schemaName: ws.schemaName, sync: ws.sync.source, environmentId: ws.sync.environmentId, agentId: ws.sync.agentId } : { found: false, searchedFrom: workspace ?? process.env.CPS_WORKSPACE ?? process.cwd() },
       ...msal,
       schema: { path: schemaPath(), kinds: listKinds().length },
+      profiles: { adminDefault: adminProfileDefault() ?? null, makerDefault: makerProfileDefault() ?? null },
       writePolicy: { confirmRequired: "Every tool that changes a live environment returns a dry run until confirm: true, which the user must approve.", readOnlyMode: readOnlyMode(), ...(withheldTools.length ? { toolsWithheld: withheldTools } : {}) },
       nextSteps: nextSteps(ws, { pacFound: Boolean(pacPath), pacProfile: pacProfiles.length > 0, signedIn: msalAccounts.length > 0 }),
       guide: "cs_guide topic='getting-started' walks through cloning or creating an agent and taking it to a published, tested state.",
@@ -755,14 +758,14 @@ const READ_ONLY_PAC = [/^(help|--version|-v)$/, /^auth (list|who)$/, /^org (who|
 
 server.registerTool(
   "cs_pac",
-  { title: "Run any pac command", description: "Escape hatch: run 'pac <args...>' directly. Read-only commands (list/who/status/help) run immediately; anything else needs confirm: true.", inputSchema: { args: z.array(z.string()).describe("Arguments after 'pac', e.g. [\"env\",\"list\"]"), cwd: z.string().optional(), confirm: confirmArg, timeoutSeconds: z.number().optional() } },
-  async ({ args, cwd, confirm, timeoutSeconds }) => {
+  { title: "Run any pac command", description: "Escape hatch: run 'pac <args...>' directly. Read-only commands (list/who/status/help) run immediately; anything else needs confirm: true. 'profile' runs it as another pac auth profile, for example the tenant admin account.", inputSchema: { args: z.array(z.string()).describe("Arguments after 'pac', e.g. [\"env\",\"list\"]"), cwd: z.string().optional(), profile: z.string().optional().describe("pac auth profile to run as (cs_doctor lists them)"), confirm: confirmArg, timeoutSeconds: z.number().optional() } },
+  async ({ args, cwd, profile, confirm, timeoutSeconds }) => {
     try {
       const head = args.slice(0, 3).join(" ");
       const readOnly = READ_ONLY_PAC.some((re) => re.test(args.slice(0, 2).join(" ")) || re.test(head) || re.test(args[0] ?? ""));
       if (!readOnly && readOnlyMode()) return fail(readOnlyRefusal(`pac ${args.join(" ")}`));
-      if (!readOnly && !confirm) return dryRun(`pac ${args.join(" ")}`);
-      return text(pacSummary(await runPac(args, { cwd, timeoutMs: (timeoutSeconds ?? 600) * 1000 })));
+      if (!readOnly && !confirm) return dryRun(`pac ${args.join(" ")}${profile ? ` (as pac auth profile '${profile}')` : ""}`);
+      return text({ ...pacSummary(await runPacAs(profile ?? (args[0] === "admin" ? adminProfileDefault() : makerProfileDefault()), args, { cwd, timeoutMs: (timeoutSeconds ?? 600) * 1000 })), ...(profile ? { profile } : {}) });
     } catch (err) {
       return fail(errorMessage(err));
     }
@@ -972,6 +975,71 @@ server.registerTool(
   },
 );
 
+// ---- tenant administration -------------------------------------------------
+
+server.registerTool(
+  "cs_list_auth_profiles",
+  {
+    title: "List pac auth profiles",
+    description: "The pac authentication profiles on this machine, which one is active, and which account each belongs to. Use it to find the name of the admin profile to pass as 'profile' to the admin tools. Read-only.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const profiles = await listProfiles();
+      return text({
+        profiles: profiles.map((p) => ({ index: p.index, name: p.name, active: p.active, user: p.user, url: p.url, kind: p.kind })),
+        defaults: { admin: adminProfileDefault() ?? null, maker: makerProfileDefault() ?? null },
+        hint: profiles.length ? "Pass 'profile' to any pac-backed tool to run it as that account, or set CPS_ADMIN_PROFILE / CPS_PAC_PROFILE." : "No profiles yet. In a terminal: pac auth create --name admin --environment <id> (once per account).",
+      });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+server.registerTool(
+  "cs_backup_tenant",
+  {
+    title: "Back up the tenant configuration to files",
+    description:
+      "Write the tenant's Power Platform configuration to local files for reference, diffing and source control: tenant settings, environments, DLP policies, environment groups, service principals, registered applications and app templates, plus per environment its details, solutions, agents, connections, security roles and platform backups. Read-only for the tenant; it only writes files. Runs as the admin account: pass 'profile' or set CPS_ADMIN_PROFILE. Each capture is independent, so a command the account cannot run is reported in 'skipped' and the rest still completes.",
+    inputSchema: {
+      dir: z.string().describe("Folder to write the backup into (created; existing files with the same names are overwritten)"),
+      profile: z.string().optional().describe("pac auth profile of the admin account; default CPS_ADMIN_PROFILE, then the active profile"),
+      environments: z.array(z.object({ id: z.string(), name: z.string().optional(), url: z.string().optional() })).optional().describe("Environments to detail; default: every environment 'pac admin list' returns"),
+      maxEnvironments: z.number().optional().describe("Default 50"),
+      includeEnvironments: z.boolean().optional().describe("Default true; false captures tenant level only"),
+      includeBackups: z.boolean().optional().describe("Default true: the platform backups of each environment"),
+      includeRoles: z.boolean().optional().describe("Default true: the security roles of each environment"),
+      includeDataverse: z.boolean().optional().describe("Default true: flows, connection references, environment variables and agents per environment, when a Dataverse sign-in is cached (cs_login)"),
+      tenantId: tenantArg,
+      clientId: clientArg,
+    },
+  },
+  async (a) => {
+    try {
+      const dataverse = a.includeDataverse === false ? null : async (env: EnvironmentTarget) => {
+        const dv = await dataverseReadsFor(env.url ?? env.id, a.tenantId, a.clientId);
+        return dv.reads ? (dv.reads as unknown as Record<string, unknown>) : null;
+      };
+      const report = await backupTenant({
+        dir: a.dir,
+        profile: a.profile ?? adminProfileDefault(),
+        environments: a.environments,
+        maxEnvironments: a.maxEnvironments,
+        includeEnvironments: a.includeEnvironments,
+        includeBackups: a.includeBackups,
+        includeRoles: a.includeRoles,
+        dataverse,
+      });
+      return text({ ...summarizeBackup(report), manifest: path.join(report.dir, "backup.json"), hint: "Commit this folder to keep a history of the tenant configuration; re-run it and diff to see what changed." });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
 // ---- guidance -------------------------------------------------------------
 
 server.registerTool(
@@ -1021,14 +1089,15 @@ for (const spec of PAC_COMMANDS) {
       const args = buildPacArgs(spec, input);
       const secrets = secretValues(spec, input);
       const shown = redactArgs(args, secrets);
+      const profile = (input.profile as string | undefined) ?? (isAdminCommand(spec) ? adminProfileDefault() : makerProfileDefault());
       if (isMutating(spec, input)) {
         if (readOnlyMode()) return fail(readOnlyRefusal(`pac ${shown.join(" ")}`));
-        if (!input.confirm) return dryRun(`pac ${shown.join(" ")}`, spec.note ? { note: spec.note } : {});
+        if (!input.confirm) return dryRun(`pac ${shown.join(" ")}${profile ? ` (as pac auth profile '${profile}')` : ""}`, spec.note ? { note: spec.note } : {});
       }
-      const r = await runPac(args, { cwd: input.cwd as string | undefined, timeoutMs: ((input.timeoutSeconds as number | undefined) ?? (spec.timeoutMs ?? 600_000) / 1000) * 1000, redact: secrets });
+      const r = await runPacAs(profile, args, { cwd: input.cwd as string | undefined, timeoutMs: ((input.timeoutSeconds as number | undefined) ?? (spec.timeoutMs ?? 600_000) / 1000) * 1000, redact: secrets });
       const summary = pacSummary(r);
       for (const s of secrets) for (const k of ["command", "stdout", "stderr"] as const) if (typeof summary[k] === "string") summary[k] = (summary[k] as string).split(s).join("***");
-      return text({ ...summary, ...(spec.note ? { note: spec.note } : {}) });
+      return text({ ...summary, ...(profile ? { profile } : {}), ...(spec.note ? { note: spec.note } : {}) });
     } catch (err) {
       return fail(errorMessage(err));
     }

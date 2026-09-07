@@ -17,7 +17,7 @@ test("every spec is well formed and tool names are unique", () => {
     assert.match(s.tool, /^cs_[a-z_]+$/, s.tool);
     assert.ok(!names.has(s.tool), `duplicate ${s.tool}`);
     names.add(s.tool);
-    assert.ok(s.command.length >= 1 && s.command.length <= 2, s.tool);
+    assert.ok(s.command.length >= 1 && s.command.length <= 3, s.tool); // admin dlp-policy list has three segments
     for (const [key, p] of Object.entries(s.params)) {
       assert.match(p.flag, /^--[A-Za-z-]+$/, `${s.tool}.${key}`);
       assert.ok(p.description.length > 5, `${s.tool}.${key} description`);

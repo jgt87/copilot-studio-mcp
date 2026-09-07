@@ -95,6 +95,16 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   `GUIDES` backs the `cs_guide` tool and the six MCP prompts, and `nextSteps(ws)` is appended to
   `cs_doctor` and `cs_describe_workspace`. `test/guide.test.js` fails when a guide names a tool
   the server does not register, so update the guides together with the tool list.
+- **Two accounts** (`src/pacProfile.ts`): pac's active auth profile is machine-wide state.
+  `withPacProfile` selects a profile, runs the work and restores the previous one, serialised
+  through a promise queue so concurrent tool calls cannot interleave. Every pac wrapper takes
+  `profile`, defaulting to `CPS_ADMIN_PROFILE` for `admin` commands and `CPS_PAC_PROFILE`
+  otherwise.
+- **Tenant backup** (`src/tenantBackup.ts`): `backupTenant` runs a fixed list of read-only pac
+  commands into a folder, storing raw stdout plus parsed rows where a parser exists
+  (`parseSolutionList`, `parseCopilotList`, `parseConnectionList`), and per environment optionally
+  the Dataverse reads. The pac runner is injectable, so `test/tenant.test.js` drives the whole
+  backup with a fake pac and asserts the files, the parsing and the isolation of a failed capture.
 - **Tool filter** (`src/toolFilter.ts`): `CPS_TOOLS` / `CPS_TOOLS_EXCLUDE` glob lists applied by a
   wrapper around `server.registerTool`; hidden tools are logged at startup.
 

@@ -79,6 +79,23 @@ validation, review and the read-only tools keep working. `cs_doctor` reports the
 tools are withheld. `test/policy.test.js` fails if a tool that declares `confirm` is missing from
 that list, so the two layers cannot drift apart.
 
+## Two accounts: maker and admin
+
+Making agents and administering the tenant are usually different accounts. pac keeps one active
+authentication profile per machine, so create one profile per account and let the server switch:
+
+```sh
+pac auth create --name maker --environment <environment id or url>
+pac auth create --name admin --environment <environment id or url>
+```
+
+`cs_list_auth_profiles` shows them. Every pac-backed tool takes a `profile` argument; the server
+selects that profile, runs the command and restores the previously active one, serialising calls so
+two tools cannot fight over it. Set `CPS_ADMIN_PROFILE` (used by the `cs_admin_*` tools and
+`cs_backup_tenant`) and `CPS_PAC_PROFILE` (used by the rest) to make that automatic.
+
+The MSAL sign-in used by the API-based tools is separate again, and independent of pac.
+
 ## Prerequisites
 
 - Node.js 20+
@@ -176,7 +193,8 @@ claude mcp add-json copilot-studio '{"type":"stdio","command":"node","args":["<p
 
 Environment variables (all optional): `CPS_WORKSPACE`, `CPS_TENANT_ID`, `CPS_CLIENT_ID`,
 `CPS_ENVIRONMENT_ID`, `CPS_ENVIRONMENT_URL`, `CPS_AGENT_ID`, `CPS_CACHE_DIR`, `PAC_PATH`, `DOTNET_ROOT`,
-`CPS_READ_ONLY` (see "Approval before anything changes"), `CPS_TOOLS` and `CPS_TOOLS_EXCLUDE`. The last two trim the tool list for clients with small context
+`CPS_READ_ONLY` (see "Approval before anything changes"), `CPS_ADMIN_PROFILE` and `CPS_PAC_PROFILE`
+(see "Two accounts: maker and admin"), `CPS_FLOW_SCOPE`, `CPS_TOOLS` and `CPS_TOOLS_EXCLUDE`. The last two trim the tool list for clients with small context
 windows: comma-separated tool names with `*` wildcards, for example
 `CPS_TOOLS=cs_doctor,cs_describe_workspace,cs_add_*,cs_edit_*,cs_review_agent,cs_validate,cs_push,cs_pull`
 or `CPS_TOOLS_EXCLUDE=cs_*_pipeline,cs_env_*,cs_*_auth_profile`.
@@ -227,6 +245,22 @@ Environment comparison (DTAP)
 | `cs_compare_snapshots` | offline diff of two snapshots with a Markdown + JSON report; `failOnDrift` for pipeline gates |
 | `cs_compare_environments` | snapshot an ordered chain (DEV, TEST, ACC, PROD) and compare each adjacent pair |
 
+Tenant administration (Power Platform admin centre; run as the admin profile)
+
+| Tool | Purpose |
+| --- | --- |
+| `cs_backup_tenant` | write the whole tenant configuration to local files: settings, environments, DLP policies, groups, service principals, applications, templates, and per environment its details, solutions, agents, connections, roles and platform backups |
+| `cs_list_auth_profiles` | the pac auth profiles on this machine, which is active, and the defaults for maker and admin |
+| `cs_admin_list_environments`, `cs_admin_environment_status`, `cs_admin_list_backups` | environments, operations in progress, platform backups |
+| `cs_admin_list_tenant_settings`, `cs_admin_update_tenant_settings` | read the tenant settings (optionally to a JSON file) or change one (`confirm`) |
+| `cs_admin_list_dlp_policies`, `cs_admin_show_dlp_policy` | data loss prevention policies: which connectors may be combined |
+| `cs_admin_list_environment_groups`, `cs_admin_add_environment_to_group` | environment groups (`confirm` to add) |
+| `cs_admin_list_security_roles`, `cs_admin_assign_user`, `cs_admin_assign_group` | roles in an environment, and granting them (`confirm`) |
+| `cs_admin_list_service_principals`, `cs_admin_create_service_principal`, `cs_admin_list_applications`, `cs_admin_register_application`, `cs_admin_unregister_application` | headless identities and registered applications (`confirm` to change) |
+| `cs_admin_set_governance_config`, `cs_admin_set_runtime_state`, `cs_admin_set_backup_retention` | managed environments, administration mode, backup retention (`confirm`) |
+| `cs_admin_create_environment`, `cs_admin_delete_environment`, `cs_admin_reset_environment`, `cs_admin_copy_environment`, `cs_admin_restore_environment`, `cs_admin_backup_environment` | environment lifecycle (`confirm`; reset and delete destroy everything in the environment, copy and restore overwrite the target) |
+| `cs_admin_list_app_templates`, `cs_admin_query`, `cs_admin_self_elevate` | Dynamics 365 templates, tenant resource queries, self-elevation (`confirm`) |
+
 Remaining pac commands (declarative wrappers over `pac <group> <command>`; flags from pac 2.11.2)
 
 | Tool | Purpose |
@@ -242,7 +276,7 @@ Remaining pac commands (declarative wrappers over `pac <group> <command>`; flags
 | `cs_create_auth_profile`, `cs_select_auth_profile`, `cs_auth_who`, `cs_delete_auth_profile` | pac auth profiles, including service-principal, certificate, managed-identity and federated profiles for pipelines |
 | `cs_env_list`, `cs_env_who`, `cs_env_fetch`, `cs_env_select` | environments through pac (no MSAL sign-in needed), including FetchXML queries |
 
-Every other pac group (admin, application, canvas, catalog, code, data, managed-identity, model,
+Every other pac group (application, canvas, catalog, code, data, managed-identity, model,
 modelbuilder, package, pages, pcf, plugin, power-fx, telemetry, test, tool) is outside Copilot
 Studio work and stays reachable through `cs_pac`; `pac copilot mcp` is pac's own MCP server and
 is not wrapped. With that many tools, `CPS_TOOLS` / `CPS_TOOLS_EXCLUDE` (see Install) can hide the

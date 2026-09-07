@@ -18,7 +18,7 @@ export const SERVER_INSTRUCTIONS = `copilot-studio-mcp builds Microsoft Copilot 
 
 Start here
 - Call cs_doctor first in a session: it reports the pac CLI, sign-in state and the workspace it found, and ends with concrete next steps.
-- Call cs_guide (topic: "getting-started", "instructions", "knowledge", "tools", "topics", "evaluations", "publish-and-test", "drift", "solutions", "troubleshooting") for a walkthrough before improvising a sequence of calls.
+- Call cs_guide (topic: "getting-started", "instructions", "knowledge", "tools", "topics", "evaluations", "publish-and-test", "drift", "solutions", "administration", "troubleshooting") for a walkthrough before improvising a sequence of calls.
 
 How the pieces fit
 - An agent is a folder of YAML: agent.mcs.yml, settings.mcs.yml, topics/, knowledge/, actions/ (tools), trigger/, variables/, workflows/. Authoring tools write those files; nothing reaches the live agent until cs_push.
@@ -31,7 +31,8 @@ Rules to respect
 - Two sign-ins exist: pac (run "pac auth create --environment <id>" in a terminal, this server cannot do it interactively) and MSAL for the API-based tools (cs_login). cs_login can return status "pending" with a URL; give that URL to the user to open.
 - Connector, MCP and prompt tools need a connection that only the portal can authorise. cs_add_tool writes the YAML and tells you the portal step; after the user connects, run cs_pull.
 - Makers may edit the same agent in the portal. cs_check_drift shows what changed there since your last sync; cs_pull merges it.
-- Prefer the specific tool over cs_pac. cs_pac is the escape hatch for pac commands that have no tool.`;
+- Prefer the specific tool over cs_pac. cs_pac is the escape hatch for pac commands that have no tool.
+- Tenant administration runs as a different account from agent making. The tenant-administration tools and cs_backup_tenant take a 'profile' (the pac auth profile of the admin account, default CPS_ADMIN_PROFILE); cs_list_auth_profiles shows what exists. Reset, delete, copy and restore destroy or overwrite whole environments: say what will be lost before asking for confirmation.`;
 
 export type GuideTopic =
   | "getting-started"
@@ -43,6 +44,7 @@ export type GuideTopic =
   | "publish-and-test"
   | "drift"
   | "solutions"
+  | "administration"
   | "troubleshooting";
 
 export const GUIDE_TOPICS: GuideTopic[] = [
@@ -55,6 +57,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
   "publish-and-test",
   "drift",
   "solutions",
+  "administration",
   "troubleshooting",
 ];
 
@@ -402,6 +405,58 @@ for a whole DEV, TEST, ACC, PROD chain. The report separates real drift from dif
 expected per stage (connection bindings, variable values, managed flag). \`failOnDrift\` turns it
 into a pipeline gate.`;
 
+const ADMINISTRATION = `# Tenant administration and the two accounts
+
+Making agents and administering the tenant are usually different accounts: the maker works in
+Copilot Studio, the admin in the Power Platform admin centre. pac keeps one *active* auth profile,
+so this server switches between them per call.
+
+## Set the two profiles up once
+In a terminal, one profile per account:
+
+    pac auth create --name maker --environment <environment id or url>
+    pac auth create --name admin --environment <environment id or url>
+
+\`cs_list_auth_profiles\` shows them, which is active, and which account each belongs to. Then
+either pass \`profile: "admin"\` to a call, or set \`CPS_ADMIN_PROFILE=admin\` (used by every
+tenant-administration tool) and \`CPS_PAC_PROFILE=maker\` (used by the rest) in the server's environment
+and forget about it. Every pac-backed tool takes \`profile\`; the server selects it, runs the
+command and puts the previous active profile back.
+
+## Reading the tenant
+- \`cs_admin_list_environments\` (every environment, its type and region), \`cs_admin_list_backups\`,
+  \`cs_admin_environment_status\` (operations in progress).
+- \`cs_admin_list_tenant_settings\` with \`settingsFile\` writes the tenant settings as JSON.
+- \`cs_admin_list_dlp_policies\` and \`cs_admin_show_dlp_policy\`: the data loss prevention rules
+  that decide which connectors an agent or flow may combine. A tool that will not run in production
+  is often a DLP rule, not a bug.
+- \`cs_admin_list_security_roles\`, \`cs_admin_list_service_principals\`,
+  \`cs_admin_list_applications\`, \`cs_admin_list_environment_groups\`, \`cs_admin_query\`.
+
+## Backing the tenant up to files
+\`cs_backup_tenant dir="tenant-backup"\` writes the whole configuration to a folder: tenant
+settings, environments, DLP policies, groups, service principals, registered applications and app
+templates, and per environment its details, solutions, agents, connections, security roles and
+platform backups. With a Dataverse sign-in it also records flows, connection references and
+environment variables per environment.
+
+Each capture is independent: a command the account may not run is listed under \`skipped\` and the
+rest still completes. Commit the folder and re-run it later to see what changed in the tenant.
+It is read-only: nothing in the tenant is modified.
+
+## Changing the tenant
+Every one of these needs \`confirm: true\` and the user's agreement, and several are destructive:
+\`cs_admin_update_tenant_settings\`, \`cs_admin_set_governance_config\` (managed environments),
+\`cs_admin_assign_user\` and \`cs_admin_assign_group\`, \`cs_admin_create_service_principal\`,
+\`cs_admin_set_runtime_state\` (administration mode), \`cs_admin_backup_environment\`,
+\`cs_admin_restore_environment\`, \`cs_admin_copy_environment\`, \`cs_admin_create_environment\`,
+\`cs_admin_reset_environment\` and \`cs_admin_delete_environment\`.
+
+Reset and delete destroy everything in an environment, and copy and restore overwrite the target.
+Take a backup first (\`cs_backup_tenant\` for the configuration, \`cs_admin_backup_environment\` for
+the platform's own backup), and say plainly what will be lost before asking for confirmation.
+\`CPS_READ_ONLY\` hides all of them.`;
+
 const TROUBLESHOOTING = `# Troubleshooting
 
 | Symptom | Cause and fix |
@@ -432,6 +487,7 @@ const GUIDES: Record<GuideTopic, string> = {
   "publish-and-test": PUBLISH_AND_TEST,
   drift: DRIFT,
   solutions: SOLUTIONS,
+  administration: ADMINISTRATION,
   troubleshooting: TROUBLESHOOTING,
 };
 
@@ -449,6 +505,7 @@ export const TOPIC_SUMMARY: Record<GuideTopic, string> = {
   "publish-and-test": "publish the agent and chat with it",
   drift: "changes made in the portal since the last sync, and how to merge them",
   solutions: "pull a solution, redeploy it elsewhere, compare environments",
+  administration: "tenant administration with a separate admin account, and backing the tenant configuration up to files",
   troubleshooting: "the errors this server can return, and what each one means",
 };
 

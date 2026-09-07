@@ -34,6 +34,9 @@ const BESPOKE_ALWAYS_WRITES = [
   "cs_run_flow", // the flow's actions run for real
 ] as const;
 
+// Tenant administration writes (pac admin ...) are classified from PAC_COMMANDS below,
+// so a new admin spec is covered without touching this list.
+
 /**
  * Tools that write only for certain inputs. They stay registered in read-only
  * mode and refuse at call time, so their read-only use keeps working:
