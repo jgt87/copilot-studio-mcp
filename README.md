@@ -259,6 +259,8 @@ Authoring (files, schema-validated)
 | `cs_add_tool` | connector action, MCP server, cloud flow, AI Builder prompt, connected agent, child agent, or any other TaskAction kind as raw (+ connection-reference stub) |
 | `cs_list_connectors`, `cs_describe_connector`, `cs_list_prompts` | tool catalog: connectors available in the environment (with MCP detection), a connector's operations and parameters, AI Builder prompts |
 | `cs_add_flow` | experimental cloud-flow scaffold (`workflows/<Name>/metadata.yaml` + `workflow.json`) |
+| `cs_list_flows`, `cs_get_flow` | cloud flows in the environment: state, owner, connection references, and the full Power Automate definition |
+| `cs_set_flow_state`, `cs_update_flow` | turn a flow on or off, or replace the definition of an unmanaged flow (`confirm`) |
 | `cs_add_trigger`, `cs_add_variable` | event trigger for a flow; global variable |
 | `cs_update_agent`, `cs_update_settings` | instructions, conversation starters, model, settings |
 | `cs_edit_topic`, `cs_edit_tool`, `cs_edit_knowledge` | change existing components in place: trigger phrases, nodes, descriptions, inputs, sites |
@@ -466,7 +468,8 @@ No tooling removes these; plan for them before calling the copy "1:1":
   `cs_deploy_solution` refuses to import while any reference is unmapped unless you pass
   `allowUnmapped: true`; in that case the tools stay unbound until someone binds them in the portal.
 - **Cloud flows land switched off** when their connection references cannot be resolved. Bind the
-  connections, then turn the flows on in the target.
+  connections, then turn the flows on: `cs_list_flows` shows which are not activated and
+  `cs_set_flow_state` switches each on (the portal is no longer needed for this step).
 - **Environment variables need target values.** The settings file lists every variable; leave a value
   empty and the target inherits the default from the solution, which is usually a dev value.
 - **Who can use the agent is per environment.** The settings file has a `CopilotAgents` section with

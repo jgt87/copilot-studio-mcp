@@ -28,6 +28,8 @@ const BESPOKE_ALWAYS_WRITES = [
   "cs_create_solution", // creates the solution
   "cs_delete_agent",
   "cs_delete_solution",
+  "cs_set_flow_state", // statecode on the workflow row
+  "cs_update_flow", // definition on the workflow row
 ] as const;
 
 /**

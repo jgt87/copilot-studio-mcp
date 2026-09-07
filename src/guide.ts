@@ -227,10 +227,24 @@ from the CLI. Connector connections still come from the portal.
 \`cs_remove_component\` with \`kind: "tool"\` deletes one and prunes the connection reference when no
 other tool uses it (needs \`confirm\`).
 
-## Flows and triggers
-\`cs_add_flow\` scaffolds a cloud flow (experimental: the format is unverified against a real
-clone). \`cs_add_trigger\` adds an event trigger. \`cs_list_agents\` and Dataverse reads show which
-flows already exist.`;
+## Flows
+
+Cloud flows live in Power Automate, not in the agent, so they are read and changed through
+Dataverse rather than the workspace:
+
+- \`cs_list_flows\` shows every flow with its state, owner and last change. \`cs_get_flow\` reads
+  one, including its trigger and action names, its connection references and (with
+  \`includeDefinition\`) the full definition.
+- \`cs_set_flow_state\` turns a flow on or off. This is the step a solution import leaves behind:
+  flows whose connections were unbound at import time land switched off. Bind the connections
+  first, then turn the flow on.
+- \`cs_update_flow\` replaces the definition of an unmanaged flow. Read it with \`cs_get_flow\`
+  first, change what you need, and send it back; the connection references are preserved. Managed
+  flows cannot be edited in place.
+
+To let the agent call a flow, add it as a tool with \`cs_add_tool\` type \`flow\` and the flow id.
+\`cs_add_trigger\` adds an event trigger that starts one. \`cs_add_flow\` scaffolds a new flow in
+the workspace, but it is experimental: the format has not been round-tripped through a real clone.`;
 
 const TOPICS = `# Topics (deterministic conversations)
 
@@ -363,6 +377,8 @@ environments goes through solutions.
    sets the environment variable values.
 3. \`cs_deploy_solution\` with \`confirm\` imports and publishes each agent. It refuses while a
    connection reference is unmapped unless you pass \`allowUnmapped\`.
+4. Flows whose connections could not be resolved arrive switched off: \`cs_list_flows\` shows which,
+   and \`cs_set_flow_state\` turns each on once its connections are bound.
 
 Deploy managed to test and production; keep unmanaged for development. \`cs_check_solution\` runs
 Solution Checker on the zip first, and \`cs_deploy_pipeline\` is the alternative when the tenant

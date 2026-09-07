@@ -47,7 +47,10 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   the README section "Authentication and app registration" is the source of truth for which API
   and permission each tool needs. Keep it in sync when adding a cloud call. `ppapi.ts` is the evaluation API (list/run/get only; no
   create), `dataverse.ts` lists bots and publishes via the `PvaPublish` bound action polled on
-  `publishedon`, `bap.ts` resolves environments, `chat.ts` speaks DirectLine v3 or the Copilot
+  `publishedon`, and reads and writes cloud flows on the `workflow` table (category 5): `getFlow`
+  parses `clientdata`, `setFlowState` PATCHes the documented statecode/statuscode pairs, and
+  `updateFlow` swaps `properties.definition` inside the existing `clientdata` so connection
+  references survive, `bap.ts` resolves environments, `chat.ts` speaks DirectLine v3 or the Copilot
   Studio client SDK.
 
 - **Solutions** (`src/solutions.ts`): the ALM path for "pull everything" and "redeploy 1:1":

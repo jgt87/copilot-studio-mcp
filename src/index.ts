@@ -76,7 +76,7 @@ import {
   type AuthConfig,
 } from "./auth.js";
 import { getEnvironment, listEnvironments } from "./cloud/bap.js";
-import { dataverseScope, getBot, listBotComponents, listBots, listConnectionReferences, listEnvironmentVariables, listFlows, publishBot, type BotComponentRow, type BotDetails } from "./cloud/dataverse.js";
+import { dataverseScope, getBot, getFlow, listBotComponents, listBots, listConnectionReferences, listEnvironmentVariables, listFlows, publishBot, setFlowState, updateFlow, type BotComponentRow, type BotDetails } from "./cloud/dataverse.js";
 import { captureSnapshot, compareChain, compareSnapshots, writeReport, type DataverseReads } from "./compare.js";
 import { buildInstructionsBrief, createSolution, generateWithAiBuilder, initAgentInSolution } from "./bootstrap.js";
 import { getRun, getTestSet, listRuns, listTestSets, startRun, summarizeRun } from "./cloud/ppapi.js";
@@ -762,6 +762,103 @@ server.registerTool(
       if (!readOnly && readOnlyMode()) return fail(readOnlyRefusal(`pac ${args.join(" ")}`));
       if (!readOnly && !confirm) return dryRun(`pac ${args.join(" ")}`);
       return text(pacSummary(await runPac(args, { cwd, timeoutMs: (timeoutSeconds ?? 600) * 1000 })));
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+// ---- cloud flows (Dataverse workflow rows) ---------------------------------
+
+const flowArgs = { environmentId: envArg, dataverseUrl: z.string().optional().describe("Dataverse URL; default: from the workspace or the environment"), workspace: workspaceArg, tenantId: tenantArg, clientId: clientArg };
+
+/** Dataverse URL and token for a flow tool (interactive sign-in allowed, unlike the drift reader). */
+async function flowContext(a: { environmentId?: string; dataverseUrl?: string; workspace?: string; tenantId?: string; clientId?: string }): Promise<{ url: string; token: string }> {
+  const ctx = await cloudContext(a, { dataverse: true });
+  const tok = await getToken(ctx.authCfg, [dataverseScope(ctx.dataverseUrl as string)]);
+  return { url: ctx.dataverseUrl as string, token: tok.accessToken };
+}
+
+server.registerTool(
+  "cs_list_flows",
+  {
+    title: "List cloud flows",
+    description: "Cloud flows (Power Automate) in the environment with their state, owner and last change: what the agent's flow tools can call, and what a solution import left switched off. Read-only.",
+    inputSchema: { ...flowArgs, search: z.string().optional().describe("Only flows whose name contains this text"), includeManaged: z.boolean().optional().describe("Default true; false lists only unmanaged flows"), top: z.number().optional().describe("Maximum rows") },
+  },
+  async (a) => {
+    try {
+      const dv = await flowContext(a);
+      const flows = await listFlows(dv.url, dv.token, { search: a.search, includeManaged: a.includeManaged, top: a.top });
+      return text({ count: flows.length, flows, ...(flows.some((f) => f.state !== "Activated") ? { note: "Flows that are not Activated do not run. cs_set_flow_state turns one on once its connections are bound." } : {}) });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+server.registerTool(
+  "cs_get_flow",
+  {
+    title: "Read one cloud flow",
+    description: "One flow with its definition: trigger and action names, connection references, and the full Power Automate definition when 'includeDefinition' is set. Read-only. Use it before cs_update_flow, and to see why a flow cannot be switched on.",
+    inputSchema: { ...flowArgs, flowId: z.string().describe("Flow (workflow) id; cs_list_flows shows it"), includeDefinition: z.boolean().optional().describe("Include the full definition JSON (large)") },
+  },
+  async (a) => {
+    try {
+      const dv = await flowContext(a);
+      const f = await getFlow(dv.url, dv.token, a.flowId);
+      const { clientData, clientDataRaw, ...rest } = f;
+      return text({ ...rest, ...(a.includeDefinition ? { definition: (clientData?.properties as Record<string, unknown> | undefined)?.definition ?? null, clientData } : { definitionOmitted: "pass includeDefinition: true for the full JSON" }) });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+server.registerTool(
+  "cs_set_flow_state",
+  {
+    title: "Turn a cloud flow on or off",
+    description: "Switch a flow on (Activated) or off (Draft). This is the step a solution import leaves for you: flows whose connection references were unbound at import time land switched off. A flow can only be turned on once its connections are bound and its definition is valid. Changes a live environment: requires confirm: true.",
+    inputSchema: { ...flowArgs, flowId: z.string().describe("Flow (workflow) id"), state: z.enum(["on", "off"]).describe("on = Activated, off = Draft"), confirm: confirmArg },
+  },
+  async (a) => {
+    try {
+      const dv = await flowContext(a);
+      const before = await getFlow(dv.url, dv.token, a.flowId);
+      if (!a.confirm) return dryRun(`turn flow '${before.name}' ${a.state} (currently ${before.state}) in ${dv.url}`, { flowId: a.flowId, connectionReferences: before.connectionReferences });
+      return text(await setFlowState(dv.url, dv.token, a.flowId, a.state));
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+server.registerTool(
+  "cs_update_flow",
+  {
+    title: "Update a cloud flow",
+    description: "Change a flow's name, description or definition in the environment. 'definition' replaces properties.definition inside the existing clientdata and keeps the connection references; 'clientData' replaces the whole document. Read the current one with cs_get_flow includeDefinition first. Managed flows cannot be edited in place; edit them in their source environment or through a solution. Changes a live environment: requires confirm: true.",
+    inputSchema: {
+      ...flowArgs,
+      flowId: z.string().describe("Flow (workflow) id"),
+      name: z.string().optional(),
+      description: z.string().optional(),
+      definition: z.record(z.unknown()).optional().describe("Power Automate definition object (properties.definition)"),
+      clientData: z.record(z.unknown()).optional().describe("The whole clientdata document; overrides 'definition'"),
+      confirm: confirmArg,
+    },
+  },
+  async (a) => {
+    try {
+      const dv = await flowContext(a);
+      const before = await getFlow(dv.url, dv.token, a.flowId);
+      const changes = { name: a.name, description: a.description, definition: a.definition, clientData: a.clientData };
+      const fields = Object.entries(changes).filter(([, v]) => v !== undefined).map(([k]) => k);
+      if (!fields.length) return fail("Nothing to update: pass name, description, definition or clientData");
+      if (!a.confirm) return dryRun(`update flow '${before.name}' (${fields.join(", ")}) in ${dv.url}`, { flowId: a.flowId, isManaged: before.isManaged, state: before.state, ...(before.isManaged ? { warning: "This flow is managed; Dataverse refuses in-place edits of managed flows." } : {}) });
+      return text(await updateFlow(dv.url, dv.token, a.flowId, changes));
     } catch (err) {
       return fail(errorMessage(err));
     }
