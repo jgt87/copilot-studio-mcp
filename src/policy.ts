@@ -30,6 +30,8 @@ const BESPOKE_ALWAYS_WRITES = [
   "cs_delete_solution",
   "cs_set_flow_state", // statecode on the workflow row
   "cs_update_flow", // definition on the workflow row
+  "cs_create_flow", // new workflow row
+  "cs_run_flow", // the flow's actions run for real
 ] as const;
 
 /**

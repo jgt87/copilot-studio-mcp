@@ -76,7 +76,8 @@ import {
   type AuthConfig,
 } from "./auth.js";
 import { getEnvironment, listEnvironments } from "./cloud/bap.js";
-import { dataverseScope, getBot, getFlow, listBotComponents, listBots, listConnectionReferences, listEnvironmentVariables, listFlows, publishBot, setFlowState, updateFlow, type BotComponentRow, type BotDetails } from "./cloud/dataverse.js";
+import { createFlow, dataverseScope, getBot, getFlow, listBotComponents, listBots, listConnectionReferences, listEnvironmentVariables, listFlows, publishBot, setFlowState, updateFlow, type BotComponentRow, type BotDetails } from "./cloud/dataverse.js";
+import { FLOW_SCOPE, getFlowRun, listFlowRuns, startFlowRun } from "./cloud/flowruns.js";
 import { captureSnapshot, compareChain, compareSnapshots, writeReport, type DataverseReads } from "./compare.js";
 import { buildInstructionsBrief, createSolution, generateWithAiBuilder, initAgentInSolution } from "./bootstrap.js";
 import { getRun, getTestSet, listRuns, listTestSets, startRun, summarizeRun } from "./cloud/ppapi.js";
@@ -416,7 +417,7 @@ server.registerTool(
       mode: z.enum(["interactive", "device_code"]).optional().describe("Default interactive"),
       tenantId: tenantArg,
       clientId: clientArg,
-      scope: z.enum(["powerplatform", "bap", "dataverse", "copilot_invoke"]).optional().describe("Which resource to pre-authorise. Default powerplatform (evaluations). Others are acquired silently later when possible."),
+      scope: z.enum(["powerplatform", "bap", "dataverse", "copilot_invoke", "flow"]).optional().describe("Which resource to pre-authorise. Default powerplatform (evaluations); 'flow' is the Power Automate service used by the flow-run tools. Others are acquired silently later when possible."),
       dataverseUrl: z.string().optional().describe("Required when scope is dataverse, e.g. https://org.crm.dynamics.com"),
       workspace: workspaceArg,
       openBrowser: z.boolean().optional().describe("interactive: try to open the browser from the server (default true). Set false when the server runs where no browser can appear."),
@@ -428,7 +429,7 @@ server.registerTool(
       const ws = tryWorkspace(workspace);
       const cfg: AuthConfig = { tenantId: resolveTenantId(tenantId ?? ws?.sync.tenantId ?? undefined), clientId };
       const scopes =
-        scope === "bap" ? [BAP_SCOPE] : scope === "dataverse" ? [dataverseScope(dataverseUrl ?? ws?.sync.dataverseUrl ?? (() => { throw new Error("dataverseUrl required"); })())] : scope === "copilot_invoke" ? [COPILOT_INVOKE_SCOPE] : [PPAPI_SCOPE];
+        scope === "bap" ? [BAP_SCOPE] : scope === "flow" ? [FLOW_SCOPE] : scope === "dataverse" ? [dataverseScope(dataverseUrl ?? ws?.sync.dataverseUrl ?? (() => { throw new Error("dataverseUrl required"); })())] : scope === "copilot_invoke" ? [COPILOT_INVOKE_SCOPE] : [PPAPI_SCOPE];
       if (mode === "device_code") {
         const info = await startDeviceCodeLogin(cfg, scopes);
         return text({ status: "device_code", ...info, next: "Tell the user to open verificationUri and enter userCode. Then call cs_login_status or any cloud tool." });
@@ -859,6 +860,112 @@ server.registerTool(
       if (!fields.length) return fail("Nothing to update: pass name, description, definition or clientData");
       if (!a.confirm) return dryRun(`update flow '${before.name}' (${fields.join(", ")}) in ${dv.url}`, { flowId: a.flowId, isManaged: before.isManaged, state: before.state, ...(before.isManaged ? { warning: "This flow is managed; Dataverse refuses in-place edits of managed flows." } : {}) });
       return text(await updateFlow(dv.url, dv.token, a.flowId, changes));
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+server.registerTool(
+  "cs_create_flow",
+  {
+    title: "Create a cloud flow",
+    description:
+      "Create a new Power Automate cloud flow from a definition, optionally straight into a solution. The flow is created switched off, because a flow can only be activated once its connection references are bound: bind them, then cs_set_flow_state on. To let an agent call it, use a trigger of type Request/kind Skills and add it as a tool with cs_add_tool type 'flow'. Changes a live environment: requires confirm: true.",
+    inputSchema: {
+      ...flowArgs,
+      name: z.string().describe("Flow display name"),
+      definition: z.record(z.unknown()).optional().describe("Power Automate definition ($schema, triggers, actions); required unless clientData is given"),
+      clientData: z.record(z.unknown()).optional().describe("The whole clientdata document, when you have one (from cs_get_flow of another flow, for example)"),
+      connectionReferences: z.record(z.unknown()).optional().describe("properties.connectionReferences for the connectors the definition uses"),
+      description: z.string().optional(),
+      solution: z.string().optional().describe("Unique name of the solution to create it in"),
+      confirm: confirmArg,
+    },
+  },
+  async (a) => {
+    try {
+      if (!a.definition && !a.clientData) return fail("Pass a definition (or a whole clientData document) for the new flow.");
+      const dv = await flowContext(a);
+      const spec = { name: a.name, definition: a.definition, clientData: a.clientData, description: a.description, solutionUniqueName: a.solution, connectionReferences: a.connectionReferences };
+      if (!a.confirm) {
+        const triggers = Object.keys(((a.definition ?? (a.clientData?.properties as Record<string, unknown> | undefined)?.definition ?? {}) as Record<string, unknown>).triggers ?? {});
+        return dryRun(`create cloud flow '${a.name}'${a.solution ? ` in solution ${a.solution}` : ""} in ${dv.url} (switched off)`, { triggers, connectionReferences: Object.keys(a.connectionReferences ?? {}) });
+      }
+      const r = await createFlow(dv.url, dv.token, spec);
+      return text({ ...r, next: "Bind its connections, then cs_set_flow_state state='on'. cs_add_tool type='flow' with this id makes it callable by an agent." });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+/** Power Automate service token (a different resource from Dataverse), plus the environment id the run API needs. */
+async function flowRunContext(a: { environmentId?: string; workspace?: string; tenantId?: string; clientId?: string }): Promise<{ environmentId: string; token: string }> {
+  const ctx = await cloudContext(a, { environment: true });
+  const tok = await getToken(ctx.authCfg, [FLOW_SCOPE]);
+  return { environmentId: ctx.environmentId as string, token: tok.accessToken };
+}
+
+server.registerTool(
+  "cs_list_flow_runs",
+  {
+    title: "List flow runs",
+    description: "Run history of one cloud flow (most recent first): status, start and end time, duration and the error of a failed run. Read-only. Uses the Power Automate service, which is a separate sign-in from Dataverse (cs_login scope 'flow'). Unverified against a live tenant.",
+    inputSchema: { environmentId: envArg, workspace: workspaceArg, tenantId: tenantArg, clientId: clientArg, flowId: z.string().describe("Flow id (cs_list_flows)"), top: z.number().optional().describe("Maximum runs to return") },
+  },
+  async (a) => {
+    try {
+      const ctx = await flowRunContext(a);
+      const runs = await listFlowRuns(ctx.token, ctx.environmentId, a.flowId, { top: a.top });
+      const failed = runs.filter((r) => /fail/i.test(r.status ?? ""));
+      return text({ count: runs.length, failed: failed.length, runs });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+server.registerTool(
+  "cs_get_flow_run",
+  {
+    title: "Read one flow run",
+    description: "One run of a cloud flow with its status, timing, trigger and error. Read-only. Uses the Power Automate service (cs_login scope 'flow'). Unverified against a live tenant.",
+    inputSchema: { environmentId: envArg, workspace: workspaceArg, tenantId: tenantArg, clientId: clientArg, flowId: z.string().describe("Flow id (cs_list_flows)"), runId: z.string().describe("Run id (cs_list_flow_runs)") },
+  },
+  async (a) => {
+    try {
+      const ctx = await flowRunContext(a);
+      return text(await getFlowRun(ctx.token, ctx.environmentId, a.flowId, a.runId));
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
+server.registerTool(
+  "cs_run_flow",
+  {
+    title: "Start a flow run",
+    description:
+      "Start a run of a manually triggered cloud flow, with an optional payload. Only flows whose trigger is manual or agent-callable can be started this way; scheduled and event-driven flows run on their own. Whatever the flow does (sending mail, writing records) happens for real, so this changes a live environment: requires confirm: true. Uses the Power Automate service (cs_login scope 'flow'). Unverified against a live tenant.",
+    inputSchema: {
+      environmentId: envArg,
+      workspace: workspaceArg,
+      tenantId: tenantArg,
+      clientId: clientArg,
+      flowId: z.string().describe("Flow id (cs_list_flows)"),
+      triggerName: z.string().optional().describe("Trigger key inside the definition (cs_get_flow lists them); default 'manual'"),
+      payload: z.record(z.unknown()).optional().describe("Body for the trigger"),
+      confirm: confirmArg,
+    },
+  },
+  async (a) => {
+    try {
+      const ctx = await flowRunContext(a);
+      if (!a.confirm) return dryRun(`start flow ${a.flowId} (trigger '${a.triggerName ?? "manual"}') in environment ${ctx.environmentId}`, { warning: "The flow's actions run for real: it may send mail, write records or call external systems." });
+      const r = await startFlowRun(ctx.token, ctx.environmentId, a.flowId, { triggerName: a.triggerName, payload: a.payload });
+      return text({ ...r, next: "cs_list_flow_runs shows the run and its outcome." });
     } catch (err) {
       return fail(errorMessage(err));
     }

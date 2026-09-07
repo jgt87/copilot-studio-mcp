@@ -51,7 +51,8 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   parses `clientdata`, `setFlowState` PATCHes the documented statecode/statuscode pairs, and
   `updateFlow` swaps `properties.definition` inside the existing `clientdata` so connection
   references survive, `bap.ts` resolves environments, `chat.ts` speaks DirectLine v3 or the Copilot
-  Studio client SDK.
+  Studio client SDK, `flowruns.ts` is the Power Automate Process Simple API (run history and
+  starting a run; its own scope, `CPS_FLOW_SCOPE` overrides, unverified live).
 
 - **Solutions** (`src/solutions.ts`): the ALM path for "pull everything" and "redeploy 1:1":
   `pac solution list/export/unpack/pack/create-settings/import` wrappers, an inventory parser over an

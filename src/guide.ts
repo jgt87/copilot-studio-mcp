@@ -238,9 +238,16 @@ Dataverse rather than the workspace:
 - \`cs_set_flow_state\` turns a flow on or off. This is the step a solution import leaves behind:
   flows whose connections were unbound at import time land switched off. Bind the connections
   first, then turn the flow on.
-- \`cs_update_flow\` replaces the definition of an unmanaged flow. Read it with \`cs_get_flow\`
-  first, change what you need, and send it back; the connection references are preserved. Managed
-  flows cannot be edited in place.
+- \`cs_update_flow\` replaces the definition of an unmanaged flow, including its trigger. Read it
+  with \`cs_get_flow\` first, change what you need, and send it back; the connection references are
+  preserved. Managed flows cannot be edited in place.
+- \`cs_create_flow\` creates a new flow from a definition, optionally straight into a solution. It is
+  created switched off; bind its connections, then turn it on. A flow an agent can call needs a
+  trigger of type \`Request\` with kind \`Skills\`.
+- \`cs_list_flow_runs\`, \`cs_get_flow_run\` and \`cs_run_flow\` cover run history and starting a
+  manual run. They use the Power Automate service, which is a separate sign-in:
+  \`cs_login scope='flow'\`. Starting a run really executes the flow, so it needs confirmation like
+  any other write.
 
 To let the agent call a flow, add it as a tool with \`cs_add_tool\` type \`flow\` and the flow id.
 \`cs_add_trigger\` adds an event trigger that starts one. \`cs_add_flow\` scaffolds a new flow in

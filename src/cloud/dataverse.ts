@@ -162,6 +162,48 @@ export async function getFlow(envUrl: string, token: string, workflowId: string,
  * Turning one on fails while its connection references are unbound, which is
  * the state flows land in after a solution import.
  */
+/**
+ * Create a cloud flow. A modern cloud flow is a `workflow` row with
+ * `category` 5 and `type` 1 whose `clientdata` holds the definition;
+ * `primaryentity` is "none" for flows that are not bound to a table. It is
+ * created switched off, because a flow can only be activated once its
+ * connection references are bound. `solutionUniqueName` puts it straight
+ * into a solution (the `MSCRM.SolutionUniqueName` header).
+ */
+export async function createFlow(
+  envUrl: string,
+  token: string,
+  spec: { name: string; definition?: Record<string, unknown>; clientData?: Record<string, unknown>; description?: string; solutionUniqueName?: string; connectionReferences?: Record<string, unknown> },
+  fetchImpl?: FetchLike,
+): Promise<{ workflowId: string | null; name: string; state: string; solution: string | null }> {
+  if (!spec.definition && !spec.clientData) throw new Error("createFlow needs a definition (or a whole clientData document)");
+  const clientData = spec.clientData ?? { properties: { connectionReferences: spec.connectionReferences ?? {}, definition: spec.definition } };
+  const body: Record<string, unknown> = {
+    name: spec.name,
+    category: 5,
+    type: 1,
+    primaryentity: "none",
+    statecode: FLOW_STATES.off.statecode,
+    statuscode: FLOW_STATES.off.statuscode,
+    clientdata: JSON.stringify(clientData),
+    ...(spec.description ? { description: spec.description } : {}),
+  };
+  const created = await requestJson<Record<string, unknown>>(`${api(envUrl)}/workflows`, {
+    method: "POST",
+    token,
+    fetchImpl,
+    headers: { ...ODATA_HEADERS, Prefer: "return=representation", ...(spec.solutionUniqueName ? { "MSCRM.SolutionUniqueName": spec.solutionUniqueName } : {}) },
+    body,
+    hints: { 400: "Dataverse refused the flow; check the definition against the Power Automate schema and that the publisher prefix and solution exist" },
+  });
+  return {
+    workflowId: created?.workflowid ? String(created.workflowid) : null,
+    name: spec.name,
+    state: "Draft",
+    solution: spec.solutionUniqueName ?? null,
+  };
+}
+
 export async function setFlowState(envUrl: string, token: string, workflowId: string, state: FlowState, fetchImpl?: FetchLike): Promise<{ workflowId: string; name: string; previousState: string; state: string }> {
   const before = await getFlow(envUrl, token, workflowId, fetchImpl);
   await requestJson(`${api(envUrl)}/workflows(${workflowId})`, {
