@@ -18,7 +18,7 @@ export const SERVER_INSTRUCTIONS = `copilot-studio-mcp builds Microsoft Copilot 
 
 Start here
 - Call cs_init first in a session: it reports the pac CLI, sign-in state and the workspace it found, and ends with concrete next steps.
-- Call cs_guide (topic: "getting-started", "instructions", "knowledge", "tools", "topics", "evaluations", "publish-and-test", "drift", "solutions", "administration", "troubleshooting") for a walkthrough before improvising a sequence of calls.
+- Call cs_guide (topic: "getting-started", "instructions", "knowledge", "tools", "topics", "evaluations", "publish-and-test", "drift", "transcripts", "solutions", "administration", "troubleshooting") for a walkthrough before improvising a sequence of calls.
 
 How the pieces fit
 - An agent is a folder of YAML: agent.mcs.yml, settings.mcs.yml, topics/, knowledge/, actions/ (tools), trigger/, variables/, workflows/. Authoring tools write those files; nothing reaches the live agent until cs_push.
@@ -44,6 +44,7 @@ export type GuideTopic =
   | "evaluations"
   | "publish-and-test"
   | "drift"
+  | "transcripts"
   | "solutions"
   | "administration"
   | "troubleshooting";
@@ -57,6 +58,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
   "evaluations",
   "publish-and-test",
   "drift",
+  "transcripts",
   "solutions",
   "administration",
   "troubleshooting",
@@ -347,6 +349,38 @@ knowledge source that is not reachable for the signed-in user, a tool whose \`mo
 does not describe when to use it, or trigger phrases shared between topics. \`cs_review_agent\`
 catches all four before an evaluation does.`;
 
+const TRANSCRIPTS = `# What the agent is actually doing in production
+
+Transcripts are the only place the server sees real users. Everything else describes the agent you
+built; this describes the one people met. Read-only, and it needs a published agent people have
+used, plus a cached \`cs_login\`.
+
+## Look
+\`cs_summarize_transcripts\` over a window (\`days\`) gives the shape: how sessions ended, the
+escalation rate, average turns, how many never matched a topic, which topics and tools actually
+fire, and the questions behind the sessions that went badly.
+
+Read the \`sessionsWithoutTopic\` count first. Those are sessions where nothing you authored
+matched what the user asked, which is the clearest signal of a gap.
+
+## Then read one
+A rate is not a diagnosis. \`cs_list_transcripts\` (filter by \`outcome\` or \`search\`) finds the
+session, \`cs_get_transcript\` shows every turn with the topic and tool attributed to it. Do this
+before changing anything: the number tells you where to look, the transcript tells you why.
+
+## Close the loop
+\`cs_test_set_from_transcripts\` writes the portal's import CSV from the questions people actually
+asked, most frequent first. By default it keeps only the sessions that escalated, went unresolved
+or were abandoned, so the test set is a regression suite for real failures rather than a guess.
+Import it once in the portal, fill in the expected responses, then \`cs_run_evaluation\` automates
+every run after that.
+
+## What the outcomes are, and are not
+Copilot Studio does not report whether a session succeeded. The outcome on each session is this
+server reading the transcript: an escalation or transfer, the agent saying it could not answer, a
+last turn with no reply, or none of those. "Resolved" means nothing marked the session as failed.
+It is not a satisfaction measure, and every result repeats that so it does not get quoted as one.`;
+
 const PUBLISH_AND_TEST = `# Publishing and chat-testing
 
 ## Publish
@@ -513,6 +547,7 @@ const GUIDES: Record<GuideTopic, string> = {
   evaluations: EVALUATIONS,
   "publish-and-test": PUBLISH_AND_TEST,
   drift: DRIFT,
+  transcripts: TRANSCRIPTS,
   solutions: SOLUTIONS,
   administration: ADMINISTRATION,
   troubleshooting: TROUBLESHOOTING,
@@ -531,6 +566,7 @@ export const TOPIC_SUMMARY: Record<GuideTopic, string> = {
   evaluations: "test sets, runs and results, plus local conversation tests",
   "publish-and-test": "publish the agent and chat with it",
   drift: "changes made in the portal since the last sync, and how to merge them",
+  transcripts: "what real users asked, how those sessions ended, and turning the failures into a test set",
   solutions: "pull a solution, redeploy it elsewhere, compare environments",
   administration: "tenant administration with a separate admin account, and backing the tenant configuration up to files",
   troubleshooting: "the errors this server can return, and what each one means",

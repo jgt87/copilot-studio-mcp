@@ -80,6 +80,9 @@ Hard limits the server works around rather than hides:
    connections, then `cs_set_flow_state`.
 3. **Evaluations and topic YAML are standard-harness features.** GitHub Copilot harness agents
    (`--authoring-mode cli-copilot`) get init / pack / import / instructions / chat only.
+4. **Copilot Studio does not report whether a conversation succeeded.** The transcript tools derive
+   an outcome from the activities (an escalation, the agent saying it could not answer, a user turn
+   with no reply). Treat the rates as a place to look, and read the transcript before acting.
 
 Verified offline against pac 2.11.2: `pac copilot pack` on a workspace created by `pac copilot init`
 (without `--environment`) packages **settings, agent and topics only** and rejects `knowledge/`,
@@ -343,6 +346,21 @@ Evaluation and testing (cloud)
 | `cs_list_test_sets`, `cs_run_evaluation`, `cs_get_evaluation_run`, `cs_list_evaluation_runs` | Power Platform API evaluations with pass/fail summaries |
 | `cs_chat` | one utterance to the published agent (DirectLine or SDK), multi-turn via `conversationId` |
 | `cs_run_conversation_tests` | YAML test file of utterances + expectations, run through `cs_chat` |
+
+Production conversations (cloud, read-only)
+
+| Tool | Purpose |
+| --- | --- |
+| `cs_list_transcripts` | sessions with the published agent: when, turns, first question, topics and tools that fired, how it ended |
+| `cs_get_transcript` | one session's full turn list, with the topic and tool attributed to each turn |
+| `cs_summarize_transcripts` | aggregate over a window: outcomes, escalation rate, sessions that matched no topic, top topics and tools, the questions behind the failures |
+| `cs_test_set_from_transcripts` | the Evaluation import CSV built from questions people actually asked, failures first |
+
+Transcripts read the Dataverse `conversationtranscript` table and need a published agent that people
+have used. Session outcomes are this server's reading of the transcript, not something Copilot
+Studio reports: `resolved` means nothing marked the session as failed, not that the user was
+satisfied. Every result repeats that caveat, and `cs_guide` topic `transcripts` explains the loop
+from a summary to one transcript to a regression test set. **Unverified against a live tenant.**
 
 Every tool that mutates a live environment (`cs_push`, `cs_publish`, `cs_import_solution`,
 `cs_run_evaluation`, `cs_create_agent` with an environment, non-read-only `cs_pac`) returns a dry run unless

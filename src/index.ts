@@ -33,6 +33,7 @@ import "./tools/authoring.js";
 import "./tools/dayTwo.js";
 import "./tools/catalog.js";
 import "./tools/evaluations.js";
+import "./tools/transcripts.js";
 import "./tools/chat.js";
 import "./tools/solutions.js";
 import "./tools/compare.js";

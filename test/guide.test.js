@@ -26,7 +26,7 @@ function registeredTools() {
 }
 
 test("every guide topic has content, a summary and a heading", () => {
-  assert.equal(GUIDE_TOPICS.length, 11);
+  assert.equal(GUIDE_TOPICS.length, 12);
   for (const topic of GUIDE_TOPICS) {
     const text = guide(topic);
     assert.ok(text.length > 500, `${topic} is too short`);
