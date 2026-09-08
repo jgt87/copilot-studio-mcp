@@ -216,10 +216,10 @@ Setup and sync (pac)
 
 | Tool | Purpose |
 | --- | --- |
-| `cs_init` | pac / .NET / auth profiles / sign-in / workspace detection |
+| `cs_init` | start a session: pac / .NET, the pac auth profiles and which is active, MSAL sign-in, environment variables, the write policy in force, the workspace it found, and the next steps for it |
 | `cs_login`, `cs_login_status`, `cs_logout` | MSAL sign-in (interactive or device code) for the cloud tools |
 | `cs_list_environments`, `cs_list_agents` | environments (BAP) and agents (pac or Dataverse) |
-| `cs_create_agent` | `pac copilot init` (classic or cli-copilot), optional bootstrap into an environment, optionally inside a chosen or new solution |
+| `cs_create_agent` | `pac copilot init` (classic or cli-copilot): a local scaffold, or the live agent as well when given an environment, optionally inside a chosen or new solution |
 | `cs_create_solution` | create an unmanaged solution (and publisher) as the container for new agents |
 | `cs_generate_instructions` | draft or refine the agent instructions with an AI Builder prompt (`pac copilot model predict`) and write them into the workspace |
 | `cs_clone_agent`, `cs_pull`, `cs_push`, `cs_status` | sync a live agent with the workspace; clone, pull and push record a sync stamp |
@@ -313,7 +313,7 @@ Evaluation and testing (cloud)
 | `cs_run_conversation_tests` | YAML test file of utterances + expectations, run through `cs_chat` |
 
 Every tool that mutates a live environment (`cs_push`, `cs_publish`, `cs_import_solution`,
-`cs_run_evaluation`, bootstrap `cs_create_agent`, non-read-only `cs_pac`) returns a dry run unless
+`cs_run_evaluation`, `cs_create_agent` with an environment, non-read-only `cs_pac`) returns a dry run unless
 called with `confirm: true`.
 
 ## Getting started: building a new agent
@@ -321,8 +321,9 @@ called with `confirm: true`.
 The end-to-end flow for a new standard-harness agent, from an empty folder to a published agent you
 can talk to. Every step is one tool call; steps that change the environment need `confirm: true`.
 
-1. **Check the machine.** `cs_init` reports pac, .NET, the pac auth profile and sign-in state. If
-   there is no profile, run `pac auth create --environment <id or URL>` once in a terminal.
+1. **Start the session.** `cs_init` reports pac, .NET, the pac auth profiles and sign-in state,
+   and ends with the next steps for the workspace it found. If there is no profile, run
+   `pac auth create --environment <id or URL>` once in a terminal.
 2. **Pick the environment.** `cs_list_environments` (needs `cs_login`) or use the environment id
    from the Copilot Studio URL.
 3. **Pick or create the solution.** `cs_list_solutions` shows what exists. To start a new default
@@ -422,7 +423,7 @@ would do in Copilot Studio for the same result.
 
 | Step (MCP tool) | The same action in Copilot Studio | How the server does it |
 | --- | --- | --- |
-| `cs_init` | nothing in the portal; checks pac, .NET, the pac profile and sign-in on your machine | local checks |
+| `cs_init` | nothing in the portal; checks pac, .NET, the pac profiles and sign-in on your machine, and says what to do next | local checks |
 | `cs_list_solutions`, `cs_create_solution` | Power Apps maker portal > Solutions: pick or create the unmanaged solution the agent lives in | `pac solution list`; empty manifest packed and imported |
 | `cs_create_agent` (with `environment`, `solutionName`) | Copilot Studio > Create > New agent, saved into that solution; the agent appears with its default system topics | `pac copilot init`, `pack`, `pac solution import`, `pac copilot clone` |
 | `cs_generate_instructions` | Overview > Instructions: the portal's "generate with AI" step, using your AI Builder prompt | `pac copilot model predict`, then `agent.mcs.yml` |
