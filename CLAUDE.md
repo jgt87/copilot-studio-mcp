@@ -189,6 +189,14 @@ stdout is the MCP transport. All diagnostics go through `log()` to stderr.
 - Never open a URL with `cmd /c start <url>`: cmd splits the command at every `&`, so the browser
   receives the authorize request without `scope` (AADSTS900144). `auth.browserLaunchSpec` uses
   PowerShell `Start-Process` with an encoded command on Windows; reuse it for any future launch.
+- Never spawn a Windows `.cmd` shim with `shell: true`: node concatenates argv without escaping, so
+  `--project-dir "C: b\ws"` arrives as three arguments with the backslashes eaten, and everything
+  after an `&` is dropped because cmd reads it as a command separator. `pac.spawnSpec` builds the
+  command line and hands it to `cmd /d /s /c` verbatim instead. Found live on 2026-09-09; latent
+  wherever pac resolves to `pac.exe`.
+- pac can report failure and still exit 0 (`pac copilot publish` prints "Failed to publish"), so a
+  command that does this opts into `PacRunOptions.failOnOutput`. Do not apply such a pattern
+  globally: an unrelated log line containing "failed" would misread as a failure.
 - Fire-and-forget processes go through `auth.launchDetached`: a child process emits `error`
   asynchronously (ENOENT when the command is missing) and an unlistened `error` event kills the
   server, which clients report only as a broken pipe. index.ts also logs `uncaughtException` /
