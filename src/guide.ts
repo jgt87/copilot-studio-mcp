@@ -78,478 +78,449 @@ export const GUIDE_TOPICS: GuideTopic[] = [
 
 const GETTING_STARTED = `# Getting started
 
-## 0. Check the machine
-\`cs_init\`. It reports the pac CLI and .NET, the pac auth profiles, the MSAL sign-in, and the
-workspace it found. Fix what it flags before anything else.
+Follow these steps in order. Do not skip step 0.
 
-If there is no pac auth profile, the user runs this in a terminal (this server cannot do the
-interactive sign-in for them):
+## 0. Check the machine
+Call \`cs_init\`.
+Read \`cloudAccess.ready\` in the result.
+IF a resource is not "ok" -> the user must run \`cs_login\` before tools that need it.
+IF there is no pac auth profile -> the user runs this in a terminal. You cannot do it for them:
 
     pac auth create --environment <environment id or url>
 
-For the API-based tools (evaluations, chat, drift, environment and agent lists) run \`cs_login\`.
-It may return \`status: "pending"\` with a URL: show that URL and ask the user to open it.
+IF \`cs_login\` returns status "pending" -> show the URL and ask the user to open it. Then wait.
 
-## 1. Existing agent, or new one?
+## 1. Choose: existing agent or new one
 
-**Existing agent in Copilot Studio.** \`cs_list_environments\`, then \`cs_list_agents\`, then
-\`cs_clone_agent\` with the agent id or schema name. You now have a sync-connected workspace: local
-edits go back with \`cs_push\`. Run \`cs_describe_workspace\` to see what it contains.
+IF the agent already exists in Copilot Studio:
+1. \`cs_list_environments\`
+2. \`cs_list_agents\`
+3. \`cs_clone_agent\` with \`bot\` (the id or schema name) and \`outputDir\`
+4. \`cs_describe_workspace\` to see what came down
 
-**New agent.** Pick the solution it lives in: \`cs_list_solutions\`, or \`cs_create_solution\`
-(needs \`confirm\`). Then \`cs_create_agent\` with \`name\`, \`publisherPrefix\`, \`projectDir\`,
-\`environment\`, \`solutionName\` and \`confirm\`. That creates the agent in the environment and
-clones it back, so the workspace is sync-connected.
+IF the agent does not exist yet:
+1. \`cs_list_solutions\` to pick a solution, or \`cs_create_solution\` with \`confirm: true\`
+2. \`cs_create_agent\` with \`name\`, \`publisherPrefix\`, \`projectDir\`, \`environment\`, \`solutionName\`, \`confirm: true\`
 
-Without \`environment\`, \`cs_create_agent\` only scaffolds locally. A local scaffold packs settings,
-the agent and topics only; knowledge and tools need a sync-connected workspace. The tools say so
-in a \`layoutNote\` when it applies.
+Leaving out \`environment\` makes a local scaffold only. A scaffold packs settings, the agent and
+topics. Knowledge, tools and flows need a sync-connected workspace, so pass \`environment\` unless
+the user asked for a local scaffold.
 
 ## 2. Say what the agent is for
-\`cs_generate_instructions\` drafts them with an AI Builder prompt; review the text, then call again
-with \`apply: true\`. Or write them yourself with \`cs_update_agent\`. See \`cs_guide\`
-topic \`instructions\`.
+\`cs_generate_instructions\` drafts them. Show the draft. Call again with \`apply: true\` to keep it.
+Or write them yourself with \`cs_update_agent\`.
+More: \`cs_guide\` topic "instructions".
 
 ## 3. Give it something to work with
-- Knowledge: \`cs_add_knowledge_source\` (topic \`knowledge\`).
-- Tools: \`cs_list_connectors\`, \`cs_describe_connector\`, \`cs_add_tool\` (topic \`tools\`).
-- Deterministic conversations: \`cs_add_topic\` (topic \`topics\`).
+Knowledge: \`cs_add_knowledge_source\`. Topic "knowledge".
+Tools: \`cs_list_connectors\`, then \`cs_describe_connector\`, then \`cs_add_tool\`. Topic "tools".
+Scripted conversations: \`cs_add_topic\`. Topic "topics".
 
-## 4. Check, then ship
-Everything so far only touched files on disk. The next steps change the live agent, so each one
-needs the user's approval: call it without \`confirm\`, show the dry run, ask, then call again with
-\`confirm: true\`.
+## 4. Check the files
+1. \`cs_review_agent\` - scores the agent and names a fix per finding.
+2. \`cs_validate\` - must report 0 errors. \`cs_push\` refuses while there are errors.
 
-1. \`cs_review_agent\` scores the agent and names a fix per finding.
-2. \`cs_validate\` checks every file against the schema and across files.
-3. \`cs_push\` with \`confirm\`. Its dry run first shows what will change and whether a maker
-   changed the same components in the portal.
-4. Tools with a connection reference need one portal step: the user opens the agent's Tools page
-   and connects each one. Then \`cs_pull\`.
-5. \`cs_publish\` with \`confirm\`, then \`cs_chat\` to try it.
+Everything up to here only wrote files on disk. Nothing reached the live agent.
 
-## 5. Keep it honest
-\`cs_create_test_set_csv\` and the evaluation tools (topic \`evaluations\`), and \`cs_check_drift\`
-before you edit again (topic \`drift\`).`;
+## 5. Ship it
+Each step below changes the live agent. For each one: call it WITHOUT \`confirm\`, show the dry run
+to the user, ask, then call again with \`confirm: true\`.
+1. \`cs_push\` - sends the files. Its dry run also warns if a maker changed the same components.
+2. IF a tool has a connection reference -> the user opens the agent's Tools page in the portal and
+   connects it. You cannot do this step. Then run \`cs_pull\`.
+3. \`cs_publish\` - makes the draft live.
+4. \`cs_chat\` - ask the agent something and check the answer.
 
-const INSTRUCTIONS = `# Instructions (the agent's system prompt)
+## 6. Keep it working
+\`cs_check_drift\` before you edit again. Topic "drift".
+\`cs_create_test_set_csv\` and the evaluation tools. Topic "evaluations".`;
+const INSTRUCTIONS = `# Agent instructions
 
-Instructions live in \`agent.mcs.yml\` and drive everything the orchestrator does: which tool it
-picks, when it answers from knowledge, when it refuses, when it hands over to a person.
+Instructions tell the agent how to behave in every conversation. They are the highest-value thing
+to get right: most bad answers trace back to instructions, not to knowledge or tools.
 
-## Writing them
-- **With AI Builder:** \`cs_generate_instructions\` with \`purpose\`, \`audience\`, \`tone\`,
-  \`boundaries\`. It returns the draft text. Show it to the user, then call again with
-  \`apply: true\` to write it into the workspace. \`cs_list_prompts\` lists the AI Builder prompts
-  available; \`modelName\` picks one. Each run uses AI Builder capacity.
-- **Revising:** call it again with \`refine: true\` and a \`changeRequest\`.
-- **By hand:** \`cs_update_agent\` with \`instructions\` (replace) or \`appendInstructions\` (add a
-  paragraph). The same tool sets \`displayName\`, conversation starters and the model hint.
+## Where they live
+Standard agents: \`agent.mcs.yml\`. Write them with \`cs_update_agent\`, field \`instructions\`.
+GitHub Copilot harness agents: \`settings.mcs.yml\`. \`cs_update_agent\` writes the right file for the
+harness it finds, so you do not need to choose.
+
+## Write them
+Option A - draft with AI Builder:
+1. \`cs_generate_instructions\` with \`purpose\`, and optionally \`audience\`, \`tone\`, \`capabilities\`, \`boundaries\`.
+2. Show the draft text to the user.
+3. Call again with \`apply: true\` to write it.
+
+Option B - write them yourself:
+\`cs_update_agent\` with \`instructions\`.
+\`cs_update_agent\` with \`appendResponseInstructions\` adds a line without rewriting what is there.
 
 ## What good instructions contain
-1. Role and scope: who the agent serves and what it does not do.
-2. Grounding: answer from the knowledge sources, say when something is not covered, never invent.
-3. Tool rules: when to use each tool, what to ask for first, what never to do without confirmation.
-4. Escalation: when to hand over to a person, and how.
-5. Tone: length, formality, language.
+- Role and scope: what the agent is for, and what it is not for.
+- How to answer: ground answers in knowledge, cite sources, ask when the request is unclear.
+- When to use each tool, by name.
+- What to refuse, and how to escalate.
 
-\`cs_review_agent\` warns under about 200 characters (too thin to cover scope, grounding and
-escalation) and over about 8000 (the important rules get diluted; move procedures into topics).
+Write in the second person, as instructions to the agent. Keep each rule on its own line.
 
-## Conversation starters
-\`cs_update_agent\` with \`addConversationStarters\`: two or three examples so users see what the
-agent can do. The review notes their absence.
+## Other settings on the same tool
+\`cs_update_agent\` also writes: \`responseInstructions\` (formatting only), \`defaultResponseMode\`
+(Auto, ThinkDeeper, QuickResponse), \`historyType\`, \`capabilities\` (web browsing, code interpreter,
+file analysis), and content moderation.
+Enum values are checked before writing, so a wrong value fails fast with the allowed list.
 
-## Responses and the rest of the agent's settings
-The same tool writes what the portal groups under responses and generative AI:
+## After writing
+1. \`cs_validate\`
+2. \`cs_push\` with \`confirm: true\` after the user approves
+3. \`cs_publish\` with \`confirm: true\`
+4. \`cs_chat\` to see whether behaviour actually changed
 
-- \`responseInstructions\`: how answers should be worded and formatted (length, lists, citations,
-  language). Keep it separate from the instructions, which say what the agent does.
-- \`defaultResponseMode\`: \`Auto\`, \`ThinkDeeper\` (more reasoning, slower) or \`QuickResponse\`.
-- \`history\` (\`none\` or \`conversation\`, with \`historyMessages\`): how much of the conversation
-  the agent sees.
-- \`capabilities\`: web browsing, code interpreter, image generation, and Teams, SharePoint, email,
-  meeting and people search. Only the toggles you pass change.
-- \`useModelKnowledge\`: whether the model may answer beyond your knowledge sources. Turning it off
-  is the usual fix when an agent invents things.
-- \`contentModeration\` (\`Minimum\` to \`Maximum\`), \`isFileAnalysisEnabled\`,
-  \`isSemanticSearchEnabled\`.
-
-How the agent runs (orchestration, authentication, language, analytics) lives in
-\`settings.mcs.yml\` instead: \`cs_update_settings\` sets those by dot path.
-
-## GitHub Copilot harness
-In a \`cli-copilot\` workspace, instructions live in \`settings.mcs.yml\` under
-\`configuration.agentSettings.instructions.segments\`. \`cs_update_agent\` handles that layout;
-\`cs_update_settings\` refuses to change \`authoringModel\`, \`recognizer.kind\` and \`template\`.`;
-
+Instructions only take effect for users after \`cs_publish\`.`;
 const KNOWLEDGE = `# Knowledge sources
 
-\`cs_add_knowledge_source\` writes one YAML file per source under \`knowledge/\`. Kinds:
+Knowledge is what the agent reads to answer questions it has no topic for.
 
-| kind | What it is | What it needs |
-| --- | --- | --- |
-| \`public-site\` | a public website, optionally its sub-pages | the URL; no authentication |
-| \`sharepoint\` | a SharePoint site or document library | the site URL and a signed-in user |
-| \`graph-connector\` | a Microsoft Graph connector index | the connector id and a signed-in user |
-| \`files\` | documents uploaded with the agent | the files, copied into \`knowledge/files/\` |
+## Add one
+\`cs_add_knowledge_source\` with \`name\` and \`kind\`.
 
-## The authentication rule
-SharePoint, Graph connector, Dataverse and similar sources answer as the signed-in user. If the
-agent's \`authenticationMode\` is \`None\`, those sources return nothing. \`cs_review_agent\` reports
-this as an error. Fix it with \`cs_update_settings\` (\`authenticationMode: Integrated\`), or use
-public sources instead.
+\`kind: "publicSite"\` - a public website. Pass \`site\` (the URL). Needs no connection. Start here.
+\`kind: "sharePoint"\` - a SharePoint site. Pass \`site\`. Needs a connection the user makes in the portal.
+\`kind: "graphConnector"\` - a Microsoft Graph connector already set up in the tenant.
+\`kind: "files"\` - upload files. Pass \`files\` (paths). They are copied into \`knowledge/files/\`.
 
-## Useful options
-- \`includeSubPages\` for a public site.
-- \`triggerCondition\`: a Power Fx condition that decides when the source is consulted, for example
-  a region or a role check.
-- \`description\`: the orchestrator reads it when choosing between sources, so make it specific.
+IF you do not know which kind the user means -> call the tool without \`kind\`. It returns a question
+with the choices. Put that question to the user. Do not guess.
 
-## Editing and removing
-\`cs_edit_knowledge\` changes the site, description, trigger condition or search terms.
-\`cs_remove_component\` with \`kind: "knowledge"\` deletes one (needs \`confirm\`).
+## Then
+1. \`cs_validate\`
+2. \`cs_push\` with \`confirm: true\` after the user approves
+3. IF the source needs a connection -> the user opens the agent's Knowledge page in the portal and
+   connects it. You cannot do this. Then \`cs_pull\`.
+4. \`cs_publish\` with \`confirm: true\`
+5. \`cs_chat\` with a question the source should answer
 
-## Getting it live
-Knowledge is applied by \`cs_push\` from a sync-connected workspace. In a local scaffold (init
-without an environment) \`pac copilot pack\` ignores the \`knowledge/\` folder; clone the agent first.
+## When a source answers nothing
+- The agent was pushed but not published. Run \`cs_publish\`.
+- The source needs a connection that nobody made in the portal.
+- A private source needs the signed-in user to have access to it. Public site sources do not.
+- Generative answers are off, or the instructions tell the agent not to use knowledge.
+  \`cs_review_agent\` catches the last one.
 
-Uploaded files and Dataverse-backed knowledge are environment-specific: they do not travel with a
-solution export, and they are outside the quick drift check.
-
-## In a topic
-Scope generative answers to named sources with a \`searchKnowledge\` node that lists them; see
-\`cs_guide\` topic \`topics\`.`;
-
+## Scope a source to part of the conversation
+\`cs_add_knowledge_source\` takes \`triggerCondition\` (a Power Fx condition).
+\`cs_edit_knowledge\` changes the site, the trigger condition or the name of a source that exists.`;
 const TOOLS = `# Tools (what the agent can do)
 
-## 1. Find the operation first
-- \`cs_list_connectors search=ServiceNow\` lists the connectors in the environment, marking those
-  that speak MCP.
-- \`cs_describe_connector connector=shared_service-now operation=incident\` shows the operations and
-  their parameters, and caches the definition so the next step can check it.
-- \`cs_list_prompts\` lists AI Builder prompts.
+A tool lets the agent call something: a connector operation, a cloud flow, an MCP server, a prompt,
+or another agent.
 
-## 2. Add the tool
-\`cs_add_tool\` writes \`actions/<Name>.mcs.yml\` plus a connection-reference stub. Types:
+## Find the operation first
+1. \`cs_list_connectors\` with \`search\` (for example "SharePoint", "Outlook"). Returns connector ids.
+2. \`cs_describe_connector\` with the connector id. Returns its operations and their parameters.
+Do not guess an operation id. If you guess wrong, \`cs_validate\` fails later and the reason is unclear.
 
-| type | Use for |
-| --- | --- |
-| \`connector\` | one operation of a Power Platform connector |
-| \`mcp\` | an MCP server exposed as a tool |
-| \`flow\` | an existing cloud flow |
-| \`prompt\` | an AI Builder prompt |
-| \`agent\` | another agent (connected or child) |
-| \`raw\` | any other TaskAction kind, written verbatim |
+## Add the tool
+\`cs_add_tool\` with \`name\`, \`description\` and \`type\`.
 
-Give every tool a **specific \`modelDescription\`**: what it does, when to use it, what it needs.
-The orchestrator routes on that text, so a vague description is the most common reason a tool is
-never called. \`cs_review_agent\` reports a missing or very short one as an error.
+\`type: "connector"\` - a connector operation. Pass \`connectorId\` and \`operationId\`.
+\`type: "flow"\` - a cloud flow. Pass \`flowId\`.
+\`type: "mcp"\` - an MCP server exposed as a connector. Pass \`connectorId\`.
+\`type: "prompt"\` - an AI Builder prompt. Pass \`promptId\`. \`cs_list_prompts\` lists them.
+\`type: "connectedAgent"\` or \`"childAgent"\` - hand work to another agent.
+\`type: "raw"\` - anything else: pass the action node as \`action\`.
 
-Inputs: \`kind: "automatic"\` lets the orchestrator fill a parameter from the conversation;
-\`literal\` pins a value; \`variable\` reads a topic or global variable.
+IF you do not know which connector or operation -> call \`cs_add_tool\` without them. It returns a
+question with ranked choices. Put that question to the user. Do not invent an id.
 
-## 3. The portal step that cannot be skipped
-Connector, MCP and prompt tools need a **connection** that only the portal can authorise. After
-\`cs_push\`, the user opens the agent, goes to Tools, and connects each tool once. Then run
-\`cs_pull\` so the workspace picks up the connection id. \`cs_review_agent\` lists unbound
-connection references.
+## description matters more than you think
+The agent decides whether to call a tool from its description. Write when to use it, not what it is.
+Good: "Look up an order by its number. Use when the user gives an order number."
+Bad: "SharePoint connector".
+\`cs_review_agent\` flags descriptions that do not say when to use the tool.
 
-The one exception: \`cs_create_connection\` creates a service-principal **Dataverse** connection
-from the CLI. Connector connections still come from the portal.
+## The portal step you cannot do
+Connector, MCP and prompt tools need a connection that only the portal can authorise.
+\`cs_add_tool\` writes the YAML and a connection-reference stub, and tells you the exact portal step.
+1. \`cs_push\` with \`confirm: true\` after the user approves.
+2. The user opens the agent's Tools page and connects each tool.
+3. \`cs_pull\` to bring the binding back.
+Until that is done the tool exists but cannot run.
 
-## 4. Editing
-\`cs_edit_tool\` changes the description, display name, operation, connection mode and inputs.
-\`cs_remove_component\` with \`kind: "tool"\` deletes one and prunes the connection reference when no
-other tool uses it (needs \`confirm\`).
+## Change or remove
+\`cs_edit_tool\` - change the description, inputs or connection.
+\`cs_remove_component\` - delete it, and prune the connection reference it used.`;
+const TOPICS = `# Topics
 
-## Flows
+A topic is a scripted conversation. Use one when the answer must be the same every time: a form, a
+handoff, a fixed procedure. For open questions use knowledge instead.
 
-Cloud flows live in Power Automate, not in the agent, so they are read and changed through
-Dataverse rather than the workspace:
+## Add one
+\`cs_add_topic\` with \`name\`, \`triggerPhrases\` (what the user might say) and \`actions\`.
 
-- \`cs_list_flows\` shows every flow with its state, owner and last change. \`cs_get_flow\` reads
-  one, including its trigger and action names, its connection references and (with
-  \`includeDefinition\`) the full definition.
-- \`cs_set_flow_state\` turns a flow on or off. This is the step a solution import leaves behind:
-  flows whose connections were unbound at import time land switched off. Bind the connections
-  first, then turn the flow on.
-- \`cs_update_flow\` replaces the definition of an unmanaged flow, including its trigger. Read it
-  with \`cs_get_flow\` first, change what you need, and send it back; the connection references are
-  preserved. Managed flows cannot be edited in place.
-- \`cs_build_flow_definition\` composes a flow definition from a step spec, so you do not write
-  Logic Apps JSON by hand: a trigger (agent-callable by default, or manual, HTTP, schedule, or a
-  connector event) plus steps that run in order (connector operations, HTTP calls, conditions,
-  loops, scopes, variables, compose, terminate, response, raw). It chains the steps, names the
-  actions the way Power Automate does, and collects one connection reference per connector.
-  Expressions are Logic Apps expressions, not Power Fx.
-- \`cs_create_flow\` creates a new flow from that same spec (or a ready-made definition), optionally
-  straight into a solution. It is created switched off; bind its connections, then turn it on.
-  \`cs_update_flow\` accepts the spec too, to rebuild an existing flow's definition.
-- Look connector ids and operation ids up first with \`cs_list_connectors\` and
-  \`cs_describe_connector\`; the latter's parameter list is what a connector step passes.
-- \`cs_list_flow_runs\`, \`cs_get_flow_run\` and \`cs_run_flow\` cover run history and starting a
-  manual run. They use the Power Automate service, which is a separate sign-in:
-  \`cs_login scope='flow'\`. Starting a run really executes the flow, so it needs confirmation like
-  any other write.
+Each entry in \`actions\` has a \`type\`:
+- \`message\` - say something. Pass \`text\`.
+- \`question\` - ask and store the answer. Pass \`prompt\`, \`variable\`, optionally \`entity\` or \`choices\`.
+- \`condition\` - branch. Pass \`cases\` (each with \`condition\` and \`actions\`), optionally \`else\`.
+- \`redirect\` - go to another topic. Pass \`topic\`.
+- \`setVariable\` - store a value. Pass \`variable\` and \`value\`.
+- \`searchKnowledge\` - answer from knowledge, then stop if it found something.
+- \`http\` - call a URL. Pass \`url\`, \`responseVariable\`.
+- \`invokeFlow\` - run a cloud flow. Pass \`flowId\`.
+- \`card\` - show an adaptive card. Pass \`card\`.
+- \`transfer\` - hand to a human. \`endConversation\` / \`end\` - stop.
+- \`raw\` - anything else: pass the node as \`node\`.
 
-To let the agent call a flow, add it as a tool with \`cs_add_tool\` type \`flow\` and the flow id.
-\`cs_add_trigger\` adds an event trigger that starts one. \`cs_add_flow\` scaffolds a new flow in
-the workspace, but it is experimental: the format has not been round-tripped through a real clone.`;
+## Triggers other than phrases
+\`triggerKind\` accepts: conversationStart, unknownIntent, escalate, inactivity, error, signIn,
+redirect, planComplete. With one of these, \`triggerPhrases\` is not used.
 
-const TOPICS = `# Topics (deterministic conversations)
+## Rules
+Trigger phrases must not overlap between topics. Overlapping phrases make the agent pick the wrong
+one. \`cs_review_agent\` reports overlaps.
+Power Fx conditions start with "=". The tool adds it if you leave it out.
 
-\`cs_add_topic\` writes \`topics/<Name>.mcs.yml\` from a small spec: a trigger plus a list of nodes.
+## Change an existing topic
+\`cs_edit_topic\` - change phrases, priority, or one node by position or id.
+\`cs_remove_component\` - delete the topic and warn about redirects that pointed at it.
 
-## Triggers
-- \`phrases\`: what the user might say. Give **five to ten varied phrasings**; the review warns
-  under three and flags a phrase that appears in two topics, because the winner is then arbitrary.
-- System triggers: \`conversationStart\`, \`escalate\`, \`unknownIntent\`, \`error\` and the other
-  system topics. Keep an escalation topic and a fallback topic; the review checks for both.
-
-## Nodes
-| type | What it does |
-| --- | --- |
-| \`message\` | say something |
-| \`question\` | ask, validate the answer, store it in a variable |
-| \`condition\` | branch on a Power Fx expression |
-| \`setVariable\` | set a topic or global variable |
-| \`searchKnowledge\` | generative answer, optionally scoped to named knowledge sources |
-| \`card\` | an adaptive card, shown or used to collect input |
-| \`invokeFlow\` | run a cloud flow |
-| \`http\` | call a REST endpoint |
-| \`redirect\` | hand over to another topic |
-| \`transfer\` | hand over to a person or a phone number |
-| \`endConversation\` | end it |
-| \`raw\` | any other node kind, written verbatim |
-
-## Editing
-\`cs_edit_topic\` renames, changes the description, adds or removes trigger phrases, sets the
-priority, appends or inserts nodes, and removes nodes by id. Comment headers survive.
-\`cs_remove_component\` deletes a topic and names the topics that still redirect to it.
-
-## Before pushing
-\`cs_validate\` checks node kinds, unknown properties, duplicate ids, Power Fx prefixes and
-redirects to topics that do not exist. It blocks \`cs_push\` on errors.`;
-
+## Then
+\`cs_validate\`, then \`cs_push\` with \`confirm: true\`, then \`cs_publish\` with \`confirm: true\`.`;
 const EVALUATIONS = `# Evaluations and tests
 
-## The one manual step
-Test sets cannot be created through the API. The flow is:
+Two ways to check the agent. Use both.
 
-1. \`cs_create_test_set_csv\` with \`suggestFromWorkspace: true\` writes a CSV (columns
-   \`Question\` and \`Expected response\`, at most 100 cases) and returns a link to the agent's
-   Evaluation page.
-2. The user imports that CSV once in the portal.
-3. Everything after that is automated.
+## 1. Evaluations (Copilot Studio's own, needs the portal once)
+Test sets cannot be created through the API. One manual import is unavoidable.
 
-## Running
-- \`cs_list_test_sets\` shows the imported sets.
-- \`cs_run_evaluation\` with \`confirm\` starts a run; \`wait: true\` polls to the end. The platform
-  allows 20 runs per agent per 24 hours.
-- \`cs_get_evaluation_run\` returns per-case results, \`cs_list_evaluation_runs\` the history.
+1. \`cs_create_test_set_csv\` with \`suggestFromWorkspace: true\` writes a CSV.
+   Better: \`cs_test_set_from_transcripts\` builds it from questions real users asked and the agent
+   failed to answer. Topic "transcripts".
+2. Give the user the file path. They import it: agent > Evaluation tab > New evaluation >
+   Single responses > Import. Maximum 100 cases.
+3. \`cs_list_test_sets\` - find the id of the imported set.
+4. \`cs_run_evaluation\` with \`confirm: true\` after the user approves.
+5. \`cs_get_evaluation_run\` - per-case results, bucketed pass / fail / error.
 
-Evaluations are a standard-harness feature; agents in the GitHub Copilot harness do not have them.
+Limit: 20 runs per agent per 24 hours.
 
-## Cheaper checks that need no portal step
+## 2. Conversation tests (no portal step, run them often)
 \`cs_run_conversation_tests\` runs a local YAML file of utterances with expected keywords, topics or
-tools through \`cs_chat\` and reports pass or fail. Good as a smoke test after every push.
+tools through \`cs_chat\` and reports pass or fail.
+\`cs_run_conversation_tests\` with \`writeExample: true\` writes a starter file.
+Run this after every push. It is the cheap check.
 
 ## Reading a failure
-A wrong answer usually traces back to one of: instructions that do not say how to answer, a
-knowledge source that is not reachable for the signed-in user, a tool whose \`modelDescription\`
-does not describe when to use it, or trigger phrases shared between topics. \`cs_review_agent\`
-catches all four before an evaluation does.`;
+A wrong answer is almost always one of these four:
+1. The instructions do not say how to answer. Topic "instructions".
+2. A knowledge source is not reachable for the signed-in user. Topic "knowledge".
+3. A tool's description does not say when to use it, so the agent never picks it. Topic "tools".
+4. Two topics share trigger phrases, so the wrong one fires. Topic "topics".
 
-const TRANSCRIPTS = `# What the agent is actually doing in production
+\`cs_review_agent\` finds all four without running anything. Run it first.`;
+const TRANSCRIPTS = `# What the agent is doing in production
 
-Transcripts are the only place the server sees real users. Everything else describes the agent you
-built; this describes the one people met. Read-only, and it needs a published agent people have
-used, plus a cached \`cs_login\`.
+Every other topic describes the agent you built. This one describes the agent people actually met.
+All read-only. Needs a published agent that people have used, and a \`cs_login\` that covers Dataverse.
 
-## Look
-\`cs_summarize_transcripts\` over a window (\`days\`) gives the shape: how sessions ended, the
-escalation rate, average turns, how many never matched a topic, which topics and tools actually
-fire, and the questions behind the sessions that went badly.
+## 1. Look at the shape
+\`cs_summarize_transcripts\` with \`days\` (for example 30).
+Read \`sessionsWithoutTopic\` first: sessions where nothing you authored matched what the user asked.
+That number is the clearest measure of a gap.
+Also reported: how sessions ended, the escalation rate, average turns, which topics and tools
+actually fire, and the questions behind sessions that went badly.
 
-Read the \`sessionsWithoutTopic\` count first. Those are sessions where nothing you authored
-matched what the user asked, which is the clearest signal of a gap.
+## 2. Read an actual conversation
+A rate is not a diagnosis. Never propose a fix from the summary alone.
+\`cs_list_transcripts\` with \`outcome\` or \`search\` to find the session.
+\`cs_get_transcript\` with \`transcriptId\` for every turn, with the topic and tool attributed to each.
 
-## Then read one
-A rate is not a diagnosis. \`cs_list_transcripts\` (filter by \`outcome\` or \`search\`) finds the
-session, \`cs_get_transcript\` shows every turn with the topic and tool attributed to it. Do this
-before changing anything: the number tells you where to look, the transcript tells you why.
+## 3. Turn the failures into a test
+\`cs_test_set_from_transcripts\` writes the evaluation import CSV from the questions people actually
+asked. By default it keeps only sessions that escalated, went unanswered or were abandoned.
+Import it once in the portal, then \`cs_run_evaluation\` automates every run after that.
+Topic "evaluations".
 
-## Close the loop
-\`cs_test_set_from_transcripts\` writes the portal's import CSV from the questions people actually
-asked, most frequent first. By default it keeps only the sessions that escalated, went unresolved
-or were abandoned, so the test set is a regression suite for real failures rather than a guess.
-Import it once in the portal, fill in the expected responses, then \`cs_run_evaluation\` automates
-every run after that.
-
-## What the outcomes are, and are not
-Copilot Studio does not report whether a session succeeded. The outcome on each session is this
-server reading the transcript: an escalation or transfer, the agent saying it could not answer, a
-last turn with no reply, or none of those. "Resolved" means nothing marked the session as failed.
-It is not a satisfaction measure, and every result repeats that so it does not get quoted as one.`;
-
-const PUBLISH_AND_TEST = `# Publishing and chat-testing
+## What the outcomes are NOT
+Copilot Studio does not report whether a session succeeded. This server reads the transcript and
+guesses: an escalation, the agent saying it could not answer, a user turn with no reply, or none of
+those.
+"resolved" means nothing marked the session as failed. It does NOT mean the user was happy.
+Never present these numbers as satisfaction or resolution rates. Say they are derived from the
+transcript text.`;
+const PUBLISH_AND_TEST = `# Publishing and testing
 
 ## Publish
-\`cs_publish\` with \`confirm\`. It publishes the draft agent and polls until the publish date
-changes. Everything you push stays draft until then, so a push alone changes nothing for users.
+\`cs_push\` sends files to the agent's DRAFT. Users do not see draft changes.
+\`cs_publish\` makes the draft live. Until you publish, nothing you did is visible to anyone.
 
-## Chat
-\`cs_chat utterance="..."\` talks to the published agent and returns the activities.
-\`conversationId\` continues a conversation. Transport is chosen automatically:
+Both change a live environment:
+1. Call without \`confirm\`.
+2. Show the dry run to the user in your own words.
+3. Ask.
+4. Call again with \`confirm: true\`.
 
-- No authentication or manual authentication: DirectLine. Nothing to configure.
-- Entra SSO (integrated authentication): the Copilot Studio client SDK, which needs **your own app
-  registration** with the delegated \`CopilotStudio.Copilots.Invoke\` permission. Pass \`clientId\`
-  or set \`CPS_CLIENT_ID\`.
+\`cs_publish\` has two routes. \`via: "pac"\` is the default. \`via: "dataverse"\` polls until the
+published timestamp changes and says more when a publish fails.
 
-If the answer is not grounded, check that the agent was published after the last push, that
-knowledge sources are reachable for the signed-in user, and that the tool connections are bound.
+IF \`cs_publish\` takes longer than the client allows -> call it again with \`background: true\` and
+poll \`cs_job_status\`.
+IF the result says pac reported a failure -> do not tell the user it published. Ask them to check
+the agent in the portal.
 
-## Repeatable checks
-Turn the utterances that matter into a YAML file and run \`cs_run_conversation_tests\` after every
-push. See \`cs_guide\` topic \`evaluations\`.`;
+## Test
+\`cs_chat\` with \`utterance\`. Pass \`conversationId\` from the previous reply to continue a conversation.
 
+Routing is automatic. \`transport: "auto"\` reads the agent's authentication mode:
+- no authentication or manual authentication -> DirectLine. Needs nothing extra.
+- Entra SSO -> the Copilot Studio SDK, which needs the user's own app id in \`clientId\`.
+
+IF \`cs_chat\` returns no replies -> the result says what to try. The agent may be unpublished, slow,
+or not reachable on that route. Raise \`maxMs\`, or pass \`background: true\`.
+IF the reply contains a sign-in card -> the result has \`signInUrl\`. Show it to the user.
+
+## After publishing
+\`cs_run_conversation_tests\` for a repeatable check.
+\`cs_summarize_transcripts\` once real users have used it. Topic "transcripts".`;
 const DRIFT = `# Portal drift (someone edited the agent in Copilot Studio)
 
-Makers can keep editing the agent in the portal; the platform sends no notification. Every edit
-lands in Dataverse rows with a modified-on stamp and the user who changed it, so the server can see
-drift without re-downloading everything.
+Makers edit agents in the portal. Those edits are not in your workspace. Pushing over them loses
+their work.
 
-## The stamp
-\`cs_clone_agent\`, \`cs_pull\`, \`cs_push\` and \`cs_create_agent\` write \`.mcs/cs-sync.json\`: a
-fingerprint per file and, when a Dataverse sign-in is cached, the modification stamp of every
-component. \`cs_describe_workspace\` shows the last sync.
+## Always check before you edit
+\`cs_check_drift\` with \`mode: "quick"\`.
+It compares the agent's components in Dataverse with the stamp written at the last clone, pull or
+push, and reports which topics, tools and knowledge sources changed, by whom and when.
+Needs a \`cs_login\` that covers Dataverse. \`cs_init\` reports whether it does under \`cloudAccess.ready\`.
 
-## Checking
-- \`cs_check_drift\` (default \`mode: "quick"\`) reads the component rows and compares them with the
-  stamp: what changed in the portal, by whom, when, whether agent settings changed, and whether the
-  live agent has unpublished changes. Seconds; needs \`cs_login\`.
-- \`cs_check_drift mode="full"\` clones the agent into a temporary folder and classifies every file
-  as local-modified, remote-modified or both (a conflict), with diffs. Needs only the pac profile.
+\`mode: "full"\` clones the agent into a temporary folder and compares every file, with diffs.
+Slower. Needs only the pac auth profile, not \`cs_login\`. Use it when quick mode is unavailable.
 
-## Resolving
-\`cs_pull\` merges server changes into the workspace (three-way). Commit afterwards: portal drift
-then shows up as a reviewable diff, and accepting it is a commit while rejecting it is a push of
-your version.
+## Reading the result
+- \`localChanges\` - files you changed since the last sync.
+- remote-modified - components a maker changed in the portal.
+- \`conflicts\` - changed in both places. These are the dangerous ones.
 
-The \`cs_push\` dry run repeats the quick check, and a push is blocked when a portal change and a
-local edit touch the same component. \`force: true\` overrides that, discarding the portal version.`;
+## What to do
+IF only the portal changed -> \`cs_pull\` to bring those edits down.
+IF only local files changed -> \`cs_push\` (with approval).
+IF there are conflicts -> \`cs_pull\` first. It does a three-way merge. Review the result, then push.
 
-const SOLUTIONS = `# Solutions: moving everything to another environment
+\`cs_push\` runs the quick check itself and refuses when there are conflicts. \`force: true\` overrides
+that. Do not pass \`force\` unless the user has seen the conflict list and said to overwrite.
 
-A per-agent workspace always pushes back to the environment it came from. Moving between
-environments goes through solutions.
+## Keep it reviewable
+The workspace is files. Commit it to git after every pull and push. Then a portal edit that arrives
+later shows up as a normal diff.`;
+const SOLUTIONS = `# Solutions (moving agents between environments)
 
-## Pull everything
-1. \`cs_list_solutions\` to find the solution.
-2. \`cs_describe_solution\` for its contents: agents, components, flows, connection references,
-   environment variables, custom connectors.
-3. \`cs_pull_solution\` exports it managed and unmanaged, unpacks it to \`src/\`, clones every agent
-   into \`agents/\`, and writes \`solution.json\` plus a deployment settings file.
+A per-agent workspace stays tied to the environment it came from. \`cs_push\` cannot move an agent to
+another environment. Solutions are how things move from dev to test to production.
 
-## Deploy to the target
-1. \`cs_list_connections\` in the **target** environment: the connections must already exist there,
-   created and authorised by a user in that environment.
-2. \`cs_create_deployment_settings\` maps each connection reference to a target connection id and
-   sets the environment variable values.
-3. \`cs_deploy_solution\` with \`confirm\` imports and publishes each agent. It refuses while a
-   connection reference is unmapped unless you pass \`allowUnmapped\`.
-4. Flows whose connections could not be resolved arrive switched off: \`cs_list_flows\` shows which,
-   and \`cs_set_flow_state\` turns each on once its connections are bound.
+## Pull everything from the source
+\`cs_pull_solution\` with \`name\` (the solution unique name) and \`targetDir\`.
+It exports, unpacks, writes \`solution.json\` and \`deployment-settings.json\`, and clones every agent.
 
-Deploy managed to test and production; keep unmanaged for development. \`cs_check_solution\` runs
-Solution Checker on the zip first, and \`cs_deploy_pipeline\` is the alternative when the tenant
-uses Power Platform pipelines.
+This runs for minutes. Pass \`background: true\`, then poll \`cs_job_status\` with the returned \`jobId\`.
+IF the call is cut off after about a minute -> that was the client's limit, not the tool's. Call
+again with \`background: true\`. Do not retry with a shorter path.
+\`packagetype: "Unmanaged"\` halves the work by skipping the second export.
 
-## What does not travel
-Connections themselves, uploaded knowledge files, Dataverse knowledge, SharePoint permissions,
-channel configuration and agent access groups. The README section "Caveats when moving a solution
-between environments" is the full list.
+\`cs_describe_solution\` lists what is inside without keeping it: agents, components, flows,
+connection references, environment variables, custom connectors.
 
-## Comparing environments
-\`cs_snapshot_environment\` per stage and \`cs_compare_snapshots\`, or \`cs_compare_environments\`
-for a whole DEV, TEST, ACC, PROD chain. The report separates real drift from differences that are
-expected per stage (connection bindings, variable values, managed flag). \`failOnDrift\` turns it
-into a pipeline gate.`;
+## Map it to the target
+1. \`cs_list_connections\` against the TARGET environment. Get the connection ids there.
+2. \`cs_create_deployment_settings\` writes the settings file.
+3. Fill in each connection reference and environment variable for the target.
+Unmapped connection references are the usual reason an import looks fine and nothing works.
 
-const ADMINISTRATION = `# Tenant administration and the two accounts
+## Deploy
+\`cs_deploy_solution\` with \`targetEnvironment\` and \`confirm: true\` after the user approves.
 
-Making agents and administering the tenant are usually different accounts: the maker works in
-Copilot Studio, the admin in the Power Platform admin centre. pac keeps one *active* auth profile,
-so this server switches between them per call.
+## After the import, check these
+- Cloud flows arrive switched OFF when their connections could not be resolved. Turn them on with
+  \`cs_set_flow_state\` once bound.
+- Agents may need publishing in the target.
+- Tools show as not connected until someone connects them in the target portal.
 
-## Set the two profiles up once
-In a terminal, one profile per account:
+## Compare environments
+\`cs_snapshot_environment\` then \`cs_compare_snapshots\`, or \`cs_compare_environments\` directly.
+It separates real drift from differences that are expected between stages (connection bindings,
+variable values, managed flag).`;
+const ADMINISTRATION = `# Tenant administration
 
-    pac auth create --name maker --environment <environment id or url>
-    pac auth create --name admin --environment <environment id or url>
+These tools act on the tenant, not on one agent. They run as a DIFFERENT account from the maker
+account.
 
-\`cs_list_auth_profiles\` shows them, which is active, and which account each belongs to. Then
-either pass \`profile: "admin"\` to a call, or set \`CPS_ADMIN_PROFILE=admin\` (used by every
-tenant-administration tool) and \`CPS_PAC_PROFILE=maker\` (used by the rest) in the server's environment
-and forget about it. Every pac-backed tool takes \`profile\`; the server selects it, runs the
-command and puts the previous active profile back.
+## Set up the admin account once
+\`cs_create_auth_profile\` with \`name: "admin"\`, \`environment\` and \`background: true\`.
+pac opens a browser. The user signs in there. Poll \`cs_job_status\` with the returned \`jobId\`.
+Then \`cs_list_auth_profiles\` shows it.
+Set \`CPS_ADMIN_PROFILE=admin\` so the admin tools pick it automatically.
 
-## Reading the tenant
-- \`cs_admin_list_environments\` (every environment, its type and region), \`cs_admin_list_backups\`,
-  \`cs_admin_environment_status\` (operations in progress).
-- \`cs_admin_list_tenant_settings\` with \`settingsFile\` writes the tenant settings as JSON.
-- \`cs_admin_list_dlp_policies\` and \`cs_admin_show_dlp_policy\`: the data loss prevention rules
-  that decide which connectors an agent or flow may combine. A tool that will not run in production
-  is often a DLP rule, not a bug.
-- \`cs_admin_list_security_roles\`, \`cs_admin_list_service_principals\`,
-  \`cs_admin_list_applications\`, \`cs_admin_list_environment_groups\`, \`cs_admin_query\`.
+Every pac-backed tool takes \`profile\`. Pass it to choose the account for one call.
 
-## Backing the tenant up to files
-\`cs_backup_tenant dir="tenant-backup"\` writes the whole configuration to a folder: tenant
-settings, environments, DLP policies, groups, service principals, registered applications and app
-templates, and per environment its details, solutions, agents, connections, security roles and
-platform backups. With a Dataverse sign-in it also records flows, connection references and
-environment variables per environment.
+## Read-only, safe to run
+\`cs_admin_list_environments\` - environments in the tenant.
+\`cs_admin_list_dlp_policies\` and \`cs_admin_show_dlp_policy\` - data loss prevention.
+\`cs_admin_list_environment_groups\`, \`cs_admin_list_security_roles\`, \`cs_admin_list_applications\`,
+\`cs_admin_list_service_principals\`, \`cs_admin_list_backups\`, \`cs_admin_list_tenant_settings\`.
 
-Each capture is independent: a command the account may not run is listed under \`skipped\` and the
-rest still completes. Commit the folder and re-run it later to see what changed in the tenant.
-It is read-only: nothing in the tenant is modified.
+\`cs_backup_tenant\` writes the whole tenant configuration to files. Read-only for the tenant; it only
+writes locally. Run it before any change, and commit the folder, so you can diff later.
 
-## Changing the tenant
-Every one of these needs \`confirm: true\` and the user's agreement, and several are destructive:
-\`cs_admin_update_tenant_settings\`, \`cs_admin_set_governance_config\` (managed environments),
-\`cs_admin_assign_user\` and \`cs_admin_assign_group\`, \`cs_admin_create_service_principal\`,
-\`cs_admin_set_runtime_state\` (administration mode), \`cs_admin_backup_environment\`,
-\`cs_admin_restore_environment\`, \`cs_admin_copy_environment\`, \`cs_admin_create_environment\`,
-\`cs_admin_reset_environment\` and \`cs_admin_delete_environment\`.
+## Destructive - say what will be lost BEFORE asking
+\`cs_admin_reset_environment\` - erases everything in the environment.
+\`cs_admin_delete_environment\` - removes it.
+\`cs_admin_copy_environment\` - OVERWRITES the target with the source.
+\`cs_admin_restore_environment\` - overwrites with a backup.
+For each: name the environment, say what disappears, ask, and only then pass \`confirm: true\`.
+Never chain two of these on one approval.
 
-Reset and delete destroy everything in an environment, and copy and restore overwrite the target.
-Take a backup first (\`cs_backup_tenant\` for the configuration, \`cs_admin_backup_environment\` for
-the platform's own backup), and say plainly what will be lost before asking for confirmation.
-\`CPS_READ_ONLY\` hides all of them.`;
-
+## Rules
+Tenant settings and DLP policies affect every maker in the company. Change them only when the user
+asked for that specific change.
+IF an admin command fails with a permissions error -> the profile is probably the maker account.
+Check \`profile\` and \`CPS_ADMIN_PROFILE\`.`;
 const TROUBLESHOOTING = `# Troubleshooting
 
-| Symptom | Cause and fix |
-| --- | --- |
-| \`cs_init\` says pac was not found | Install the CLI: \`dotnet tool install --global Microsoft.PowerApps.CLI.Tool\` (needs .NET 10). If pac is installed but fails, set \`DOTNET_ROOT\`; the server defaults it to \`~/.dotnet\` when the SDK lives there. |
-| "No profiles were found on this computer" | The user runs \`pac auth create --environment <id>\` in a terminal. This server cannot do that interactive sign-in. |
-| \`cs_login\` returns \`status: "pending"\` | Normal when no browser can be opened from the server. Show the URL and ask the user to open it on the machine running the server; the login completes in the background. \`cs_login_status wait=true\` then confirms it. |
-| Device-code sign-in is refused | Many tenants block that flow by Conditional Access. Use the pending-URL path above. |
-| A cloud tool says there is no cached token | Run \`cs_login\`. The drift check and other silent readers never prompt on their own. |
-| "Unsupported directory" from pac pack | The workspace was created by \`cs_create_agent\` without an environment. It packs settings, agent and topics only. Clone the agent (or init with \`environment\`) to use knowledge, tools, triggers and flows. |
-| \`cs_push\` is blocked by validation | \`cs_validate\` names the file and the property. Unknown properties inside dialog actions are errors; at the document root they are only warnings. \`force: true\` pushes anyway. |
-| \`cs_push\` is blocked by drift | A maker changed the same component in the portal. \`cs_pull\` merges, then push again. \`force: true\` discards their change. |
-| A tool never runs | Its \`modelDescription\` does not say when to use it, or its connection is unbound. \`cs_review_agent\` reports both. |
-| A knowledge source returns nothing | Private sources need \`authenticationMode: Integrated\` and a signed-in user with access. |
-| The agent answers as before after a push | A push only changes the draft. Run \`cs_publish\` with \`confirm\`. |
-| Too many tools for the client | Set \`CPS_TOOLS\` or \`CPS_TOOLS_EXCLUDE\` (comma-separated names, \`*\` wildcards) in the server's environment. |
+Find the symptom. Do what the line says.
 
-Diagnostics go to stderr; the client's MCP output pane shows them. Every pac-backed result carries
-the exact command, exit code and output tail, and known pac errors come back with an explanation.`;
+## The tool is not in the list
+A tool named in a guide but missing from tools/list is hidden or stale. It is not a missing feature.
+1. Check \`cs_init\` \`serverBuild.toolPreset\`. A preset hides tools. \`cs_pac\` still runs pac commands.
+2. Check \`cs_init\` \`serverBuild.modulePath\`. IF it points somewhere other than the repo the user
+   just updated -> the client is running an old copy. Tell them to rebuild and restart the client.
+Never report a tool as unimplemented on this evidence alone.
 
+## The call died after about a minute
+That is the MCP client's limit, not the tool's, and the work is still running.
+Call the same tool again with \`background: true\`, then poll \`cs_job_status\`.
+Never retry with a shorter path, a smaller argument, or a different directory. It will not help.
+
+## A cloud tool fails
+Run \`cs_init\`. Read \`cloudAccess.ready\`.
+IF a resource is not "ok" -> the user runs \`cs_login\`. That is the whole fix.
+A listed MSAL account does not mean the token works: read \`cloudAccess.ready\`, not the account list.
+
+## pac says failed but the result says ok
+Trust the output text. Tell the user to check the agent in the portal. Do not report success.
+
+## Other symptoms
+"workspace not found" - the folder is not sync-connected. Use \`cs_clone_agent\`, or
+\`cs_create_agent\` with \`environment\`.
+"Unsupported directory" from pack - a local scaffold packs settings, agent and topics only.
+\`cs_push\` from a sync-connected workspace handles the rest.
+\`cs_push\` refuses - \`cs_validate\` has errors, or \`cs_check_drift\` found conflicts. Fix the errors;
+for conflicts run \`cs_pull\` first.
+A knowledge source returns nothing - the agent was pushed but not published, or the source needs a
+connection nobody made in the portal.
+The agent answers as before after a push - a push only changes the draft. Run \`cs_publish\`.
+A tool is never called - its description does not say WHEN to use it. Fix it with \`cs_edit_tool\`.
+Too many tools for the client - the user sets \`CPS_TOOLS=core\` in the server environment.
+
+## Where to look
+Diagnostics go to stderr; the client's MCP output pane shows them.
+Every pac-backed result carries the exact command, exit code and output tail.`;
 const GUIDES: Record<GuideTopic, string> = {
   "getting-started": GETTING_STARTED,
   instructions: INSTRUCTIONS,
