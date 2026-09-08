@@ -121,7 +121,12 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   `cs_add_knowledge_source` and `cs_clone_agent`; prefer it over `fail()` whenever the fix is a
   decision the user has to make.
 - **Tool filter** (`src/toolFilter.ts`): `CPS_TOOLS` / `CPS_TOOLS_EXCLUDE` glob lists applied by a
-  wrapper around `server.registerTool`; hidden tools are logged at startup.
+  wrapper around `server.registerTool`; hidden tools are logged at startup. `TOOL_PRESETS` gives
+  named subsets (`core`, `authoring`, `admin`, `solutions`, `full`) that `expandPresets` resolves
+  before the globs, because the full list is ~50k tokens of schema and a smaller model chooses badly
+  from 131 tools. The default (no `CPS_TOOLS`) still registers everything; keep it that way. When
+  adding a tool to the core workflow, add it to the `core` preset too, and keep `cs_pac` in every
+  preset that hides pac wrappers.
 
 - **Catalog** (`src/catalog.ts`): connector registry and OpenAPI definitions from `api.powerapps.com`
   (PowerApps Service token), cached under `.cs-catalog/<environment>/`; `parseSwaggerOperations`

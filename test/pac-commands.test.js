@@ -3,7 +3,7 @@ import test from "node:test";
 import { z } from "zod";
 
 import { PAC_COMMANDS, buildPacArgs, describeSpec, isMutating, redactArgs, secretValues, zodShapeFor } from "../dist/pacCommands.js";
-import { parsePatterns, toolEnabled } from "../dist/toolFilter.js";
+import { activePreset, parsePatterns, toolEnabled } from "../dist/toolFilter.js";
 
 const spec = (tool) => {
   const s = PAC_COMMANDS.find((x) => x.tool === tool);
@@ -111,4 +111,32 @@ test("cs_create_auth_profile builds the admin sign-in argv", () => {
   assert.deepEqual(buildPacArgs(spec, { name: "admin", environment: "https://contoso.crm4.dynamics.com" }), ["auth", "create", "--name", "admin", "--environment", "https://contoso.crm4.dynamics.com"]);
   // background is ours, not pac's: it must never reach the command line.
   assert.deepEqual(buildPacArgs(spec, { name: "admin", background: true }), ["auth", "create", "--name", "admin"]);
+});
+
+test("tool presets: default exposes everything, core is a strict subset, admin keeps the admin tools", () => {
+  const all = [...PAC_COMMANDS.map((s) => s.tool), "cs_init", "cs_push", "cs_add_topic", "cs_chat", "cs_backup_tenant", "cs_job_status", "cs_list_transcripts", "cs_pac"];
+
+  // No CPS_TOOLS means no filtering at all: presets must never shrink the default.
+  for (const name of all) assert.equal(toolEnabled(name, {}), true, `${name} should be registered by default`);
+
+  const core = all.filter((n) => toolEnabled(n, { CPS_TOOLS: "core" }));
+  assert.ok(core.includes("cs_push") && core.includes("cs_add_topic") && core.includes("cs_chat"));
+  assert.ok(core.includes("cs_pac"), "cs_pac must stay: it is the escape hatch for what core hides");
+  assert.ok(!core.includes("cs_backup_tenant"), "core should not carry the tenant tools");
+  assert.ok(core.length < all.length, "core must be a strict subset");
+
+  // The admin account still gets every admin tool.
+  assert.equal(toolEnabled("cs_admin_list_environments", { CPS_TOOLS: "admin" }), true);
+  assert.equal(toolEnabled("cs_backup_tenant", { CPS_TOOLS: "admin" }), true);
+  assert.equal(toolEnabled("cs_add_topic", { CPS_TOOLS: "admin" }), false);
+
+  // Presets compose with globs and with each other.
+  assert.equal(toolEnabled("cs_admin_list_environments", { CPS_TOOLS: "core,cs_admin_*" }), true);
+  assert.equal(toolEnabled("cs_add_topic", { CPS_TOOLS: "core,admin" }), true);
+
+  // An unknown name is treated as a literal tool name, not silently as "everything".
+  assert.equal(toolEnabled("cs_add_topic", { CPS_TOOLS: "notapreset" }), false);
+  assert.equal(activePreset({ CPS_TOOLS: "core" }), "core");
+  assert.equal(activePreset({ CPS_TOOLS: "cs_add_*" }), null);
+  assert.equal(activePreset({}), null);
 });

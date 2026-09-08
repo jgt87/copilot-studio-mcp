@@ -20,6 +20,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { findPac } from "./pac.js";
 import { errorMessage, log } from "./log.js";
 import { VERSION, server, skippedTools, withheldTools } from "./tools/shared.js";
+import { activePreset } from "./toolFilter.js";
 
 // Imported for their registrations; this order is the order of tools/list.
 import "./tools/session.js";
@@ -49,7 +50,8 @@ async function main(): Promise<void> {
   await server.connect(transport);
   log(`copilot-studio-mcp ${VERSION} ready (pac: ${findPac() ?? "not found"})`);
   if (withheldTools.length) log(`read-only mode (CPS_READ_ONLY): ${withheldTools.length} environment-changing tool(s) not registered`);
-  if (skippedTools.length) log(`tool filter: ${skippedTools.length} tool(s) hidden by CPS_TOOLS / CPS_TOOLS_EXCLUDE`);
+  const preset = activePreset();
+  if (skippedTools.length) log(`tool filter${preset ? ` (preset ${preset})` : ""}: ${skippedTools.length} tool(s) hidden by CPS_TOOLS / CPS_TOOLS_EXCLUDE`);
 }
 
 main().catch((err) => {

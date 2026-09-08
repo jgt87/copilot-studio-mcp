@@ -793,6 +793,31 @@ cs_compare_snapshots a=snapshots/TEST b=snapshots/ACC failOnDrift=true
 - Without a Dataverse sign-in the comparison covers solution version and agent YAML only; the
   report says so in its notes.
 
+## Running on a smaller model
+
+The full tool list is 131 tools, about **50k tokens of schema** before any work starts. A frontier
+model copes; a smaller one spends most of its context on the menu and chooses worse from it. Set
+`CPS_TOOLS` to a preset in the server's environment:
+
+| Preset | Tools | Schema | What it is |
+| --- | --- | --- | --- |
+| (unset) | 131 | ~50k tokens | everything; the default, unchanged |
+| `core` | 33 | ~13k tokens | the loop that builds an agent and gets it live |
+| `authoring` | 23 | ~11k tokens | local files only: no sign-in, nothing that reaches an environment |
+| `admin` | 36 | ~13k tokens | tenant administration, plus `cs_backup_tenant` |
+| `solutions` | 20 | ~6k tokens | pull, deploy and compare solutions |
+
+Nothing is removed: a preset only changes which tools are *registered* in that session, and
+`cs_pac` is in `core`, `admin` and `solutions` so any pac command a preset hides is still reachable.
+Presets compose with each other and with globs: `CPS_TOOLS=core,cs_admin_*`. `cs_init` reports the
+active preset and says that a missing tool is hidden rather than absent, so the model does not
+conclude the feature does not exist.
+
+The handshake instructions are written for a smaller model: one rule per line, an explicit trigger
+before each instruction, and a section naming the failures seen in the first live run (a call cut
+off at the client's ~60s limit, a tool missing because the server binary was stale, a cloud tool
+failing for want of a sign-in, pac reporting failure while exiting 0) with the action for each.
+
 ## Verifying against a real tenant
 
 Everything below the unit tests and the pack oracle was built from documentation and the published
