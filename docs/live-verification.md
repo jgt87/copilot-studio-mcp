@@ -1,5 +1,8 @@
 # Live verification runbook
 
+> Phases A to F have already run once (2026-09-08). For only the items still open after
+> that run, see [verify.md](verify.md) — four of the five are read-only.
+
 Everything in this server below the unit tests and the pack oracle was built from documentation and
 the published schema, never from a live tenant. `docs/STATUS.md` says "unverified live" on a dozen
 rows. This runbook settles them.

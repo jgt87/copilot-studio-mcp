@@ -801,7 +801,8 @@ retire most of the open questions without touching the tenant, E to G write and 
 `docs/verification-template.md` is the results file to fill in, and
 `scripts/redact-verification.mjs` replaces GUIDs, org URLs, emails and tokens with stable
 pseudonyms so a result can be shared from a public repo. `docs/STATUS.md` lists what is still
-unverified.
+unverified. `docs/verify.md` is the short list of what the first live run left open,
+after phases A to F ran on 2026-09-08.
 
 ## Development
 
