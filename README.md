@@ -776,6 +776,16 @@ cs_compare_snapshots a=snapshots/TEST b=snapshots/ACC failOnDrift=true
 - Without a Dataverse sign-in the comparison covers solution version and agent YAML only; the
   report says so in its notes.
 
+## Verifying against a real tenant
+
+Everything below the unit tests and the pack oracle was built from documentation and the published
+schema. `docs/live-verification.md` is the runbook that settles it: phases A to D are read-only and
+retire most of the open questions without touching the tenant, E to G write and say so.
+`docs/verification-template.md` is the results file to fill in, and
+`scripts/redact-verification.mjs` replaces GUIDs, org URLs, emails and tokens with stable
+pseudonyms so a result can be shared from a public repo. `docs/STATUS.md` lists what is still
+unverified.
+
 ## Development
 
 ```sh
