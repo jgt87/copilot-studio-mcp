@@ -262,9 +262,17 @@ Dataverse rather than the workspace:
 - \`cs_update_flow\` replaces the definition of an unmanaged flow, including its trigger. Read it
   with \`cs_get_flow\` first, change what you need, and send it back; the connection references are
   preserved. Managed flows cannot be edited in place.
-- \`cs_create_flow\` creates a new flow from a definition, optionally straight into a solution. It is
-  created switched off; bind its connections, then turn it on. A flow an agent can call needs a
-  trigger of type \`Request\` with kind \`Skills\`.
+- \`cs_build_flow_definition\` composes a flow definition from a step spec, so you do not write
+  Logic Apps JSON by hand: a trigger (agent-callable by default, or manual, HTTP, schedule, or a
+  connector event) plus steps that run in order (connector operations, HTTP calls, conditions,
+  loops, scopes, variables, compose, terminate, response, raw). It chains the steps, names the
+  actions the way Power Automate does, and collects one connection reference per connector.
+  Expressions are Logic Apps expressions, not Power Fx.
+- \`cs_create_flow\` creates a new flow from that same spec (or a ready-made definition), optionally
+  straight into a solution. It is created switched off; bind its connections, then turn it on.
+  \`cs_update_flow\` accepts the spec too, to rebuild an existing flow's definition.
+- Look connector ids and operation ids up first with \`cs_list_connectors\` and
+  \`cs_describe_connector\`; the latter's parameter list is what a connector step passes.
 - \`cs_list_flow_runs\`, \`cs_get_flow_run\` and \`cs_run_flow\` cover run history and starting a
   manual run. They use the Power Automate service, which is a separate sign-in:
   \`cs_login scope='flow'\`. Starting a run really executes the flow, so it needs confirmation like

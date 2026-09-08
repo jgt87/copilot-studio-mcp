@@ -295,7 +295,8 @@ Authoring (files, schema-validated)
 | `cs_list_connectors`, `cs_describe_connector`, `cs_list_prompts` | tool catalog: connectors available in the environment (with MCP detection), a connector's operations and parameters, AI Builder prompts |
 | `cs_add_flow` | experimental cloud-flow scaffold (`workflows/<Name>/metadata.yaml` + `workflow.json`) |
 | `cs_list_flows`, `cs_get_flow` | cloud flows in the environment: state, owner, connection references, and the full Power Automate definition |
-| `cs_set_flow_state`, `cs_update_flow`, `cs_create_flow` | turn a flow on or off, replace the definition of an unmanaged flow, or create a new flow in an environment or solution (`confirm`) |
+| `cs_build_flow_definition` | compose a flow definition from steps (connector operations, HTTP, conditions, loops, variables, response) without touching an environment; returns the definition and the connection references it needs |
+| `cs_set_flow_state`, `cs_update_flow`, `cs_create_flow` | turn a flow on or off, rebuild or replace the definition of an unmanaged flow, or create a new flow from steps or a definition, in an environment or a solution (`confirm`) |
 | `cs_list_flow_runs`, `cs_get_flow_run`, `cs_run_flow` | run history of a flow, one run in detail, and starting a manual run (`confirm`); these use the Power Automate service, a separate sign-in (`cs_login scope='flow'`) |
 | `cs_add_trigger`, `cs_add_variable` | event trigger for a flow; global variable |
 | `cs_update_agent`, `cs_update_settings` | the agent's own settings (instructions, response instructions and mode, history, capabilities, moderation, model, starters) and anything else in `settings.mcs.yml` by dot path; see "Agent settings this server can write" |
@@ -362,6 +363,48 @@ can talk to. Every step is one tool call; steps that change the environment need
 
 When the agent later moves to test and production, continue with the solution flow (`cs_pull_solution`,
 `cs_create_deployment_settings`, `cs_deploy_solution`) and the DTAP comparison below.
+
+## Building a cloud flow
+
+Flows are built from a step spec, the way topics are, so you do not have to write Logic Apps JSON
+by hand. `cs_build_flow_definition` composes the definition locally and returns it;
+`cs_create_flow` takes the same spec and creates the flow; `cs_update_flow` takes it and replaces
+an existing definition.
+
+A spec is a trigger plus steps that run in order:
+
+| Trigger | For |
+| --- | --- |
+| `agent` (default) | the flow a Copilot Studio agent calls as a tool, with typed inputs and a response |
+| `manual`, `http` | started by a person or by an HTTP request |
+| `recurrence` | a schedule |
+| `connector` | a connector event, such as a Dataverse row being created |
+| `raw` | any other trigger, written verbatim |
+
+| Step | Emits |
+| --- | --- |
+| `connector` | a connector operation (`OpenApiConnection`), with its parameters and connection reference |
+| `http` | an HTTP call |
+| `condition`, `foreach`, `scope` | branching, looping and grouping, with their own nested steps |
+| `initializeVariable`, `setVariable`, `compose` | variables and intermediate values |
+| `terminate` | end the run with a status |
+| `response` | what an agent-callable or HTTP flow answers with (added automatically when you give `outputs`) |
+| `raw` | any other action, written verbatim |
+
+The builder chains `runAfter` so each step waits for the previous one, normalises action names the
+way Power Automate does, and collects one connection reference per connector used, reusing it
+across steps. Expressions are Logic Apps expressions, not Power Fx: `@{triggerBody()?['orderId']}`,
+`@body('List_rows')?['value']`.
+
+Find connector ids and operation ids first with `cs_list_connectors` and `cs_describe_connector`;
+the second also lists an operation's parameters, which are exactly the `parameters` of a connector
+step.
+
+Two things the builder cannot do for you. The connections themselves must exist in the target
+environment and be bound to the generated connection references, so a new flow is created switched
+off and `cs_set_flow_state` turns it on afterwards. And the definitions follow the Logic Apps
+schema and exported solutions rather than a verified round trip, so import one and open it in Power
+Automate before trusting the shape.
 
 ## Agent settings this server can write
 

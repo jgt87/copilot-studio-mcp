@@ -62,6 +62,13 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   `cs_deploy_solution` reads. Per-agent sync workspaces stay bound to their source environment; only
   solution import moves things between environments.
 
+- **Flow builder** (`src/authoring/flowBuilder.ts`): `buildFlow` turns a step spec into a Logic
+  Apps definition: triggers (agent/manual/http/recurrence/connector/raw), steps chained through
+  `runAfter`, nested `condition`/`foreach`/`scope`, and one connection reference per connector
+  collected by `ConnectionCollector`. `cs_build_flow_definition`, `cs_create_flow` and
+  `cs_update_flow` all take the same spec. Shapes come from the Logic Apps schema and exported
+  solutions, never a live import, so keep the "unverified" note until one round-trips.
+
 - **Day-two authoring** (`src/authoring/edit.ts`): find a component by name, stem or path; edit
   topics (phrases, priority, nodes by position or id), tools (descriptions, inputs, connection),
   knowledge (site, trigger condition); remove components with connection-reference pruning and

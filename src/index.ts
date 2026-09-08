@@ -47,6 +47,7 @@ import {
   type ConnectorDefinition,
 } from "./catalog.js";
 import { scaffoldFlow } from "./authoring/flows.js";
+import { buildFlow, type FlowBuildSpec, type FlowStepSpec, type FlowTriggerSpec } from "./authoring/flowBuilder.js";
 import { addTrigger } from "./authoring/triggers.js";
 import { addGlobalVariable } from "./authoring/variables.js";
 import { updateAgent, updateCliCopilotInstructions, updateSettings } from "./authoring/agent.js";
@@ -775,6 +776,72 @@ server.registerTool(
 
 // ---- cloud flows (Dataverse workflow rows) ---------------------------------
 
+const flowParam = z.object({
+  name: z.string(),
+  type: z.enum(["string", "number", "boolean", "object", "array"]).optional(),
+  description: z.string().optional(),
+  required: z.boolean().optional(),
+});
+
+const flowOutput = z.object({ name: z.string(), type: z.enum(["string", "number", "boolean", "object", "array"]).optional(), value: z.unknown().optional() });
+
+/** One step. Nested steps (condition, foreach, scope) take the same shape, expressed loosely so zod stays finite. */
+const flowStep: z.ZodType<FlowStepSpec> = z.lazy(() =>
+  z.union([
+    z.object({ type: z.literal("connector"), name: z.string(), connectorId: z.string().describe("e.g. shared_office365 (cs_list_connectors)"), operationId: z.string().describe("cs_describe_connector lists them"), parameters: z.record(z.unknown()).optional(), connectionReference: z.string().optional(), description: z.string().optional() }),
+    z.object({ type: z.literal("http"), name: z.string(), method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional(), uri: z.string(), headers: z.record(z.string()).optional(), body: z.unknown().optional() }),
+    z.object({ type: z.literal("compose"), name: z.string(), value: z.unknown() }),
+    z.object({ type: z.literal("initializeVariable"), name: z.string(), variable: z.string(), valueType: z.enum(["string", "number", "boolean", "object", "array"]).optional(), value: z.unknown().optional() }),
+    z.object({ type: z.literal("setVariable"), name: z.string(), variable: z.string(), value: z.unknown() }),
+    z.object({ type: z.literal("condition"), name: z.string(), expression: z.string().describe("Logic Apps expression, e.g. @equals(triggerBody()?['status'],'open')"), then: z.array(flowStep), else: z.array(flowStep).optional() }),
+    z.object({ type: z.literal("foreach"), name: z.string(), items: z.string().describe("Expression yielding the collection, e.g. @body('List_rows')?['value']"), actions: z.array(flowStep) }),
+    z.object({ type: z.literal("scope"), name: z.string(), actions: z.array(flowStep) }),
+    z.object({ type: z.literal("terminate"), name: z.string(), status: z.enum(["Succeeded", "Failed", "Cancelled"]).optional(), message: z.string().optional() }),
+    z.object({ type: z.literal("response"), name: z.string().optional(), outputs: z.array(flowOutput).optional() }),
+    z.object({ type: z.literal("raw"), name: z.string(), json: z.record(z.unknown()) }),
+  ]) as unknown as z.ZodType<FlowStepSpec>,
+);
+
+const flowTrigger: z.ZodType<FlowTriggerSpec> = z.union([
+  z.object({ kind: z.literal("agent"), inputs: z.array(flowParam).optional() }),
+  z.object({ kind: z.literal("manual"), inputs: z.array(flowParam).optional() }),
+  z.object({ kind: z.literal("http"), inputs: z.array(flowParam).optional(), method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional() }),
+  z.object({ kind: z.literal("recurrence"), frequency: z.enum(["Minute", "Hour", "Day", "Week", "Month"]), interval: z.number().optional(), startTime: z.string().optional(), timeZone: z.string().optional() }),
+  z.object({ kind: z.literal("connector"), connectorId: z.string(), operationId: z.string(), parameters: z.record(z.unknown()).optional(), connectionReference: z.string().optional(), recurrence: z.object({ frequency: z.string(), interval: z.number() }).optional() }),
+  z.object({ kind: z.literal("raw"), name: z.string().optional(), json: z.record(z.unknown()) }),
+]) as unknown as z.ZodType<FlowTriggerSpec>;
+
+const flowSpecArgs = {
+  steps: z.array(flowStep).optional().describe("Steps in order; each waits for the previous one to succeed"),
+  trigger: flowTrigger.optional().describe("Default: 'agent' (When an agent calls the flow)"),
+  outputs: z.array(flowOutput).optional().describe("What the flow answers with (agent-callable and HTTP flows)"),
+  connectionReferencePrefix: z.string().optional().describe("Prefix for generated connection reference names, usually your publisher prefix"),
+};
+
+server.registerTool(
+  "cs_build_flow_definition",
+  {
+    title: "Build a flow definition from steps",
+    description:
+      "Compose a Power Automate cloud flow definition from a step spec, without touching any environment: a trigger (agent-callable by default, or manual, HTTP, schedule or a connector trigger) plus steps (connector operations, HTTP calls, conditions, loops, scopes, variables, compose, terminate, response, or raw JSON). Steps run in order. Returns the definition, the connection references it needs and any notes, and can write it to a file. Feed the same spec to cs_create_flow to create the flow, or cs_update_flow to replace an existing one. Use cs_list_connectors and cs_describe_connector to find connector ids, operation ids and their parameters first.",
+    inputSchema: { name: z.string(), description: z.string().optional(), ...flowSpecArgs, outputFile: z.string().optional().describe("Write the definition JSON here as well") },
+  },
+  async (a) => {
+    try {
+      const built = buildFlow(a as unknown as FlowBuildSpec);
+      let file: string | null = null;
+      if (a.outputFile) {
+        file = path.resolve(a.outputFile);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, `${JSON.stringify(built.clientData, null, 2)}\n`);
+      }
+      return text({ name: a.name, actions: built.actionNames, connections: built.connections, notes: built.notes, ...(file ? { file } : {}), definition: built.definition, connectionReferences: built.connectionReferences });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);
+
 const flowArgs = { environmentId: envArg, dataverseUrl: z.string().optional().describe("Dataverse URL; default: from the workspace or the environment"), workspace: workspaceArg, tenantId: tenantArg, clientId: clientArg };
 
 /** Dataverse URL and token for a flow tool (interactive sign-in allowed, unlike the drift reader). */
@@ -844,13 +911,14 @@ server.registerTool(
   "cs_update_flow",
   {
     title: "Update a cloud flow",
-    description: "Change a flow's name, description or definition in the environment. 'definition' replaces properties.definition inside the existing clientdata and keeps the connection references; 'clientData' replaces the whole document. Read the current one with cs_get_flow includeDefinition first. Managed flows cannot be edited in place; edit them in their source environment or through a solution. Changes a live environment: requires confirm: true.",
+    description: "Change a flow's name, description or definition in the environment. Pass 'steps' (and optionally 'trigger') to rebuild the definition the way cs_build_flow_definition does, or 'definition' for a ready-made one; either replaces properties.definition inside the existing clientdata and keeps the connection references. 'clientData' replaces the whole document. Read the current one with cs_get_flow includeDefinition first. Managed flows cannot be edited in place; edit them in their source environment or through a solution. Changes a live environment: requires confirm: true.",
     inputSchema: {
       ...flowArgs,
       flowId: z.string().describe("Flow (workflow) id"),
       name: z.string().optional(),
       description: z.string().optional(),
-      definition: z.record(z.unknown()).optional().describe("Power Automate definition object (properties.definition)"),
+      ...flowSpecArgs,
+      definition: z.record(z.unknown()).optional().describe("Power Automate definition object (properties.definition), instead of steps"),
       clientData: z.record(z.unknown()).optional().describe("The whole clientdata document; overrides 'definition'"),
       confirm: confirmArg,
     },
@@ -859,11 +927,12 @@ server.registerTool(
     try {
       const dv = await flowContext(a);
       const before = await getFlow(dv.url, dv.token, a.flowId);
-      const changes = { name: a.name, description: a.description, definition: a.definition, clientData: a.clientData };
+      const rebuilt = a.steps || a.trigger ? buildFlow({ name: a.name ?? before.name, description: a.description, steps: a.steps, trigger: a.trigger, outputs: a.outputs, connectionReferencePrefix: a.connectionReferencePrefix }) : null;
+      const changes = { name: a.name, description: a.description, definition: a.definition ?? rebuilt?.definition, clientData: a.clientData };
       const fields = Object.entries(changes).filter(([, v]) => v !== undefined).map(([k]) => k);
       if (!fields.length) return fail("Nothing to update: pass name, description, definition or clientData");
       if (!a.confirm) return dryRun(`update flow '${before.name}' (${fields.join(", ")}) in ${dv.url}`, { flowId: a.flowId, isManaged: before.isManaged, state: before.state, ...(before.isManaged ? { warning: "This flow is managed; Dataverse refuses in-place edits of managed flows." } : {}) });
-      return text(await updateFlow(dv.url, dv.token, a.flowId, changes));
+      return text({ ...(await updateFlow(dv.url, dv.token, a.flowId, changes)), ...(rebuilt ? { actions: rebuilt.actionNames, connections: rebuilt.connections, notes: rebuilt.notes } : {}) });
     } catch (err) {
       return fail(errorMessage(err));
     }
@@ -875,13 +944,14 @@ server.registerTool(
   {
     title: "Create a cloud flow",
     description:
-      "Create a new Power Automate cloud flow from a definition, optionally straight into a solution. The flow is created switched off, because a flow can only be activated once its connection references are bound: bind them, then cs_set_flow_state on. To let an agent call it, use a trigger of type Request/kind Skills and add it as a tool with cs_add_tool type 'flow'. Changes a live environment: requires confirm: true.",
+      "Create a new Power Automate cloud flow, from a step spec (see cs_build_flow_definition: trigger plus connector, HTTP, condition, loop, variable and response steps) or from a ready-made definition, optionally straight into a solution. The flow is created switched off, because a flow can only be activated once its connection references are bound: bind them, then cs_set_flow_state on. To let an agent call it, use a trigger of type Request/kind Skills and add it as a tool with cs_add_tool type 'flow'. Changes a live environment: requires confirm: true.",
     inputSchema: {
       ...flowArgs,
       name: z.string().describe("Flow display name"),
-      definition: z.record(z.unknown()).optional().describe("Power Automate definition ($schema, triggers, actions); required unless clientData is given"),
+      ...flowSpecArgs,
+      definition: z.record(z.unknown()).optional().describe("A ready-made Power Automate definition, instead of steps"),
       clientData: z.record(z.unknown()).optional().describe("The whole clientdata document, when you have one (from cs_get_flow of another flow, for example)"),
-      connectionReferences: z.record(z.unknown()).optional().describe("properties.connectionReferences for the connectors the definition uses"),
+      connectionReferences: z.record(z.unknown()).optional().describe("properties.connectionReferences, when you pass a definition rather than steps"),
       description: z.string().optional(),
       solution: z.string().optional().describe("Unique name of the solution to create it in"),
       confirm: confirmArg,
@@ -889,15 +959,21 @@ server.registerTool(
   },
   async (a) => {
     try {
-      if (!a.definition && !a.clientData) return fail("Pass a definition (or a whole clientData document) for the new flow.");
+      const built = a.steps || a.trigger ? buildFlow({ name: a.name, description: a.description, steps: a.steps, trigger: a.trigger, outputs: a.outputs, connectionReferencePrefix: a.connectionReferencePrefix }) : null;
+      if (!a.definition && !a.clientData && !built) return fail("Pass steps (with an optional trigger) to build the flow, or a definition, or a whole clientData document.");
       const dv = await flowContext(a);
-      const spec = { name: a.name, definition: a.definition, clientData: a.clientData, description: a.description, solutionUniqueName: a.solution, connectionReferences: a.connectionReferences };
+      const spec = { name: a.name, definition: a.definition, clientData: a.clientData ?? built?.clientData, description: a.description, solutionUniqueName: a.solution, connectionReferences: a.connectionReferences };
       if (!a.confirm) {
-        const triggers = Object.keys(((a.definition ?? (a.clientData?.properties as Record<string, unknown> | undefined)?.definition ?? {}) as Record<string, unknown>).triggers ?? {});
-        return dryRun(`create cloud flow '${a.name}'${a.solution ? ` in solution ${a.solution}` : ""} in ${dv.url} (switched off)`, { triggers, connectionReferences: Object.keys(a.connectionReferences ?? {}) });
+        const definition = (a.definition ?? built?.definition ?? (a.clientData?.properties as Record<string, unknown> | undefined)?.definition ?? {}) as Record<string, unknown>;
+        return dryRun(`create cloud flow '${a.name}'${a.solution ? ` in solution ${a.solution}` : ""} in ${dv.url} (switched off)`, {
+          triggers: Object.keys((definition.triggers as Record<string, unknown>) ?? {}),
+          actions: Object.keys((definition.actions as Record<string, unknown>) ?? {}),
+          connections: built?.connections ?? Object.keys(a.connectionReferences ?? {}),
+          ...(built?.notes.length ? { notes: built.notes } : {}),
+        });
       }
       const r = await createFlow(dv.url, dv.token, spec);
-      return text({ ...r, next: "Bind its connections, then cs_set_flow_state state='on'. cs_add_tool type='flow' with this id makes it callable by an agent." });
+      return text({ ...r, ...(built ? { actions: built.actionNames, connections: built.connections, notes: built.notes } : {}), next: "Bind its connections, then cs_set_flow_state state='on'. cs_add_tool type='flow' with this id makes it callable by an agent." });
     } catch (err) {
       return fail(errorMessage(err));
     }
