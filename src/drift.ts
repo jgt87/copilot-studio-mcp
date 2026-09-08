@@ -285,14 +285,16 @@ function unpublishedSince(bot: BotDetails | null, components: BotComponentRow[])
   return stamps.some((t) => t > published);
 }
 
+/** The opening sentence: no baseline, nothing changed, or what changed. */
+function changeSentence(stamp: SyncStamp | null, components: ComponentDrift[], settingsChanged: boolean | null): string {
+  if (!stamp) return "No sync stamp: run cs_pull (or clone again) to establish a baseline; component changes cannot be dated against it.";
+  if (components.length === 0 && !settingsChanged) return `No portal changes since the last ${stamp.operation} at ${stamp.syncedAt}.`;
+  const by = (s: ComponentDrift["status"]) => components.filter((c) => c.status === s).length;
+  return `${by("modified")} modified, ${by("added")} added, ${by("removed")} removed component(s) in Copilot Studio since the last ${stamp.operation} at ${stamp.syncedAt}${settingsChanged ? "; agent settings changed too" : ""}.`;
+}
+
 function describeQuick(stamp: SyncStamp | null, components: ComponentDrift[], conflicts: ComponentDrift[], settingsChanged: boolean | null, localCount: number, unpublished: boolean | null): string {
-  const parts: string[] = [];
-  if (!stamp) parts.push("No sync stamp: run cs_pull (or clone again) to establish a baseline; component changes cannot be dated against it.");
-  else if (components.length === 0 && !settingsChanged) parts.push(`No portal changes since the last ${stamp.operation} at ${stamp.syncedAt}.`);
-  else {
-    const by = (s: ComponentDrift["status"]) => components.filter((c) => c.status === s).length;
-    parts.push(`${by("modified")} modified, ${by("added")} added, ${by("removed")} removed component(s) in Copilot Studio since the last ${stamp.operation} at ${stamp.syncedAt}${settingsChanged ? "; agent settings changed too" : ""}.`);
-  }
+  const parts: string[] = [changeSentence(stamp, components, settingsChanged)];
   if (conflicts.length) parts.push(`${conflicts.length} of them also changed locally (conflict): ${conflicts.map((c) => c.name).join(", ")}. Run cs_pull before pushing.`);
   else if (components.length) parts.push("None of them changed locally; cs_pull will merge them cleanly.");
   if (localCount) parts.push(`${localCount} local file(s) changed since the stamp.`);
@@ -300,11 +302,14 @@ function describeQuick(stamp: SyncStamp | null, components: ComponentDrift[], co
   return parts.join(" ");
 }
 
-export function quickDrift(o: { ws: WorkspaceInfo; stamp: SyncStamp | null; bot: BotDetails | null; components: BotComponentRow[]; localFingerprints?: Record<string, string> }): QuickDriftReport {
+/**
+ * Every component that differs from the stamp: the remote rows that were
+ * modified or added, then the ones the stamp knew and the environment no
+ * longer has. Each is matched to its workspace file, and a file that also
+ * changed locally makes the entry a conflict.
+ */
+function driftedComponents(o: { ws: WorkspaceInfo; stamp: SyncStamp | null; components: BotComponentRow[] }, baseline: Baseline, changedLocally: string[]): ComponentDrift[] {
   const { ws, stamp } = o;
-  const local = o.localFingerprints ?? workspaceFingerprints(ws.root);
-  const changedLocally = localChanges(stamp, local);
-  const baseline: Baseline = stamp?.remote ? "components" : stamp ? "syncedAt" : "none";
   const entry = (key: string, name: string, type: string | null, status: ComponentDrift["status"], modifiedOn: string | null, modifiedBy: string | null): ComponentDrift => {
     const file = componentFileFor(ws, key.includes(".") ? key : null);
     const localModified = file ? changedLocally.includes(file) : false;
@@ -324,7 +329,15 @@ export function quickDrift(o: { ws: WorkspaceInfo; stamp: SyncStamp | null; bot:
       if (!seen.has(key)) components.push(entry(key, prev.name, prev.type, "removed", prev.modifiedOn, null));
     }
   }
+  return components;
+}
 
+export function quickDrift(o: { ws: WorkspaceInfo; stamp: SyncStamp | null; bot: BotDetails | null; components: BotComponentRow[]; localFingerprints?: Record<string, string> }): QuickDriftReport {
+  const { ws, stamp } = o;
+  const local = o.localFingerprints ?? workspaceFingerprints(ws.root);
+  const changedLocally = localChanges(stamp, local);
+  const baseline: Baseline = stamp?.remote ? "components" : stamp ? "syncedAt" : "none";
+  const components = driftedComponents(o, baseline, changedLocally);
   const botModifiedOn = o.bot?.modifiedOn ?? null;
   const settingsChanged = settingsChangedSince(baseline, stamp, botModifiedOn);
   const unpublishedChanges = unpublishedSince(o.bot, o.components);
@@ -372,6 +385,20 @@ export interface FullDriftReport {
 }
 
 /** Classify the workspace against an already-cloned copy of the live agent. */
+/** How the file comparison reads: what differs, how much of it came from the portal, and what collides. */
+function describeFull(stamp: SyncStamp | null, files: FileDrift[], conflicts: FileDrift[], counts: Record<string, number>): string {
+  const remoteSide = files.filter((f) => /^(remote-|both-|only-remote|differs)/.test(f.status) && f.status !== "both-modified-same");
+  const parts: string[] = [];
+  if (!stamp) parts.push("No sync stamp: two-way comparison only (local versus live); run cs_pull to record a baseline.");
+  if (files.length === 0) parts.push("Workspace and live agent are identical.");
+  else {
+    parts.push(`${files.length} file(s) differ: ${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ")}.`);
+    if (stamp && remoteSide.length) parts.push(`${remoteSide.length} changed in Copilot Studio since the last ${stamp.operation}.`);
+    if (conflicts.length) parts.push(`${conflicts.length} conflict(s): ${conflicts.map((f) => f.path).join(", ")}. Run cs_pull (three-way merge) before pushing.`);
+  }
+  return parts.join(" ");
+}
+
 export function compareWithClone(root: string, remoteRoot: string, opts: { stamp?: SyncStamp | null; includeDiffs?: boolean } = {}): FullDriftReport {
   const stamp = opts.stamp === undefined ? readStamp(root) : opts.stamp;
   const local = workspaceFingerprints(root);
@@ -384,16 +411,7 @@ export function compareWithClone(root: string, remoteRoot: string, opts: { stamp
   const counts: Record<string, number> = {};
   for (const f of files) counts[f.status] = (counts[f.status] ?? 0) + 1;
   const conflicts = files.filter((f) => f.conflict);
-  const remoteSide = files.filter((f) => /^(remote-|both-|only-remote|differs)/.test(f.status) && f.status !== "both-modified-same");
-  const parts: string[] = [];
-  if (!stamp) parts.push("No sync stamp: two-way comparison only (local versus live); run cs_pull to record a baseline.");
-  if (files.length === 0) parts.push("Workspace and live agent are identical.");
-  else {
-    parts.push(`${files.length} file(s) differ: ${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ")}.`);
-    if (stamp && remoteSide.length) parts.push(`${remoteSide.length} changed in Copilot Studio since the last ${stamp.operation}.`);
-    if (conflicts.length) parts.push(`${conflicts.length} conflict(s): ${conflicts.map((f) => f.path).join(", ")}. Run cs_pull (three-way merge) before pushing.`);
-  }
-  return { baseline: stamp ? "stamp" : "none", syncedAt: stamp?.syncedAt ?? null, remoteRoot, files, conflicts, counts, localChanges: localChanges(stamp, local), summary: parts.join(" "), notes: [] };
+  return { baseline: stamp ? "stamp" : "none", syncedAt: stamp?.syncedAt ?? null, remoteRoot, files, conflicts, counts, localChanges: localChanges(stamp, local), summary: describeFull(stamp, files, conflicts, counts), notes: [] };
 }
 
 export async function fullDrift(o: { root: string; botId: string; environment?: string | null; includeDiffs?: boolean; keepClone?: boolean; cloneDir?: string }): Promise<FullDriftReport> {
