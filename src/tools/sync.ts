@@ -35,6 +35,12 @@ function initArgs(a: { name: string; publisherPrefix: string; projectDir: string
   return args;
 }
 
+/** The sentence cs_create_agent shows before it touches an environment. */
+function createAgentPlan(a: { name: string; environment?: string; solutionName?: string; createSolution?: boolean }): string {
+  const solution = a.solutionName ? ` inside solution ${a.solutionName}${a.createSolution ? " (created if missing)" : ""}` : " (in a solution named after the agent)";
+  return `create agent '${a.name}' in environment ${a.environment}${solution}`;
+}
+
 server.registerTool(
   "cs_create_agent",
   {
@@ -58,7 +64,7 @@ server.registerTool(
   async (a) => {
     try {
       if (a.environment && readOnlyMode()) return fail(readOnlyRefusal(`create agent '${a.name}' in environment ${a.environment}`));
-      if (a.environment && !a.confirm) return dryRun(`create agent '${a.name}' in environment ${a.environment}${a.solutionName ? ` inside solution ${a.solutionName}${a.createSolution ? " (created if missing)" : ""}` : " (in a solution named after the agent)"}`);
+      if (a.environment && !a.confirm) return dryRun(createAgentPlan(a));
       if (a.environment && a.solutionName) {
         const r = await initAgentInSolution({ name: a.name, publisherPrefix: a.publisherPrefix, projectDir: a.projectDir, solutionName: a.solutionName, environment: a.environment, createSolution: a.createSolution, instructions: a.instructions, schemaName: a.schemaName, template: a.template, authoringMode: a.authoringMode });
         return text({ ...r, workspaceInfo: describeWorkspace(readWorkspace(r.workspace)), syncStamp: await stampAfterSync(r.workspace, "init") });
@@ -66,7 +72,9 @@ server.registerTool(
       if (a.solutionName && !a.environment) return fail("solutionName needs environment");
       const r = await runPac(initArgs(a), { timeoutMs: 15 * 60_000 });
       const root = fs.existsSync(a.projectDir) ? findWorkspaceRoot(a.projectDir) : null;
-      return text({ ...pacSummary(r), workspace: root ? describeWorkspace(readWorkspace(root)) : null, ...(root && r.ok && a.environment ? { syncStamp: await stampAfterSync(root, "init") } : {}) });
+      const workspace = root ? describeWorkspace(readWorkspace(root)) : null;
+      const stamped = root && r.ok && a.environment ? { syncStamp: await stampAfterSync(root, "init") } : {};
+      return text({ ...pacSummary(r), workspace, ...stamped });
     } catch (err) {
       return fail(errorMessage(err));
     }
