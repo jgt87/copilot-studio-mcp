@@ -84,8 +84,8 @@ test("zodShapeFor builds a schema with required params, cwd/timeout and confirm 
 
 test("tool filter: allow-list with wildcards, then deny-list", () => {
   assert.equal(toolEnabled("cs_push", {}), true);
-  assert.equal(toolEnabled("cs_push", { CPS_TOOLS: "cs_doctor, cs_describe_workspace" }), false);
-  assert.equal(toolEnabled("cs_doctor", { CPS_TOOLS: "cs_doctor, cs_describe_workspace" }), true);
+  assert.equal(toolEnabled("cs_push", { CPS_TOOLS: "cs_init, cs_describe_workspace" }), false);
+  assert.equal(toolEnabled("cs_init", { CPS_TOOLS: "cs_init, cs_describe_workspace" }), true);
   assert.equal(toolEnabled("cs_add_topic", { CPS_TOOLS: "cs_add_*,cs_edit_*" }), true);
   assert.equal(toolEnabled("cs_add_topic", { CPS_TOOLS: "cs_add_*", CPS_TOOLS_EXCLUDE: "*topic" }), false);
   assert.equal(toolEnabled("cs_deploy_pipeline", { CPS_TOOLS_EXCLUDE: "cs_*_pipeline,cs_env_*" }), false);

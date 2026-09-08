@@ -86,7 +86,7 @@ try {
   const list = await request("tools/list", {});
   const names = (list.result?.tools ?? []).map((t) => t.name);
   check("tools/list", names.length >= 30, `${names.length} tools`);
-  const always = ["cs_doctor", "cs_describe_workspace", "cs_validate", "cs_add_topic", "cs_guide", "cs_chat", "cs_pull_solution", "cs_create_deployment_settings"];
+  const always = ["cs_init", "cs_describe_workspace", "cs_validate", "cs_add_topic", "cs_guide", "cs_chat", "cs_pull_solution", "cs_create_deployment_settings"];
   const writers = ["cs_push", "cs_run_evaluation", "cs_deploy_solution"];
   for (const n of always) check(`tool ${n} registered`, names.includes(n));
   for (const n of writers) {
@@ -99,8 +99,8 @@ try {
   const guide = await callTool("cs_guide", { topic: "tools", workspace });
   check("cs_guide returns a walkthrough", !guide.isError && /# Tools/.test(guide.text) && /Next steps here/.test(guide.text));
 
-  const doctor = await callTool("cs_doctor", { workspace });
-  check("cs_doctor", !doctor.isError && doctor.json?.serverVersion, doctor.json?.pac?.version ? `pac ${doctor.json.pac.version}` : "pac not found");
+  const start = await callTool("cs_init", { workspace });
+  check("cs_init", !start.isError && start.json?.serverVersion, start.json?.pac?.version ? `pac ${start.json.pac.version}` : "pac not found");
 
   const desc = await callTool("cs_describe_workspace", { workspace });
   check("cs_describe_workspace", !desc.isError && desc.json?.counts?.topics >= 1, `${desc.json?.counts?.topics} topics, harness ${desc.json?.harness}`);

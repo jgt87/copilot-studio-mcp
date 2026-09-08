@@ -74,7 +74,7 @@ export async function withPacProfile<T>(profile: string | undefined, fn: () => P
     const profiles = await listProfiles();
     if (!profiles.length) throw new Error("No pac auth profiles on this machine. Create one in a terminal: pac auth create --environment <id> (and one for the admin account, with --name).");
     const target = findProfile(profiles, profile);
-    if (!target) throw new Error(`No pac auth profile matches '${profile}'. Available: ${profiles.map((p) => `${p.name}${p.user ? ` (${p.user})` : ""}`).join(", ")}. cs_doctor lists them.`);
+    if (!target) throw new Error(`No pac auth profile matches '${profile}'. Available: ${profiles.map((p) => `${p.name}${p.user ? ` (${p.user})` : ""}`).join(", ")}. cs_init lists them.`);
     const previous = profiles.find((p) => p.active) ?? null;
     const switched = !target.active;
     if (switched) {

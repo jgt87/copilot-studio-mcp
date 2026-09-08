@@ -81,7 +81,7 @@ export function conditionalWriteBlocked(tool: string, wouldWrite: boolean, env: 
   return wouldWrite && CONDITIONAL_WRITE_TOOLS.has(tool) && readOnlyMode(env);
 }
 
-/** Tools hidden by read-only mode, for the startup log and cs_doctor. */
+/** Tools hidden by read-only mode, for the startup log and cs_init. */
 export function hiddenByReadOnly(env: Record<string, string | undefined> = process.env): string[] {
   return readOnlyMode(env) ? [...ENVIRONMENT_WRITE_TOOLS].sort() : [];
 }

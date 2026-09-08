@@ -340,28 +340,29 @@ const botArg = z.string().optional().describe("Agent (bot) id. Defaults to works
 const confirmArg = z.boolean().optional().describe("Required to actually perform a change in a live environment. Without it the tool returns a dry run.");
 const envOrProfile = z.string().optional().describe("Environment id or URL. Defaults to the active pac auth profile.");
 
-// ---- doctor / auth --------------------------------------------------------
+// ---- session start / auth --------------------------------------------------------
 
 server.registerTool(
-  "cs_doctor",
+  "cs_init",
   {
-    title: "Check prerequisites",
-    description: "Report pac CLI, .NET, pac auth profiles, MSAL sign-in state, environment variables and the detected agent workspace. Run first in a new session.",
+    title: "Start a session",
+    description:
+      "Run this first in a new session. Reports the pac CLI and .NET, the pac auth profiles (and which is active), the MSAL sign-in, the environment variables, the write policy in force, and the agent workspace it found, then ends with the next steps for that workspace. Read-only. It does not create anything: cs_init_agent scaffolds or creates an agent, cs_guide explains a task.",
     inputSchema: { workspace: workspaceArg },
   },
   async ({ workspace }) => {
     const pacPath = findPac();
     const ws = tryWorkspace(workspace);
-    const pacAuth = await doctorPacAuth(pacPath);
-    const msal = await doctorMsal(ws);
+    const pacAuth = await probePacAuth(pacPath);
+    const msal = await probeMsal(ws);
     const pacProfiles = (pacAuth.pacAuthProfiles as unknown[] | undefined) ?? [];
     const msalAccounts = Array.isArray(msal.msalAccounts) ? (msal.msalAccounts as unknown[]) : [];
     return text({
       serverVersion: VERSION,
-      pac: await doctorPac(pacPath),
-      dotnetSdks: await doctorDotnet(),
+      pac: await probePac(pacPath),
+      dotnetSdks: await probeDotnet(),
       ...pacAuth,
-      env: doctorEnv(),
+      env: probeEnv(),
       workspace: ws ? { root: ws.root, harness: ws.harness, schemaName: ws.schemaName, sync: ws.sync.source, environmentId: ws.sync.environmentId, agentId: ws.sync.agentId } : { found: false, searchedFrom: workspace ?? process.env.CPS_WORKSPACE ?? process.cwd() },
       ...msal,
       schema: { path: schemaPath(), kinds: listKinds().length },
@@ -373,12 +374,12 @@ server.registerTool(
   },
 );
 
-async function doctorPac(pacPath: string | null): Promise<Record<string, unknown>> {
+async function probePac(pacPath: string | null): Promise<Record<string, unknown>> {
   if (!pacPath) return { installed: false, hint: installHint() };
   return { path: pacPath, version: await pacVersion().catch(() => null) };
 }
 
-async function doctorDotnet(): Promise<unknown> {
+async function probeDotnet(): Promise<unknown> {
   try {
     const { stdout } = await execFileAsync("dotnet", ["--list-sdks"], { timeout: 20_000, windowsHide: true });
     return stdout.trim().split(/\r?\n/);
@@ -387,7 +388,7 @@ async function doctorDotnet(): Promise<unknown> {
   }
 }
 
-async function doctorPacAuth(pacPath: string | null): Promise<Record<string, unknown>> {
+async function probePacAuth(pacPath: string | null): Promise<Record<string, unknown>> {
   if (!pacPath) return {};
   const auth = await runPac(["auth", "list"], { timeoutMs: 60_000 }).catch(() => null);
   const profiles = auth ? parseAuthList(auth.stdout) : [];
@@ -395,13 +396,13 @@ async function doctorPacAuth(pacPath: string | null): Promise<Record<string, unk
   return { pacAuthProfiles: profiles, ...hint };
 }
 
-const DOCTOR_ENV_VARS = ["CPS_TENANT_ID", "CPS_CLIENT_ID", "CPS_ENVIRONMENT_ID", "CPS_ENVIRONMENT_URL", "CPS_AGENT_ID", "CPS_WORKSPACE", "PAC_PATH", "DOTNET_ROOT"];
+const REPORTED_ENV_VARS = ["CPS_TENANT_ID", "CPS_CLIENT_ID", "CPS_ENVIRONMENT_ID", "CPS_ENVIRONMENT_URL", "CPS_AGENT_ID", "CPS_WORKSPACE", "PAC_PATH", "DOTNET_ROOT"];
 
-function doctorEnv(): Record<string, string | null> {
-  return Object.fromEntries(DOCTOR_ENV_VARS.map((k) => [k, process.env[k] ? (k === "CPS_CLIENT_ID" ? "(set)" : (process.env[k] as string)) : null]));
+function probeEnv(): Record<string, string | null> {
+  return Object.fromEntries(REPORTED_ENV_VARS.map((k) => [k, process.env[k] ? (k === "CPS_CLIENT_ID" ? "(set)" : (process.env[k] as string)) : null]));
 }
 
-async function doctorMsal(ws: WorkspaceInfo | null): Promise<Record<string, unknown>> {
+async function probeMsal(ws: WorkspaceInfo | null): Promise<Record<string, unknown>> {
   try {
     const tenantId = resolveTenantId(ws?.sync.tenantId ?? undefined);
     return { msalAccounts: await listAccounts({ tenantId }), pendingLogin: pendingLoginStatus() };
@@ -758,7 +759,7 @@ const READ_ONLY_PAC = [/^(help|--version|-v)$/, /^auth (list|who)$/, /^org (who|
 
 server.registerTool(
   "cs_pac",
-  { title: "Run any pac command", description: "Escape hatch: run 'pac <args...>' directly. Read-only commands (list/who/status/help) run immediately; anything else needs confirm: true. 'profile' runs it as another pac auth profile, for example the tenant admin account.", inputSchema: { args: z.array(z.string()).describe("Arguments after 'pac', e.g. [\"env\",\"list\"]"), cwd: z.string().optional(), profile: z.string().optional().describe("pac auth profile to run as (cs_doctor lists them)"), confirm: confirmArg, timeoutSeconds: z.number().optional() } },
+  { title: "Run any pac command", description: "Escape hatch: run 'pac <args...>' directly. Read-only commands (list/who/status/help) run immediately; anything else needs confirm: true. 'profile' runs it as another pac auth profile, for example the tenant admin account.", inputSchema: { args: z.array(z.string()).describe("Arguments after 'pac', e.g. [\"env\",\"list\"]"), cwd: z.string().optional(), profile: z.string().optional().describe("pac auth profile to run as (cs_init lists them)"), confirm: confirmArg, timeoutSeconds: z.number().optional() } },
   async ({ args, cwd, profile, confirm, timeoutSeconds }) => {
     try {
       const head = args.slice(0, 3).join(" ");

@@ -75,7 +75,7 @@ operations and need no approval; sending them to Copilot Studio does.
 
 For a hard lock, set `CPS_READ_ONLY=1` in the server's environment: the environment-changing tools
 are then not registered at all, so no confirmation can reach the environment, while authoring,
-validation, review and the read-only tools keep working. `cs_doctor` reports the mode and which
+validation, review and the read-only tools keep working. `cs_init` reports the mode and which
 tools are withheld. `test/policy.test.js` fails if a tool that declares `confirm` is missing from
 that list, so the two layers cannot drift apart.
 
@@ -196,7 +196,7 @@ Environment variables (all optional): `CPS_WORKSPACE`, `CPS_TENANT_ID`, `CPS_CLI
 `CPS_READ_ONLY` (see "Approval before anything changes"), `CPS_ADMIN_PROFILE` and `CPS_PAC_PROFILE`
 (see "Two accounts: maker and admin"), `CPS_FLOW_SCOPE`, `CPS_TOOLS` and `CPS_TOOLS_EXCLUDE`. The last two trim the tool list for clients with small context
 windows: comma-separated tool names with `*` wildcards, for example
-`CPS_TOOLS=cs_doctor,cs_describe_workspace,cs_add_*,cs_edit_*,cs_review_agent,cs_validate,cs_push,cs_pull`
+`CPS_TOOLS=cs_init,cs_describe_workspace,cs_add_*,cs_edit_*,cs_review_agent,cs_validate,cs_push,cs_pull`
 or `CPS_TOOLS_EXCLUDE=cs_*_pipeline,cs_env_*,cs_*_auth_profile`.
 
 ## Tools
@@ -207,7 +207,7 @@ Guidance (start here)
 | --- | --- |
 | `cs_guide` | walkthrough for one topic: `getting-started`, `instructions`, `knowledge`, `tools`, `topics`, `evaluations`, `publish-and-test`, `drift`, `solutions`, `troubleshooting`; each names the tool per step and the portal steps that cannot be automated, and ends with next steps for your workspace |
 
-The server also sends usage instructions in the MCP handshake, `cs_doctor` and
+The server also sends usage instructions in the MCP handshake, `cs_init` and
 `cs_describe_workspace` end with next steps for the workspace they found, and six MCP prompts
 (new agent, add knowledge, add tool, write instructions, review and push, check drift) are
 available in clients that show prompts as commands.
@@ -216,7 +216,7 @@ Setup and sync (pac)
 
 | Tool | Purpose |
 | --- | --- |
-| `cs_doctor` | pac / .NET / auth profiles / sign-in / workspace detection |
+| `cs_init` | pac / .NET / auth profiles / sign-in / workspace detection |
 | `cs_login`, `cs_login_status`, `cs_logout` | MSAL sign-in (interactive or device code) for the cloud tools |
 | `cs_list_environments`, `cs_list_agents` | environments (BAP) and agents (pac or Dataverse) |
 | `cs_init_agent` | `pac copilot init` (classic or cli-copilot), optional bootstrap into an environment, optionally inside a chosen or new solution |
@@ -321,7 +321,7 @@ called with `confirm: true`.
 The end-to-end flow for a new standard-harness agent, from an empty folder to a published agent you
 can talk to. Every step is one tool call; steps that change the environment need `confirm: true`.
 
-1. **Check the machine.** `cs_doctor` reports pac, .NET, the pac auth profile and sign-in state. If
+1. **Check the machine.** `cs_init` reports pac, .NET, the pac auth profile and sign-in state. If
    there is no profile, run `pac auth create --environment <id or URL>` once in a terminal.
 2. **Pick the environment.** `cs_list_environments` (needs `cs_login`) or use the environment id
    from the Copilot Studio URL.
@@ -422,7 +422,7 @@ would do in Copilot Studio for the same result.
 
 | Step (MCP tool) | The same action in Copilot Studio | How the server does it |
 | --- | --- | --- |
-| `cs_doctor` | nothing in the portal; checks pac, .NET, the pac profile and sign-in on your machine | local checks |
+| `cs_init` | nothing in the portal; checks pac, .NET, the pac profile and sign-in on your machine | local checks |
 | `cs_list_solutions`, `cs_create_solution` | Power Apps maker portal > Solutions: pick or create the unmanaged solution the agent lives in | `pac solution list`; empty manifest packed and imported |
 | `cs_init_agent` (with `environment`, `solutionName`) | Copilot Studio > Create > New agent, saved into that solution; the agent appears with its default system topics | `pac copilot init`, `pack`, `pac solution import`, `pac copilot clone` |
 | `cs_generate_instructions` | Overview > Instructions: the portal's "generate with AI" step, using your AI Builder prompt | `pac copilot model predict`, then `agent.mcs.yml` |
@@ -454,7 +454,7 @@ New agent (standard harness):
 
 ```mermaid
 flowchart TD
-    A["cs_doctor"] --> B["cs_list_solutions<br/>pick one, or cs_create_solution"]
+    A["cs_init"] --> B["cs_list_solutions<br/>pick one, or cs_create_solution"]
     B --> C["cs_init_agent<br/>environment + solutionName + confirm"]
     C --> D["cs_generate_instructions<br/>AI Builder prompt, then apply"]
     D --> E["cs_add_topic / cs_add_knowledge_source / cs_add_tool<br/>(cs_list_connectors, cs_describe_connector)"]

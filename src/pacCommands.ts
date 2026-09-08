@@ -361,7 +361,7 @@ export const PAC_COMMANDS: PacCommandSpec[] = [
   {
     tool: "cs_select_auth_profile",
     title: "Select the active pac auth profile",
-    description: "Make a pac auth profile the active one, by index (cs_doctor lists them) or name.",
+    description: "Make a pac auth profile the active one, by index (cs_init lists them) or name.",
     command: ["auth", "select"],
     params: { index: { flag: "--index", type: "number", description: "Profile index" }, name: { flag: "--name", type: "string", description: "Profile name" } },
     mutating: false,
@@ -850,7 +850,7 @@ export function zodShapeFor(spec: PacCommandSpec): Record<string, z.ZodTypeAny> 
     const described = base.describe(p.description + (p.secret ? " (masked in logs and results)" : ""));
     shape[key] = p.required ? described : described.optional();
   }
-  shape.profile = z.string().optional().describe("pac auth profile to run as: the admin account for tenant commands. Defaults to CPS_ADMIN_PROFILE for admin commands and CPS_PAC_PROFILE otherwise, then the active profile. cs_doctor lists the profiles.");
+  shape.profile = z.string().optional().describe("pac auth profile to run as: the admin account for tenant commands. Defaults to CPS_ADMIN_PROFILE for admin commands and CPS_PAC_PROFILE otherwise, then the active profile. cs_init lists the profiles.");
   shape.cwd = z.string().optional().describe("Working directory for pac (for project commands: the solution project folder)");
   shape.timeoutSeconds = z.number().optional().describe(`Default ${Math.round((spec.timeoutMs ?? 600_000) / 1000)}`);
   if (spec.mutating !== false) shape.confirm = z.boolean().optional().describe("Required to actually perform a change in a live environment. Without it the tool returns a dry run.");

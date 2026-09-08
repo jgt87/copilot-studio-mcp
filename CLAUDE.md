@@ -93,7 +93,7 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   Studio work are deliberately left to `cs_pac`.
 - **Guidance** (`src/guide.ts`): `SERVER_INSTRUCTIONS` goes out in the MCP handshake,
   `GUIDES` backs the `cs_guide` tool and the six MCP prompts, and `nextSteps(ws)` is appended to
-  `cs_doctor` and `cs_describe_workspace`. `test/guide.test.js` fails when a guide names a tool
+  `cs_init` and `cs_describe_workspace`. `test/guide.test.js` fails when a guide names a tool
   the server does not register, so update the guides together with the tool list.
 - **Two accounts** (`src/pacProfile.ts`): pac's active auth profile is machine-wide state.
   `withPacProfile` selects a profile, runs the work and restores the previous one, serialised
@@ -202,7 +202,7 @@ properties at the document root are warnings (the published schema lags the prod
 
 Nothing below the unit tests and the pack oracle has been run against a tenant.
 
-1. `pac auth create --environment <id>` in a terminal; `cs_doctor` shows the profile.
+1. `pac auth create --environment <id>` in a terminal; `cs_init` shows the profile.
 2. `cs_init_agent` with `environment` + `confirm`; `cs_describe_workspace` reports `sync.source != none`.
 3. `cs_add_topic` + `cs_add_knowledge_source` (public site) + `cs_update_agent`; `cs_validate`;
    `cs_push confirm`; the portal shows the topic and knowledge.

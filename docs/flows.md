@@ -28,7 +28,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    A["cs_doctor<br/>pac, .NET, auth profile, sign-in"] --> B{"pac auth profile?"}
+    A["cs_init<br/>pac, .NET, auth profile, sign-in"] --> B{"pac auth profile?"}
     B -- no --> B1["terminal: pac auth create --environment ID"] --> S
     B -- yes --> S["cs_list_solutions<br/>pick an unmanaged solution,<br/>or cs_create_solution confirm"]
     S --> C["cs_init_agent<br/>name, publisherPrefix, projectDir,<br/>environment + solutionName confirm<br/>(init, pack, import, clone)"]
@@ -53,7 +53,7 @@ knowledge and tools after cloning the imported agent.
 
 | Step (MCP tool) | The same action in Copilot Studio |
 | --- | --- |
-| `cs_doctor`, `pac auth create` | none in the portal; signing in to Power Platform from your machine |
+| `cs_init`, `pac auth create` | none in the portal; signing in to Power Platform from your machine |
 | `cs_list_solutions`, `cs_create_solution` | Power Apps maker portal > Solutions: choose or create the solution the agent lives in |
 | `cs_init_agent` | Copilot Studio > Create > New agent (name, publisher) inside that solution; the default system topics are created |
 | `cs_generate_instructions` | Overview > Instructions, generated with AI and then reviewed |

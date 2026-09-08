@@ -17,7 +17,7 @@ import type { WorkspaceInfo } from "./workspace.js";
 export const SERVER_INSTRUCTIONS = `copilot-studio-mcp builds Microsoft Copilot Studio agents from files.
 
 Start here
-- Call cs_doctor first in a session: it reports the pac CLI, sign-in state and the workspace it found, and ends with concrete next steps.
+- Call cs_init first in a session: it reports the pac CLI, sign-in state and the workspace it found, and ends with concrete next steps.
 - Call cs_guide (topic: "getting-started", "instructions", "knowledge", "tools", "topics", "evaluations", "publish-and-test", "drift", "solutions", "administration", "troubleshooting") for a walkthrough before improvising a sequence of calls.
 
 How the pieces fit
@@ -64,7 +64,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
 const GETTING_STARTED = `# Getting started
 
 ## 0. Check the machine
-\`cs_doctor\`. It reports the pac CLI and .NET, the pac auth profiles, the MSAL sign-in, and the
+\`cs_init\`. It reports the pac CLI and .NET, the pac auth profiles, the MSAL sign-in, and the
 workspace it found. Fix what it flags before anything else.
 
 If there is no pac auth profile, the user runs this in a terminal (this server cannot do the
@@ -461,7 +461,7 @@ const TROUBLESHOOTING = `# Troubleshooting
 
 | Symptom | Cause and fix |
 | --- | --- |
-| \`cs_doctor\` says pac was not found | Install the CLI: \`dotnet tool install --global Microsoft.PowerApps.CLI.Tool\` (needs .NET 10). If pac is installed but fails, set \`DOTNET_ROOT\`; the server defaults it to \`~/.dotnet\` when the SDK lives there. |
+| \`cs_init\` says pac was not found | Install the CLI: \`dotnet tool install --global Microsoft.PowerApps.CLI.Tool\` (needs .NET 10). If pac is installed but fails, set \`DOTNET_ROOT\`; the server defaults it to \`~/.dotnet\` when the SDK lives there. |
 | "No profiles were found on this computer" | The user runs \`pac auth create --environment <id>\` in a terminal. This server cannot do that interactive sign-in. |
 | \`cs_login\` returns \`status: "pending"\` | Normal when no browser can be opened from the server. Show the URL and ask the user to open it on the machine running the server; the login completes in the background. \`cs_login_status wait=true\` then confirms it. |
 | Device-code sign-in is refused | Many tenants block that flow by Conditional Access. Use the pending-URL path above. |

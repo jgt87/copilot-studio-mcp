@@ -40,7 +40,7 @@ test("guides, instructions and next steps only name tools the server registers",
 });
 
 test("the handshake instructions carry the rules a client must know", () => {
-  for (const needle of ["cs_doctor", "cs_guide", "confirm: true", "cs_push", "pac auth create"]) {
+  for (const needle of ["cs_init", "cs_guide", "confirm: true", "cs_push", "pac auth create"]) {
     assert.ok(SERVER_INSTRUCTIONS.includes(needle), `handshake instructions must mention ${needle}`);
   }
   assert.ok(SERVER_INSTRUCTIONS.length < 3000, "keep the handshake text short; details belong in cs_guide");
