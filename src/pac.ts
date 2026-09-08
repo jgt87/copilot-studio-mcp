@@ -78,6 +78,20 @@ export function installHint(): string {
 }
 
 /**
+ * How to spawn pac. A `.cmd` shim cannot be spawned directly on Windows
+ * (EINVAL), and `shell: true` is not the answer: node then concatenates argv
+ * without escaping, so `--project-dir C:\a b\ws` arrives as three arguments
+ * with the backslashes eaten by cmd. Build the command line instead and hand it
+ * to `cmd /d /s /c` verbatim: with the whole line wrapped in quotes, `/s` makes
+ * cmd strip only the outer pair and take the rest as written.
+ */
+function spawnSpec(exe: string, args: string[]): { exe: string; args: string[]; verbatim: boolean } {
+  if (!IS_WIN || !exe.toLowerCase().endsWith(".cmd")) return { exe, args, verbatim: false };
+  const line = [exe, ...args].map((a) => `"${a.replace(/"/g, '\\"')}"`).join(" ");
+  return { exe: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"${line}"`], verbatim: true };
+}
+
+/**
  * Run pac with the given argv. Never throws for a non-zero exit; rejects only
  * when pac is missing or the process cannot be spawned at all.
  */
@@ -89,14 +103,13 @@ export function runPac(args: string[], options: PacRunOptions = {}): Promise<Pac
   const command = `${path.basename(exe)} ${shownArgs.join(" ")}`;
   log(`run: ${command}${options.cwd ? ` (cwd ${options.cwd})` : ""}`);
 
+  const spawnAs = spawnSpec(exe, args);
   return new Promise((resolve, reject) => {
-    // .cmd shims cannot be spawned without a shell on Windows (EINVAL).
-    const useShell = IS_WIN && exe.toLowerCase().endsWith(".cmd");
-    const child = spawn(exe, args, {
+    const child = spawn(spawnAs.exe, spawnAs.args, {
       cwd: options.cwd,
       env: { ...process.env, ...dotnetRootDefault(), ...options.env, PAC_CLI_TELEMETRY_OPTOUT: process.env.PAC_CLI_TELEMETRY_OPTOUT ?? "1" },
       stdio: ["ignore", "pipe", "pipe"],
-      shell: useShell,
+      windowsVerbatimArguments: spawnAs.verbatim,
       windowsHide: true,
     });
     let stdout = "";
@@ -200,25 +213,33 @@ const GUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-
  * Parse `pac copilot list`. Accepts JSON when pac emitted it, else anchors each
  * text row on its two GUID columns (Bot ID, Solution ID).
  */
-export function parseCopilotList(stdout: string): CopilotRow[] {
-  const trimmed = stdout.trim();
-  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(trimmed) as unknown;
-      const arr = Array.isArray(parsed) ? parsed : ((parsed as { value?: unknown[] }).value ?? []);
-      return (arr as Record<string, unknown>[]).map((r) => ({
-        name: String(r.Name ?? r.name ?? ""),
-        botId: String(r.BotId ?? r["Bot ID"] ?? r.botId ?? r.id ?? ""),
-        componentState: (r.ComponentState ?? r["Component State"] ?? null) as string | null,
-        isManaged: typeof r.IsManaged === "boolean" ? r.IsManaged : null,
-        solutionId: (r.SolutionId ?? r["Solution ID"] ?? null) as string | null,
-        statusCode: (r.StatusCode ?? r["Status Code"] ?? null) as string | null,
-        stateCode: (r.StateCode ?? r["State Code"] ?? null) as string | null,
-      }));
-    } catch {
-      // fall through to text parsing
-    }
+/**
+ * Rows from pac's JSON output, either a bare array or `{ value: [...] }`.
+ * Column names differ between pac versions, so each field accepts the shapes
+ * seen so far. Returns null when the text is not the JSON we expect, which
+ * sends the caller back to the text parser.
+ */
+function copilotRowsFromJson(trimmed: string): CopilotRow[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
   }
+  const arr = Array.isArray(parsed) ? parsed : ((parsed as { value?: unknown[] }).value ?? []);
+  return (arr as Record<string, unknown>[]).map((r) => ({
+    name: String(r.Name ?? r.name ?? ""),
+    botId: String(r.BotId ?? r["Bot ID"] ?? r.botId ?? r.id ?? ""),
+    componentState: (r.ComponentState ?? r["Component State"] ?? null) as string | null,
+    isManaged: typeof r.IsManaged === "boolean" ? r.IsManaged : null,
+    solutionId: (r.SolutionId ?? r["Solution ID"] ?? null) as string | null,
+    statusCode: (r.StatusCode ?? r["Status Code"] ?? null) as string | null,
+    stateCode: (r.StateCode ?? r["State Code"] ?? null) as string | null,
+  }));
+}
+
+/** Rows from the text table, anchored on the two GUID columns rather than column offsets. */
+function copilotRowsFromText(stdout: string): CopilotRow[] {
   const rows: CopilotRow[] = [];
   const re = new RegExp(`^(.*?)\\s+(${GUID})\\s+(\\S+)\\s+(\\S+)\\s+(${GUID})\\s+(\\S+)\\s+(\\S+)\\s*$`);
   for (const line of stdout.split(/\r?\n/)) {
@@ -235,6 +256,15 @@ export function parseCopilotList(stdout: string): CopilotRow[] {
     });
   }
   return rows;
+}
+
+export function parseCopilotList(stdout: string): CopilotRow[] {
+  const trimmed = stdout.trim();
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+    const rows = copilotRowsFromJson(trimmed);
+    if (rows) return rows;
+  }
+  return copilotRowsFromText(stdout);
 }
 
 /** Turn a pac failure into a one-line explanation, keeping the tail of stderr/stdout. */
