@@ -21,23 +21,34 @@ const pending = new Map();
 let nextId = 1;
 const nonJson = [];
 
-child.stdout.on("data", (d) => {
-  buffer += d.toString("utf8");
+/** The complete lines in a chunk; a partial last line stays buffered for the next one. */
+function takeLines(chunk) {
+  buffer += chunk;
+  const lines = [];
   let idx;
   while ((idx = buffer.indexOf("\n")) >= 0) {
     const line = buffer.slice(0, idx).trim();
     buffer = buffer.slice(idx + 1);
-    if (!line) continue;
-    try {
-      const msg = JSON.parse(line);
-      if (msg.id !== undefined && pending.has(msg.id)) {
-        pending.get(msg.id)(msg);
-        pending.delete(msg.id);
-      }
-    } catch {
-      nonJson.push(line);
-    }
+    if (line) lines.push(line);
   }
+  return lines;
+}
+
+/** One line of stdout: the reply a request is waiting for, or something that does not belong there. */
+function deliver(line) {
+  try {
+    const msg = JSON.parse(line);
+    if (msg.id !== undefined && pending.has(msg.id)) {
+      pending.get(msg.id)(msg);
+      pending.delete(msg.id);
+    }
+  } catch {
+    nonJson.push(line);
+  }
+}
+
+child.stdout.on("data", (d) => {
+  for (const line of takeLines(d.toString("utf8"))) deliver(line);
 });
 child.stderr.on("data", (d) => process.stderr.write(`[server] ${d}`));
 
