@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { CONDITIONAL_WRITE_TOOLS, ENVIRONMENT_WRITE_TOOLS, LOCAL_DESTRUCTIVE_TOOLS, hiddenByReadOnly, readOnlyMode, readOnlyRefusal } from "../dist/policy.js";
 import { PAC_COMMANDS } from "../dist/pacCommands.js";
 
-const indexJs = readFileSync(fileURLToPath(new URL("../dist/index.js", import.meta.url)), "utf8");
+const DIST = fileURLToPath(new URL("../dist/", import.meta.url));
+
+/** Every built module, concatenated: the registrations live in dist/tools/, not in one file. */
+const indexJs = (() => {
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : e.name.endsWith(".js") ? [readFileSync(join(dir, e.name), "utf8")] : []));
+  return walk(DIST).join("\n");
+})();
 
 /** Bespoke tools whose input schema declares `confirm`, read from the built server. */
 function toolsDeclaringConfirm() {

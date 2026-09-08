@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -7,13 +8,20 @@ import { GUIDE_TOPICS, SERVER_INSTRUCTIONS, TOPIC_SUMMARY, guide, nextSteps } fr
 import { readWorkspace } from "../dist/workspace.js";
 
 const FIXTURES = fileURLToPath(new URL("./fixtures/", import.meta.url));
+const DIST = fileURLToPath(new URL("../dist/", import.meta.url));
+
+/** Every built module, concatenated: registrations are spread over dist/tools/, not one file. */
+function builtJs() {
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : e.name.endsWith(".js") ? [readFileSync(join(dir, e.name), "utf8")] : []));
+  return walk(DIST).join("\n");
+}
 
 /** Tool names the server actually registers: bespoke handlers plus the declarative pac wrappers. */
 function registeredTools() {
-  const dist = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+  const js = builtJs();
   const names = new Set();
-  for (const m of dist("../dist/index.js").matchAll(/registerTool\(\s*"(cs_[a-z_]+)"/g)) names.add(m[1]);
-  for (const m of dist("../dist/pacCommands.js").matchAll(/tool:\s*"(cs_[a-z_]+)"/g)) names.add(m[1]);
+  for (const m of js.matchAll(/registerTool\(\s*"(cs_[a-z_]+)"/g)) names.add(m[1]);
+  for (const m of js.matchAll(/tool:\s*"(cs_[a-z_]+)"/g)) names.add(m[1]);
   return names;
 }
 
