@@ -31,7 +31,7 @@ flowchart TD
     A["cs_init<br/>pac, .NET, auth profile, sign-in"] --> B{"pac auth profile?"}
     B -- no --> B1["terminal: pac auth create --environment ID"] --> S
     B -- yes --> S["cs_list_solutions<br/>pick an unmanaged solution,<br/>or cs_create_solution confirm"]
-    S --> C["cs_init_agent<br/>name, publisherPrefix, projectDir,<br/>environment + solutionName confirm<br/>(init, pack, import, clone)"]
+    S --> C["cs_create_agent<br/>name, publisherPrefix, projectDir,<br/>environment + solutionName confirm<br/>(init, pack, import, clone)"]
     C --> D["cs_generate_instructions<br/>brief -> AI Builder prompt (cs_list_prompts)<br/>review, then apply"]
     D --> E["cs_add_topic<br/>trigger phrases + message / question / condition / set variable /<br/>redirect / HTTP / flow / generative answers / adaptive card / transfer / end nodes"]
     E --> F["cs_add_knowledge_source<br/>public-site | sharepoint | graph-connector | files"]
@@ -47,7 +47,7 @@ flowchart TD
     L --> M["Flow 3: evaluations"]
 ```
 
-Without `environment`, `cs_init_agent` scaffolds locally and `cs_pack` + `cs_import_solution` deploy
+Without `environment`, `cs_create_agent` scaffolds locally and `cs_pack` + `cs_import_solution` deploy
 it; on that path only settings, agent and topics are packaged (verified with pac 2.11.2), so add
 knowledge and tools after cloning the imported agent.
 
@@ -55,7 +55,7 @@ knowledge and tools after cloning the imported agent.
 | --- | --- |
 | `cs_init`, `pac auth create` | none in the portal; signing in to Power Platform from your machine |
 | `cs_list_solutions`, `cs_create_solution` | Power Apps maker portal > Solutions: choose or create the solution the agent lives in |
-| `cs_init_agent` | Copilot Studio > Create > New agent (name, publisher) inside that solution; the default system topics are created |
+| `cs_create_agent` | Copilot Studio > Create > New agent (name, publisher) inside that solution; the default system topics are created |
 | `cs_generate_instructions` | Overview > Instructions, generated with AI and then reviewed |
 | `cs_add_topic` | Topics > Add a topic > From blank; trigger phrases and the message, question, condition, set variable, redirect, HTTP, generative answers, adaptive card, transfer and end conversation nodes in the authoring canvas |
 | `cs_add_knowledge_source` | Knowledge > Add knowledge (public website, SharePoint, Graph connector, files) |

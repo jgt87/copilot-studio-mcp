@@ -122,8 +122,8 @@ try {
   const pacRead = await callTool("cs_pac", { args: ["help"] });
   check("cs_pac still runs read-only commands", !pacRead.isError || !/CPS_READ_ONLY/.test(pacRead.text));
 
-  const initLocal = await callTool("cs_init_agent", { name: "Smoke", publisherPrefix: "smk", projectDir: path.join(os.tmpdir(), "cs-smoke-never-created"), environment: "00000000-0000-0000-0000-000000000000" });
-  check(readOnly ? "cs_init_agent refuses the environment path in read-only mode" : "cs_init_agent dry-run without confirm", readOnly ? initLocal.isError && /CPS_READ_ONLY/.test(initLocal.text) : initLocal.json?.dryRun === true);
+  const initLocal = await callTool("cs_create_agent", { name: "Smoke", publisherPrefix: "smk", projectDir: path.join(os.tmpdir(), "cs-smoke-never-created"), environment: "00000000-0000-0000-0000-000000000000" });
+  check(readOnly ? "cs_create_agent refuses the environment path in read-only mode" : "cs_create_agent dry-run without confirm", readOnly ? initLocal.isError && /CPS_READ_ONLY/.test(initLocal.text) : initLocal.json?.dryRun === true);
 
   const connectors = await callTool("cs_list_connectors", { offline: true, search: "Office 365 Outlook" });
   check("cs_list_connectors offline seed", connectors.json?.connectors?.[0]?.name === "shared_office365", connectors.json?.source);

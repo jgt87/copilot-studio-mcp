@@ -40,12 +40,12 @@ const BESPOKE_ALWAYS_WRITES = [
 /**
  * Tools that write only for certain inputs. They stay registered in read-only
  * mode and refuse at call time, so their read-only use keeps working:
- * `cs_init_agent` still scaffolds locally without `environment`,
+ * `cs_create_agent` still scaffolds locally without `environment`,
  * `cs_check_solution` still analyses a zip without `saveResults`,
  * `cs_pac` still runs read-only pac commands.
  */
 const BESPOKE_CONDITIONAL_WRITES = [
-  "cs_init_agent", // creates the agent only when 'environment' is passed
+  "cs_create_agent", // creates the agent only when 'environment' is passed
   "cs_pac", // gated inside the handler by the read-only command list
 ] as const;
 

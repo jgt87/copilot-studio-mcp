@@ -67,7 +67,7 @@ with `--environment`). The authoring tools tell you when you are in a pack-only 
 
 The server never changes a live Copilot Studio environment on its own. Every tool that can
 (`cs_push`, `cs_publish`, `cs_run_evaluation`, `cs_import_solution`, `cs_deploy_solution`,
-`cs_init_agent` with an environment, the delete tools, and the environment-changing pac wrappers)
+`cs_create_agent` with an environment, the delete tools, and the environment-changing pac wrappers)
 returns a **dry run** describing what it would do, and does nothing else, until it is called again
 with `confirm: true`. The calling agent is instructed, in the MCP handshake, to show that dry run
 and pass `confirm` only after you agree. Writing YAML, editing and validating are local file
@@ -129,7 +129,7 @@ Do you need your own app registration?
 
 | Situation | App registration needed? |
 | --- | --- |
-| `pac` commands (`cs_init_agent`, `cs_clone_agent`, `cs_pull`, `cs_push`, `cs_pack`, `cs_publish` via pac, `cs_check_drift` in `full` mode, all `cs_*_solution` tools, and every tool in the "Remaining pac commands" table) | No. `pac auth create` signs in with Microsoft's own first-party app. |
+| `pac` commands (`cs_create_agent`, `cs_clone_agent`, `cs_pull`, `cs_push`, `cs_pack`, `cs_publish` via pac, `cs_check_drift` in `full` mode, all `cs_*_solution` tools, and every tool in the "Remaining pac commands" table) | No. `pac auth create` signs in with Microsoft's own first-party app. |
 | Cloud tools with the default client id (`cs_list_environments`, `cs_list_agents` via Dataverse, `cs_publish` via Dataverse, `cs_check_drift`, evaluations, `cs_chat` for no-auth or manual-auth agents) | No. The server uses the first-party VS Code client id `51f81489-12ee-4a9e-aaae-a2591f45987d`, which is pre-authorised for Power Platform API, Dataverse and the Power Apps service. Microsoft's own Copilot Studio tooling uses the same id. |
 | Same tools, but your tenant blocks that id (app consent policy, conditional access, "user assignment required") | Yes. Create the registration below and set `CPS_CLIENT_ID`. |
 | `cs_chat` with an agent that uses **integrated authentication (Entra SSO)** | Yes, always. The first-party id does not carry `CopilotStudio.Copilots.Invoke` for third parties. Pass `clientId` to `cs_chat` or set `CPS_CLIENT_ID`. |
@@ -219,7 +219,7 @@ Setup and sync (pac)
 | `cs_init` | pac / .NET / auth profiles / sign-in / workspace detection |
 | `cs_login`, `cs_login_status`, `cs_logout` | MSAL sign-in (interactive or device code) for the cloud tools |
 | `cs_list_environments`, `cs_list_agents` | environments (BAP) and agents (pac or Dataverse) |
-| `cs_init_agent` | `pac copilot init` (classic or cli-copilot), optional bootstrap into an environment, optionally inside a chosen or new solution |
+| `cs_create_agent` | `pac copilot init` (classic or cli-copilot), optional bootstrap into an environment, optionally inside a chosen or new solution |
 | `cs_create_solution` | create an unmanaged solution (and publisher) as the container for new agents |
 | `cs_generate_instructions` | draft or refine the agent instructions with an AI Builder prompt (`pac copilot model predict`) and write them into the workspace |
 | `cs_clone_agent`, `cs_pull`, `cs_push`, `cs_status` | sync a live agent with the workspace; clone, pull and push record a sync stamp |
@@ -313,7 +313,7 @@ Evaluation and testing (cloud)
 | `cs_run_conversation_tests` | YAML test file of utterances + expectations, run through `cs_chat` |
 
 Every tool that mutates a live environment (`cs_push`, `cs_publish`, `cs_import_solution`,
-`cs_run_evaluation`, bootstrap `cs_init_agent`, non-read-only `cs_pac`) returns a dry run unless
+`cs_run_evaluation`, bootstrap `cs_create_agent`, non-read-only `cs_pac`) returns a dry run unless
 called with `confirm: true`.
 
 ## Getting started: building a new agent
@@ -330,7 +330,7 @@ can talk to. Every step is one tool call; steps that change the environment need
    confirm=true`. An existing solution works as long as it is unmanaged and you use its publisher
    prefix.
 4. **Create the agent inside that solution.**
-   `cs_init_agent name="Contoso Support" publisherPrefix=contoso projectDir=./contoso-support
+   `cs_create_agent name="Contoso Support" publisherPrefix=contoso projectDir=./contoso-support
    environment=<id> solutionName=contoso_Agents confirm=true` (add `createSolution=true` to do step 3
    in the same call). The tool scaffolds locally, packs with the solution name, imports, then clones
    the live agent back so `projectDir` is a sync-connected workspace. Without `solutionName`, pac
@@ -424,7 +424,7 @@ would do in Copilot Studio for the same result.
 | --- | --- | --- |
 | `cs_init` | nothing in the portal; checks pac, .NET, the pac profile and sign-in on your machine | local checks |
 | `cs_list_solutions`, `cs_create_solution` | Power Apps maker portal > Solutions: pick or create the unmanaged solution the agent lives in | `pac solution list`; empty manifest packed and imported |
-| `cs_init_agent` (with `environment`, `solutionName`) | Copilot Studio > Create > New agent, saved into that solution; the agent appears with its default system topics | `pac copilot init`, `pack`, `pac solution import`, `pac copilot clone` |
+| `cs_create_agent` (with `environment`, `solutionName`) | Copilot Studio > Create > New agent, saved into that solution; the agent appears with its default system topics | `pac copilot init`, `pack`, `pac solution import`, `pac copilot clone` |
 | `cs_generate_instructions` | Overview > Instructions: the portal's "generate with AI" step, using your AI Builder prompt | `pac copilot model predict`, then `agent.mcs.yml` |
 | `cs_update_agent` | Overview: instructions, conversation starters, model | edit `agent.mcs.yml` |
 | `cs_add_topic` | Topics > Add a topic > From blank: trigger phrases and the message, question, condition, set variable, redirect, HTTP, generative answers, adaptive card, transfer and end conversation nodes | YAML in `topics/` |
@@ -455,7 +455,7 @@ New agent (standard harness):
 ```mermaid
 flowchart TD
     A["cs_init"] --> B["cs_list_solutions<br/>pick one, or cs_create_solution"]
-    B --> C["cs_init_agent<br/>environment + solutionName + confirm"]
+    B --> C["cs_create_agent<br/>environment + solutionName + confirm"]
     C --> D["cs_generate_instructions<br/>AI Builder prompt, then apply"]
     D --> E["cs_add_topic / cs_add_knowledge_source / cs_add_tool<br/>(cs_list_connectors, cs_describe_connector)"]
     E --> R["cs_review_agent"]
@@ -534,7 +534,7 @@ settings and instructions, and one `botcomponent` row per topic, knowledge sourc
 and variable, each with a modified-on stamp and the user who changed it. The server uses those rows
 to see drift without a re-scan, and a clone to confirm it when the details matter.
 
-1. **Sync stamp.** `cs_clone_agent`, `cs_pull`, `cs_push` and `cs_init_agent` (with
+1. **Sync stamp.** `cs_clone_agent`, `cs_pull`, `cs_push` and `cs_create_agent` (with
    `environment`) write `.mcs/cs-sync.json`: a fingerprint of every workspace file and, when a
    Dataverse sign-in is cached, the modified-on stamp of every component. `pac copilot pack`
    ignores `.mcs/` (verified with pac 2.11.2; a dotfile at the workspace root is rejected).

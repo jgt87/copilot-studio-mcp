@@ -22,11 +22,11 @@ Start here
 
 How the pieces fit
 - An agent is a folder of YAML: agent.mcs.yml, settings.mcs.yml, topics/, knowledge/, actions/ (tools), trigger/, variables/, workflows/. Authoring tools write those files; nothing reaches the live agent until cs_push.
-- Get a workspace with cs_clone_agent (existing agent) or cs_init_agent (new one). cs_describe_workspace inventories it.
+- Get a workspace with cs_clone_agent (existing agent) or cs_create_agent (new one). cs_describe_workspace inventories it.
 - Order that works: edit files, cs_review_agent, cs_validate, cs_push, then cs_publish, then cs_chat.
 
 Rules to respect
-- Nothing reaches the live agent without the user's approval. Every tool that changes an environment (cs_push, cs_publish, cs_run_evaluation, cs_import_solution, cs_deploy_solution, cs_init_agent with an environment, the delete tools) returns a dry run until you pass confirm: true. Show the user that dry run in your own words, ask, and pass confirm only after they say yes. Never confirm on your own initiative, never confirm a batch of steps in advance, and treat approval for one call as approval for that call only. Local file changes (authoring, editing) do not need approval; sending them to Copilot Studio does.
+- Nothing reaches the live agent without the user's approval. Every tool that changes an environment (cs_push, cs_publish, cs_run_evaluation, cs_import_solution, cs_deploy_solution, cs_create_agent with an environment, the delete tools) returns a dry run until you pass confirm: true. Show the user that dry run in your own words, ask, and pass confirm only after they say yes. Never confirm on your own initiative, never confirm a batch of steps in advance, and treat approval for one call as approval for that call only. Local file changes (authoring, editing) do not need approval; sending them to Copilot Studio does.
 - If CPS_READ_ONLY is set, the environment-changing tools are not registered at all: report that the user has locked this session to local work rather than looking for a way around it.
 - Two sign-ins exist: pac (run "pac auth create --environment <id>" in a terminal, this server cannot do it interactively) and MSAL for the API-based tools (cs_login). cs_login can return status "pending" with a URL; give that URL to the user to open.
 - Connector, MCP and prompt tools need a connection that only the portal can authorise. cs_add_tool writes the YAML and tells you the portal step; after the user connects, run cs_pull.
@@ -82,11 +82,11 @@ It may return \`status: "pending"\` with a URL: show that URL and ask the user t
 edits go back with \`cs_push\`. Run \`cs_describe_workspace\` to see what it contains.
 
 **New agent.** Pick the solution it lives in: \`cs_list_solutions\`, or \`cs_create_solution\`
-(needs \`confirm\`). Then \`cs_init_agent\` with \`name\`, \`publisherPrefix\`, \`projectDir\`,
+(needs \`confirm\`). Then \`cs_create_agent\` with \`name\`, \`publisherPrefix\`, \`projectDir\`,
 \`environment\`, \`solutionName\` and \`confirm\`. That creates the agent in the environment and
 clones it back, so the workspace is sync-connected.
 
-Without \`environment\`, \`cs_init_agent\` only scaffolds locally. A local scaffold packs settings,
+Without \`environment\`, \`cs_create_agent\` only scaffolds locally. A local scaffold packs settings,
 the agent and topics only; knowledge and tools need a sync-connected workspace. The tools say so
 in a \`layoutNote\` when it applies.
 
@@ -349,7 +349,7 @@ lands in Dataverse rows with a modified-on stamp and the user who changed it, so
 drift without re-downloading everything.
 
 ## The stamp
-\`cs_clone_agent\`, \`cs_pull\`, \`cs_push\` and \`cs_init_agent\` write \`.mcs/cs-sync.json\`: a
+\`cs_clone_agent\`, \`cs_pull\`, \`cs_push\` and \`cs_create_agent\` write \`.mcs/cs-sync.json\`: a
 fingerprint per file and, when a Dataverse sign-in is cached, the modification stamp of every
 component. \`cs_describe_workspace\` shows the last sync.
 
@@ -466,7 +466,7 @@ const TROUBLESHOOTING = `# Troubleshooting
 | \`cs_login\` returns \`status: "pending"\` | Normal when no browser can be opened from the server. Show the URL and ask the user to open it on the machine running the server; the login completes in the background. \`cs_login_status wait=true\` then confirms it. |
 | Device-code sign-in is refused | Many tenants block that flow by Conditional Access. Use the pending-URL path above. |
 | A cloud tool says there is no cached token | Run \`cs_login\`. The drift check and other silent readers never prompt on their own. |
-| "Unsupported directory" from pac pack | The workspace was created by \`cs_init_agent\` without an environment. It packs settings, agent and topics only. Clone the agent (or init with \`environment\`) to use knowledge, tools, triggers and flows. |
+| "Unsupported directory" from pac pack | The workspace was created by \`cs_create_agent\` without an environment. It packs settings, agent and topics only. Clone the agent (or init with \`environment\`) to use knowledge, tools, triggers and flows. |
 | \`cs_push\` is blocked by validation | \`cs_validate\` names the file and the property. Unknown properties inside dialog actions are errors; at the document root they are only warnings. \`force: true\` pushes anyway. |
 | \`cs_push\` is blocked by drift | A maker changed the same component in the portal. \`cs_pull\` merges, then push again. \`force: true\` discards their change. |
 | A tool never runs | Its \`modelDescription\` does not say when to use it, or its connection is unbound. \`cs_review_agent\` reports both. |
@@ -519,7 +519,7 @@ export function nextSteps(ws: WorkspaceInfo | null, opts: { pacFound?: boolean; 
   if (opts.pacProfile === false) out.push("No pac auth profile: ask the user to run 'pac auth create --environment <id>' in a terminal.");
   if (opts.signedIn === false) out.push("Not signed in for the API-based tools (evaluations, chat, drift): run cs_login.");
   if (!ws) {
-    out.push("No workspace found: cs_clone_agent for an existing agent, or cs_init_agent (with environment and solutionName) for a new one. cs_guide topic 'getting-started'.");
+    out.push("No workspace found: cs_clone_agent for an existing agent, or cs_create_agent (with environment and solutionName) for a new one. cs_guide topic 'getting-started'.");
     return out;
   }
   if (ws.sync.source === "none") out.push("This workspace has no sync metadata, so only settings, agent and topics can be packaged. Clone the agent (cs_clone_agent) or init with an environment to use knowledge, tools and flows.");

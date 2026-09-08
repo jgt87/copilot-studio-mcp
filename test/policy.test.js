@@ -35,7 +35,7 @@ test("the environment-write list covers the pac wrappers that mutate, and nothin
     assert.equal(ENVIRONMENT_WRITE_TOOLS.has(spec.tool), spec.mutating === true, `${spec.tool} always-writes?`);
     assert.equal(CONDITIONAL_WRITE_TOOLS.has(spec.tool), typeof spec.mutating === "function", `${spec.tool} conditionally-writes?`);
   }
-  for (const name of ["cs_check_solution", "cs_merge_translations", "cs_solution_online_version", "cs_init_agent"]) {
+  for (const name of ["cs_check_solution", "cs_merge_translations", "cs_solution_online_version", "cs_create_agent"]) {
     assert.ok(CONDITIONAL_WRITE_TOOLS.has(name), `${name} writes only for some inputs and must stay usable in read-only mode`);
     assert.ok(!ENVIRONMENT_WRITE_TOOLS.has(name));
   }

@@ -126,7 +126,7 @@ const rules: Rule[] = [
       if (c.parseError) out.push(f("yaml-parse-error", "error", `'${c.relPath}' does not parse: ${c.parseError}`, "Fix the YAML (cs_validate shows the location).", c.relPath));
     }
     if (ws.sync.source === "none" && (ws.knowledge.length || ws.actions.length || ws.triggers.length || ws.workflows.length || ws.variables.length)) {
-      out.push(f("pack-only-workspace", "info", "This workspace is not sync-connected; knowledge, tools, triggers, flows and variables are not packaged by pac copilot pack.", "Bootstrap or clone the agent (cs_init_agent with environment, cs_clone_agent) and cs_push."));
+      out.push(f("pack-only-workspace", "info", "This workspace is not sync-connected; knowledge, tools, triggers, flows and variables are not packaged by pac copilot pack.", "Bootstrap or clone the agent (cs_create_agent with environment, cs_clone_agent) and cs_push."));
     }
     return out;
   },

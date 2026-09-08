@@ -130,7 +130,7 @@ Cross-cutting behaviour in `src/index.ts`:
   cross-checks the list against the tools that declare `confirm` in `dist/index.js`, so adding a
   mutating tool without listing it fails the build.
 - **Confirm contract**: every tool that mutates a live environment (`cs_push`, `cs_publish`,
-  `cs_import_solution`, `cs_run_evaluation`, bootstrap `cs_init_agent`, non-read-only `cs_pac`)
+  `cs_import_solution`, `cs_run_evaluation`, bootstrap `cs_create_agent`, non-read-only `cs_pac`)
   returns `dryRun()` unless `confirm: true`. Keep new mutating tools on this pattern.
 - **Context resolution** (`cloudContext`): explicit args, then workspace sync metadata, then
   `CPS_*` env vars, then a BAP lookup for the Dataverse URL. Tenant falls back to `organizations`.
@@ -203,7 +203,7 @@ properties at the document root are warnings (the published schema lags the prod
 Nothing below the unit tests and the pack oracle has been run against a tenant.
 
 1. `pac auth create --environment <id>` in a terminal; `cs_init` shows the profile.
-2. `cs_init_agent` with `environment` + `confirm`; `cs_describe_workspace` reports `sync.source != none`.
+2. `cs_create_agent` with `environment` + `confirm`; `cs_describe_workspace` reports `sync.source != none`.
 3. `cs_add_topic` + `cs_add_knowledge_source` (public site) + `cs_update_agent`; `cs_validate`;
    `cs_push confirm`; the portal shows the topic and knowledge.
 4. `cs_publish confirm`; `cs_chat` returns a grounded answer.

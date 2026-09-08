@@ -145,7 +145,7 @@ function resolveRoot(workspace?: string): string {
   const start = workspace ?? process.env.CPS_WORKSPACE ?? process.cwd();
   const root = findWorkspaceRoot(start);
   if (!root) {
-    throw new Error(`No Copilot Studio agent workspace found at or around ${start} (looking for agent.mcs.yml / settings.mcs.yml / agent.sync.yaml). Pass 'workspace' or run cs_clone_agent / cs_init_agent first.`);
+    throw new Error(`No Copilot Studio agent workspace found at or around ${start} (looking for agent.mcs.yml / settings.mcs.yml / agent.sync.yaml). Pass 'workspace' or run cs_clone_agent / cs_create_agent first.`);
   }
   return root;
 }
@@ -199,7 +199,7 @@ function dryRun(summary: string, extra: Record<string, unknown> = {}) {
  */
 function layoutNote(ws: WorkspaceInfo): string | null {
   if (ws.sync.source !== "none") return null;
-  return "Workspace has no sync metadata (pac copilot init without --environment). 'pac copilot pack' packages only settings and topics; knowledge, tools, flows, triggers and variables are applied by 'pac copilot push' from a sync-connected workspace (cs_init_agent with environment, or cs_clone_agent).";
+  return "Workspace has no sync metadata (pac copilot init without --environment). 'pac copilot pack' packages only settings and topics; knowledge, tools, flows, triggers and variables are applied by 'pac copilot push' from a sync-connected workspace (cs_create_agent with environment, or cs_clone_agent).";
 }
 
 /** Dataverse URL and token for the workspace's environment without any interaction; null when not signed in or unresolvable. */
@@ -347,7 +347,7 @@ server.registerTool(
   {
     title: "Start a session",
     description:
-      "Run this first in a new session. Reports the pac CLI and .NET, the pac auth profiles (and which is active), the MSAL sign-in, the environment variables, the write policy in force, and the agent workspace it found, then ends with the next steps for that workspace. Read-only. It does not create anything: cs_init_agent scaffolds or creates an agent, cs_guide explains a task.",
+      "Run this first in a new session. Reports the pac CLI and .NET, the pac auth profiles (and which is active), the MSAL sign-in, the environment variables, the write policy in force, and the agent workspace it found, then ends with the next steps for that workspace. Read-only. It does not create anything: cs_create_agent scaffolds or creates an agent, cs_guide explains a task.",
     inputSchema: { workspace: workspaceArg },
   },
   async ({ workspace }) => {
@@ -527,9 +527,9 @@ server.registerTool(
 // ---- sync (pac) -----------------------------------------------------------
 
 server.registerTool(
-  "cs_init_agent",
+  "cs_create_agent",
   {
-    title: "Scaffold a new agent workspace",
+    title: "Create a new agent",
     description:
       "pac copilot init: create a new agent workspace on disk. Without 'environment' it is a local scaffold (no sign-in). With 'environment' it also creates the live agent and connects the workspace (needs pac auth profile and confirm: true). With 'solutionName' the agent is created inside that solution (existing unmanaged solution, or a new one with createSolution: true) via init, pack, import and clone; without it, pac puts the agent in a solution named after the agent. authoringMode 'classic' is the standard harness (topics, evaluations); 'cli-copilot' is the GitHub Copilot harness.",
     inputSchema: {
@@ -1867,7 +1867,7 @@ server.registerTool(
   "cs_create_solution",
   {
     title: "Create an unmanaged solution",
-    description: "Create a new unmanaged solution (and its publisher if missing) in an environment by packing an empty solution manifest and importing it with pac. Use it to prepare the container before cs_init_agent with solutionName. Requires confirm: true.",
+    description: "Create a new unmanaged solution (and its publisher if missing) in an environment by packing an empty solution manifest and importing it with pac. Use it to prepare the container before cs_create_agent with solutionName. Requires confirm: true.",
     inputSchema: { uniqueName: z.string().describe("e.g. contoso_Agents"), displayName: z.string().optional(), publisherPrefix: z.string().describe("2-8 lowercase characters, e.g. contoso"), publisherName: z.string().optional(), environment: envOrProfile, workDir: z.string().optional().describe("Where the manifest and zip are written (default <workspace>/.cs-solutions/<uniqueName>)"), confirm: confirmArg },
   },
   async (a) => {
