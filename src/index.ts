@@ -1660,9 +1660,40 @@ server.registerTool("cs_add_variable", { title: "Add a global variable", descrip
 server.registerTool(
   "cs_update_agent",
   {
-    title: "Update agent instructions / starters / model",
-    description: "Edit agent.mcs.yml (standard harness): replace or append instructions, set displayName, replace or add conversation starters, set the model hint. For GitHub Copilot harness (cli-copilot) workspaces the instructions go into settings.mcs.yml.",
-    inputSchema: { workspace: workspaceArg, instructions: z.string().optional(), appendInstructions: z.string().optional(), displayName: z.string().optional(), conversationStarters: z.array(z.object({ title: z.string(), text: z.string() })).optional(), addConversationStarters: z.array(z.object({ title: z.string(), text: z.string() })).optional(), modelNameHint: z.string().optional() },
+    title: "Update the agent's settings",
+    description: "Edit agent.mcs.yml (standard harness): instructions, display name, conversation starters, model hint, and the settings the portal groups under responses and generative AI: response instructions (wording and formatting), response mode, conversation history, capability toggles (web browsing, code interpreter, image generation, Teams / SharePoint / email / meeting / people search), whether the model may use its own general knowledge, content moderation level, file analysis and semantic search. Local file change; cs_push applies it. For GitHub Copilot harness (cli-copilot) workspaces the instructions go into settings.mcs.yml.",
+    inputSchema: {
+      workspace: workspaceArg,
+      instructions: z.string().optional().describe("Replace the instructions"),
+      appendInstructions: z.string().optional().describe("Add a paragraph to the instructions"),
+      displayName: z.string().optional(),
+      conversationStarters: z.array(z.object({ title: z.string(), text: z.string() })).optional(),
+      addConversationStarters: z.array(z.object({ title: z.string(), text: z.string() })).optional(),
+      modelNameHint: z.string().optional().describe("Model hint, e.g. GPT5Chat"),
+      responseInstructions: z.string().optional().describe("How answers should be worded and formatted (the portal's response instructions), separate from the main instructions"),
+      appendResponseInstructions: z.string().optional(),
+      defaultResponseMode: z.enum(["Auto", "ThinkDeeper", "QuickResponse"]).optional().describe("Response mode: Auto, ThinkDeeper (more reasoning, slower) or QuickResponse"),
+      history: z.enum(["none", "conversation"]).optional().describe("Whether the agent sees conversation history"),
+      historyMessages: z.number().optional().describe("How many past user messages to include (with history: conversation)"),
+      capabilities: z
+        .object({
+          webBrowsing: z.boolean().optional(),
+          codeInterpreter: z.boolean().optional(),
+          generateImages: z.boolean().optional(),
+          searchTeams: z.boolean().optional(),
+          searchOneDriveAndSharePoint: z.boolean().optional(),
+          searchEmails: z.boolean().optional(),
+          searchMeetings: z.boolean().optional(),
+          searchPeople: z.boolean().optional(),
+          searchPeopleIncludeRelatedContent: z.boolean().optional(),
+        })
+        .optional()
+        .describe("Capability toggles; only the ones you pass are changed"),
+      useModelKnowledge: z.boolean().optional().describe("Whether the model may answer from its own general knowledge as well as the knowledge sources"),
+      contentModeration: z.enum(["Minimum", "Low", "Medium", "High", "Maximum"]).optional(),
+      isFileAnalysisEnabled: z.boolean().optional(),
+      isSemanticSearchEnabled: z.boolean().optional(),
+    },
   },
   async (a) => {
     try {

@@ -145,6 +145,24 @@ escalation) and over about 8000 (the important rules get diluted; move procedure
 \`cs_update_agent\` with \`addConversationStarters\`: two or three examples so users see what the
 agent can do. The review notes their absence.
 
+## Responses and the rest of the agent's settings
+The same tool writes what the portal groups under responses and generative AI:
+
+- \`responseInstructions\`: how answers should be worded and formatted (length, lists, citations,
+  language). Keep it separate from the instructions, which say what the agent does.
+- \`defaultResponseMode\`: \`Auto\`, \`ThinkDeeper\` (more reasoning, slower) or \`QuickResponse\`.
+- \`history\` (\`none\` or \`conversation\`, with \`historyMessages\`): how much of the conversation
+  the agent sees.
+- \`capabilities\`: web browsing, code interpreter, image generation, and Teams, SharePoint, email,
+  meeting and people search. Only the toggles you pass change.
+- \`useModelKnowledge\`: whether the model may answer beyond your knowledge sources. Turning it off
+  is the usual fix when an agent invents things.
+- \`contentModeration\` (\`Minimum\` to \`Maximum\`), \`isFileAnalysisEnabled\`,
+  \`isSemanticSearchEnabled\`.
+
+How the agent runs (orchestration, authentication, language, analytics) lives in
+\`settings.mcs.yml\` instead: \`cs_update_settings\` sets those by dot path.
+
 ## GitHub Copilot harness
 In a \`cli-copilot\` workspace, instructions live in \`settings.mcs.yml\` under
 \`configuration.agentSettings.instructions.segments\`. \`cs_update_agent\` handles that layout;

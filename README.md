@@ -298,7 +298,7 @@ Authoring (files, schema-validated)
 | `cs_set_flow_state`, `cs_update_flow`, `cs_create_flow` | turn a flow on or off, replace the definition of an unmanaged flow, or create a new flow in an environment or solution (`confirm`) |
 | `cs_list_flow_runs`, `cs_get_flow_run`, `cs_run_flow` | run history of a flow, one run in detail, and starting a manual run (`confirm`); these use the Power Automate service, a separate sign-in (`cs_login scope='flow'`) |
 | `cs_add_trigger`, `cs_add_variable` | event trigger for a flow; global variable |
-| `cs_update_agent`, `cs_update_settings` | instructions, conversation starters, model, settings |
+| `cs_update_agent`, `cs_update_settings` | the agent's own settings (instructions, response instructions and mode, history, capabilities, moderation, model, starters) and anything else in `settings.mcs.yml` by dot path; see "Agent settings this server can write" |
 | `cs_edit_topic`, `cs_edit_tool`, `cs_edit_knowledge` | change existing components in place: trigger phrases, nodes, descriptions, inputs, sites |
 | `cs_remove_component`, `cs_delete_agent`, `cs_delete_solution` | remove a component from the workspace; delete an agent or a solution in the environment (`confirm`) |
 | `cs_review_agent` | rules-based review: instructions, escalation and fallback, phrase overlap, tool descriptions, connections, authentication versus private knowledge, secrets |
@@ -362,6 +362,50 @@ can talk to. Every step is one tool call; steps that change the environment need
 
 When the agent later moves to test and production, continue with the solution flow (`cs_pull_solution`,
 `cs_create_deployment_settings`, `cs_deploy_solution`) and the DTAP comparison below.
+
+## Agent settings this server can write
+
+An agent's settings live in two files, and the server reads, validates and pushes both. The table
+maps what the portal shows to the field and the tool argument that writes it. Everything here is a
+local file change; `cs_push` applies it, and `cs_publish` makes it live.
+
+**`agent.mcs.yml`** (the agent definition), written by `cs_update_agent`:
+
+| Portal | Field | Argument |
+| --- | --- | --- |
+| Instructions | `instructions` | `instructions`, `appendInstructions` (or `cs_generate_instructions`) |
+| Responses: how answers are worded and formatted | `responseInstructions` | `responseInstructions`, `appendResponseInstructions` |
+| Responses: response mode | `defaultResponseMode` | `defaultResponseMode`: `Auto`, `ThinkDeeper`, `QuickResponse` |
+| Conversation history the agent sees | `historyType` | `history`: `none` or `conversation`, with `historyMessages` |
+| Capabilities: web browsing, code interpreter, image generation, Teams / SharePoint / email / meeting / people search | `gptCapabilities` | `capabilities` (only the toggles you pass change) |
+| General knowledge: may the model answer beyond your knowledge sources | `aISettings.useModelKnowledge` | `useModelKnowledge` |
+| Content moderation | `aISettings.contentModeration` | `contentModeration`: `Minimum` to `Maximum` |
+| File analysis, semantic search | `aISettings.isFileAnalysisEnabled`, `aISettings.isSemanticSearchEnabled` | `isFileAnalysisEnabled`, `isSemanticSearchEnabled` |
+| Model | `aISettings.model.modelNameHint` | `modelNameHint` |
+| Conversation starters | `conversationStarters` | `conversationStarters`, `addConversationStarters` |
+| Display name | `displayName` | `displayName` |
+
+Values are checked against the authoring schema, so a response mode or moderation level outside the
+allowed set is refused rather than written.
+
+**`settings.mcs.yml`** (how the agent runs), written by `cs_update_settings` with dot paths, for
+example `{"configuration.settings.GenerativeActionsEnabled": true}`:
+
+| Portal | Path |
+| --- | --- |
+| Generative orchestration on or off | `configuration.settings.GenerativeActionsEnabled` |
+| Authentication | `authenticationMode` (`None`, `Integrated`, `Manual`), `authenticationTrigger`, `accessControlPolicy` |
+| Language | `language` |
+| Agent can be called by other agents | `configuration.isAgentConnectable` |
+| Analytics, telephony, voice, network | `configuration.analyticsSettings`, `isTelephonyEnabled`, `botSpeechSettings`, `networkSettings` |
+
+`cs_update_settings` refuses to change `authoringModel`, `recognizer.kind` and `template`,
+because the tooling depends on them. `cs_lookup_schema` shows any other field the schema allows,
+and `cs_validate` checks whatever you write by hand.
+
+One caveat: these field names come from the authoring schema, not from a round trip through a live
+agent, so which portal control maps to which field is inference. Set one in the portal, run
+`cs_clone_agent` and compare if you need certainty.
 
 ## Tool catalog: knowing what an agent can use
 
@@ -427,7 +471,7 @@ would do in Copilot Studio for the same result.
 | `cs_list_solutions`, `cs_create_solution` | Power Apps maker portal > Solutions: pick or create the unmanaged solution the agent lives in | `pac solution list`; empty manifest packed and imported |
 | `cs_create_agent` (with `environment`, `solutionName`) | Copilot Studio > Create > New agent, saved into that solution; the agent appears with its default system topics | `pac copilot init`, `pack`, `pac solution import`, `pac copilot clone` |
 | `cs_generate_instructions` | Overview > Instructions: the portal's "generate with AI" step, using your AI Builder prompt | `pac copilot model predict`, then `agent.mcs.yml` |
-| `cs_update_agent` | Overview: instructions, conversation starters, model | edit `agent.mcs.yml` |
+| `cs_update_agent` | Overview and Settings: instructions, response instructions and mode, conversation history, capability toggles, content moderation, model, conversation starters | edit `agent.mcs.yml` |
 | `cs_add_topic` | Topics > Add a topic > From blank: trigger phrases and the message, question, condition, set variable, redirect, HTTP, generative answers, adaptive card, transfer and end conversation nodes | YAML in `topics/` |
 | `cs_add_knowledge_source` | Knowledge > Add knowledge: public website, SharePoint, Graph connector, or file upload | YAML in `knowledge/`, files in `knowledge/files/` |
 | `cs_list_connectors`, `cs_describe_connector` | Tools > Add a tool: the connector picker and its list of actions | Power Apps connector registry |

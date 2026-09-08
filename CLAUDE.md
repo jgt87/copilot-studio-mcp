@@ -184,6 +184,13 @@ stdout is the MCP transport. All diagnostics go through `log()` to stderr.
 - Mermaid on GitHub: no edges to subgraph ids, no `<-->`, no cylinder `[( )]` shapes, no labelled
   self-loops; the "How it fits together" diagram failed to render with those.
 
+- `cs_update_agent` writes the whole agent definition, not only instructions: `responseInstructions`,
+  `defaultResponseMode`, `historyType`, `gptCapabilities` (merged, not replaced) and the
+  `aISettings` block (model knowledge, content moderation, file analysis, semantic search). Enum
+  values are checked in `authoring/agent.ts` against the schema's `DefaultResponseMode` and
+  `ContentModerationLevel`. The README table "Agent settings this server can write" is the
+  user-facing map; keep it in step when adding a field.
+
 ## Validation policy
 
 `cs_validate` blocks `cs_push` on errors, so false positives cost more than misses. Unknown
