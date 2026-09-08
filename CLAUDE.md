@@ -91,8 +91,10 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   conflicts unless `force`. Dataverse access for all of this goes through `silentDataverse` in
   index.ts and must stay non-interactive.
 
-- **pac wrappers** (`src/pacCommands.ts`): every pac command without a bespoke tool is one entry in
-  `PAC_COMMANDS` (tool name, `pac` argv, typed params with flags, `mutating` as a boolean or a
+- **pac wrappers** (`src/pacSpecs/*.ts`, one file per pac command group): every pac command without
+  a bespoke tool is one entry in that group's `SPECS`, assembled into `PAC_COMMANDS` by
+  `src/pacCommands.ts` (which also holds the builders; `src/pacParams.ts` holds the spec types and
+  the shared parameter fragments, so the group files never import the assembled table). An entry is (tool name, `pac` argv, typed params with flags, `mutating` as a boolean or a
   per-input function, secrets). index.ts registers them in one loop: `zodShapeFor` builds the
   schema, `buildPacArgs` the argv, secrets are masked in logs (`runPac` `redact`), dry runs and
   results. Add a command by adding a spec and a `buildPacArgs` assertion in
