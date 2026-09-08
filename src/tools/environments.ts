@@ -46,7 +46,15 @@ server.registerTool(
         const ws = tryWorkspace(args.workspace);
         const envId = args.environmentId ?? ws?.sync.environmentId ?? process.env.CPS_ENVIRONMENT_ID;
         const r = await runPac(["copilot", "list", ...(envId ? ["--environment", envId] : [])], { timeoutMs: 120_000 });
-        if (r.ok) return text({ via: "pac", environmentId: envId ?? "(active profile)", agents: parseCopilotList(r.stdout), raw: tail(r.stdout, 40) });
+        if (r.ok)
+          return text({
+            via: "pac",
+            environmentId: envId ?? "(active profile)",
+            agents: parseCopilotList(r.stdout),
+            // The two routes return different columns, and picking pac is invisible otherwise.
+            note: "Listed through pac, which reports componentState, statusCode, stateCode and solutionId. For publishedOn, authenticationMode and ownership, call again with via: 'dataverse' (needs a cs_login that covers Dataverse; cs_init reports whether it does).",
+            raw: tail(r.stdout, 40),
+          });
         if (via === "pac") return fail(explainFailure(r));
         log(`pac copilot list failed (${explainFailure(r)}); falling back to Dataverse`);
       }

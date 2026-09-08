@@ -16,7 +16,7 @@ import { adminProfileDefault, makerProfileDefault } from "../pacProfile.js";
 import { guide, nextSteps } from "../guide.js";
 import { readOnlyMode } from "../policy.js";
 
-import { BAP_SCOPE, COPILOT_INVOKE_SCOPE, effectiveClientId, listAccounts, pendingLoginStatus, PPAPI_SCOPE, resolveTenantId, signOut, startDeviceCodeLogin, startInteractiveLogin, waitForPendingLogin, type AuthConfig } from "../auth.js";
+import { acquireSilent, BAP_SCOPE, COPILOT_INVOKE_SCOPE, effectiveClientId, listAccounts, pendingLoginStatus, PPAPI_SCOPE, resolveTenantId, signOut, startDeviceCodeLogin, startInteractiveLogin, waitForPendingLogin, type AuthConfig } from "../auth.js";
 import { dataverseScope } from "../cloud/dataverse.js";
 import { FLOW_SCOPE } from "../cloud/flowruns.js";
 import { VERSION, clientArg, execFileAsync, fail, server, tenantArg, text, tryWorkspace, withheldTools, workspaceArg } from "./shared.js";
@@ -46,6 +46,7 @@ server.registerTool(
       env: probeEnv(),
       workspace: ws ? { root: ws.root, harness: ws.harness, schemaName: ws.schemaName, sync: ws.sync.source, environmentId: ws.sync.environmentId, agentId: ws.sync.agentId } : { found: false, searchedFrom: workspace ?? process.env.CPS_WORKSPACE ?? process.cwd() },
       ...msal,
+      cloudAccess: await probeTokenScopes(ws, msalAccounts.length > 0),
       schema: { path: schemaPath(), kinds: listKinds().length },
       profiles: { adminDefault: adminProfileDefault() ?? null, makerDefault: makerProfileDefault() ?? null },
       writePolicy: { confirmRequired: "Every tool that changes a live environment returns a dry run until confirm: true, which the user must approve.", readOnlyMode: readOnlyMode(), ...(withheldTools.length ? { toolsWithheld: withheldTools } : {}) },
@@ -90,6 +91,44 @@ async function probeMsal(ws: WorkspaceInfo | null): Promise<Record<string, unkno
   } catch (err) {
     return { msalAccounts: { error: errorMessage(err) } };
   }
+}
+
+/**
+ * Which cloud resources a token can actually be had for, without prompting.
+ *
+ * A cached account is not the same as a usable token: the first live run had an
+ * account listed here and still could not read Dataverse, so the drift quick
+ * check and the transcript tools failed with no warning beforehand. Each entry
+ * is a silent acquisition against the real scope, so this says what will work
+ * rather than what signed in once.
+ */
+async function probeTokenScopes(ws: WorkspaceInfo | null, hasAccount: boolean): Promise<Record<string, unknown>> {
+  if (!hasAccount) return { ready: {}, note: "No MSAL account cached: every Dataverse, Power Platform API and connector-catalog tool will fail until cs_login completes. The pac-backed tools are unaffected." };
+  const cfg: AuthConfig = { tenantId: resolveTenantId(ws?.sync.tenantId ?? undefined), clientId: effectiveClientId() };
+  const dataverseUrl = ws?.sync.dataverseUrl ?? process.env.CPS_ENVIRONMENT_URL ?? null;
+  const targets: { key: string; scope: string; unlocks: string }[] = [
+    { key: "powerPlatformApi", scope: PPAPI_SCOPE, unlocks: "evaluations (cs_list_test_sets, cs_run_evaluation, cs_get_evaluation_run)" },
+    { key: "powerAppsService", scope: BAP_SCOPE, unlocks: "cs_list_environments, the Dataverse URL lookup, cs_list_connectors, cs_describe_connector" },
+    { key: "powerAutomate", scope: FLOW_SCOPE, unlocks: "cs_list_flow_runs, cs_get_flow_run, cs_run_flow" },
+    ...(dataverseUrl ? [{ key: "dataverse", scope: dataverseScope(dataverseUrl), unlocks: "cs_check_drift quick mode, cs_list_agents via dataverse, the transcript tools, cs_publish via dataverse" }] : []),
+  ];
+  const results: { key: string; unlocks: string; ok: boolean; error?: string }[] = await Promise.all(
+    targets.map(async (t) => {
+      try {
+        return { key: t.key, unlocks: t.unlocks, ok: Boolean(await acquireSilent(cfg, [t.scope])) };
+      } catch (err) {
+        return { key: t.key, unlocks: t.unlocks, ok: false, error: errorMessage(err) };
+      }
+    }),
+  );
+  const ready: Record<string, unknown> = {};
+  for (const r of results) ready[r.key] = r.ok ? "ok" : { needsSignIn: true, unlocks: r.unlocks, ...(r.error ? { error: r.error } : {}) };
+  if (!dataverseUrl) ready.dataverse = { unknown: true, why: "no Dataverse URL in the workspace sync metadata or CPS_ENVIRONMENT_URL, so it could not be probed" };
+  const missing = results.filter((r) => !r.ok);
+  return {
+    ready,
+    ...(missing.length ? { note: `cs_login has not granted ${missing.length === 1 ? "this resource" : "these resources"} yet: ${missing.map((m) => m.key).join(", ")}. Run cs_login (add scope for Power Automate) before the tools listed under each.` } : {}),
+  };
 }
 
 server.registerTool(

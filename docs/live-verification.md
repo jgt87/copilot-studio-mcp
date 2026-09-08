@@ -47,8 +47,13 @@ Register the server in your MCP client (README "Install and register"), then sig
 - `cs_login` for the cloud tools. On a machine where the browser does not launch, it returns
   `status: pending` with a URL — open it manually; that is a known and supported path.
 
-**Which sign-in each phase needs.** Three steps silently did something different on the first run
-because only the pac profile was present:
+**Check what you can actually reach before you start.** `cs_init` now probes each cloud resource
+with a silent token acquisition and reports `cloudAccess.ready`. A cached account is not the same as
+a usable token: on the first run `cs_init` listed an account and Dataverse still could not be read,
+which is what made three steps quietly do something else. If `cloudAccess.ready.dataverse` is not
+`ok`, phases C (quick) and D will not work yet.
+
+The same information, as a table:
 
 | Needs | Steps |
 | --- | --- |
