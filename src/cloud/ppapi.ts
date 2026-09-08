@@ -161,6 +161,37 @@ const PASS = /^(pass|passed|success|succeeded)$/i;
 const FAIL = /^(fail|failed)$/i;
 const ERR = /^(error|errored|failedtorun|skipped)$/i;
 
+type MetricBucket = { passed: number; failed: number; errored: number; other: number };
+
+/** Which bucket one metric result falls into. A reported error beats an unrecognised status. */
+function metricOutcome(m: { status?: string | null; errorReason?: string | null }): keyof MetricBucket {
+  const st = m.status ?? "";
+  if (PASS.test(st)) return "passed";
+  if (FAIL.test(st)) return "failed";
+  if (ERR.test(st) || m.errorReason) return "errored";
+  return "other";
+}
+
+/**
+ * One test case: its metrics, counted into the per-metric buckets, and the
+ * verdict for the case as a whole. A case passes only when every metric passed
+ * and there was at least one; otherwise an error outranks a failure, which
+ * outranks an unrecognised status.
+ */
+function summarizeCase(tc: TestCaseResult, byMetric: Record<string, MetricBucket>): { verdict: keyof MetricBucket; entry: RunSummary["cases"][number] } {
+  const outcomes: (keyof MetricBucket)[] = [];
+  const metrics = tc.metricsResults.map((m) => {
+    const bucket = (byMetric[m.type] ??= { passed: 0, failed: 0, errored: 0, other: 0 });
+    const outcome = metricOutcome(m);
+    bucket[outcome]++;
+    outcomes.push(outcome);
+    return { type: m.type, status: m.status, reason: m.errorReason ?? m.aiResultReason ?? null };
+  });
+  const allPassed = outcomes.length > 0 && outcomes.every((o) => o === "passed");
+  const verdict: keyof MetricBucket = allPassed ? "passed" : outcomes.includes("errored") ? "errored" : outcomes.includes("failed") ? "failed" : "other";
+  return { verdict, entry: { testCaseId: tc.testCaseId, state: tc.state, metrics } };
+}
+
 export function summarizeRun(run: TestRun): RunSummary {
   const summary: RunSummary = {
     runId: run.id,
@@ -175,33 +206,9 @@ export function summarizeRun(run: TestRun): RunSummary {
     cases: [],
   };
   for (const tc of run.testCasesResults ?? []) {
-    let casePassed = true;
-    let caseErrored = false;
-    let caseFailed = false;
-    const metrics = tc.metricsResults.map((m) => {
-      const bucket = (summary.byMetric[m.type] ??= { passed: 0, failed: 0, errored: 0, other: 0 });
-      const st = m.status ?? "";
-      if (PASS.test(st)) bucket.passed++;
-      else if (FAIL.test(st)) {
-        bucket.failed++;
-        caseFailed = true;
-        casePassed = false;
-      } else if (ERR.test(st) || m.errorReason) {
-        bucket.errored++;
-        caseErrored = true;
-        casePassed = false;
-      } else {
-        bucket.other++;
-        casePassed = false;
-      }
-      return { type: m.type, status: m.status, reason: m.errorReason ?? m.aiResultReason ?? null };
-    });
-    if (metrics.length === 0) casePassed = false;
-    if (casePassed) summary.passed++;
-    else if (caseErrored) summary.errored++;
-    else if (caseFailed) summary.failed++;
-    else summary.other++;
-    summary.cases.push({ testCaseId: tc.testCaseId, state: tc.state, metrics });
+    const { verdict, entry } = summarizeCase(tc, summary.byMetric);
+    summary[verdict]++;
+    summary.cases.push(entry);
   }
   return summary;
 }

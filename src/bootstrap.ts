@@ -188,6 +188,16 @@ async function sleep(ms: number): Promise<void> {
  * schema name so the final folder is a sync-connected workspace inside the
  * chosen solution. Falls back to the local scaffold when the clone fails.
  */
+/** Scaffold the workspace locally; the live agent comes later, from the packed solution. */
+async function scaffoldWorkspace(o: InitInSolutionOptions, projectDir: string): Promise<PacResult> {
+  const args = ["copilot", "init", "--name", o.name, "--publisher-prefix", o.publisherPrefix, "--project-dir", projectDir];
+  if (o.instructions) args.push("--instructions", o.instructions);
+  if (o.schemaName) args.push("--schema-name", o.schemaName);
+  if (o.template) args.push("--template", o.template);
+  if (o.authoringMode) args.push("--authoring-mode", o.authoringMode);
+  return runPac(args, { timeoutMs: 5 * 60_000 });
+}
+
 export async function initAgentInSolution(o: InitInSolutionOptions): Promise<InitInSolutionResult> {
   validatePrefix(o.publisherPrefix);
   const projectDir = path.resolve(o.projectDir);
@@ -205,12 +215,7 @@ export async function initAgentInSolution(o: InitInSolutionOptions): Promise<Ini
   }
   steps.push({ step: "solution", ok: true, detail: solution ? `exists (${solution.version})` : "will be created by the import" });
 
-  const initArgs = ["copilot", "init", "--name", o.name, "--publisher-prefix", o.publisherPrefix, "--project-dir", projectDir];
-  if (o.instructions) initArgs.push("--instructions", o.instructions);
-  if (o.schemaName) initArgs.push("--schema-name", o.schemaName);
-  if (o.template) initArgs.push("--template", o.template);
-  if (o.authoringMode) initArgs.push("--authoring-mode", o.authoringMode);
-  const init = await runPac(initArgs, { timeoutMs: 5 * 60_000 });
+  const init = await scaffoldWorkspace(o, projectDir);
   steps.push({ step: "pac copilot init", ok: init.ok, detail: init.ok ? undefined : explainFailure(init) });
   if (!init.ok) throw new Error(`pac copilot init failed: ${explainFailure(init)}`);
   const schemaName = readWorkspace(projectDir).schemaName;
@@ -280,6 +285,18 @@ export interface InstructionsBrief {
   changeRequest?: string;
 }
 
+/** What the maker told us about the agent, as labelled lines the model can follow. */
+function briefFacts(b: InstructionsBrief): string[] {
+  const lines: string[] = [`PURPOSE: ${b.purpose.trim()}`];
+  if (b.audience) lines.push(`AUDIENCE: ${b.audience.trim()}`);
+  if (b.tone) lines.push(`TONE: ${b.tone.trim()}`);
+  if (b.language) lines.push(`LANGUAGE OF THE INSTRUCTIONS: ${b.language.trim()}`);
+  if (b.capabilities?.length) lines.push("CAPABILITIES (tools, knowledge, topics the agent has):", ...b.capabilities.map((c) => `- ${c}`));
+  if (b.boundaries?.length) lines.push("BOUNDARIES (what the agent must not do):", ...b.boundaries.map((c) => `- ${c}`));
+  if (b.examples?.length) lines.push("EXAMPLE USER REQUESTS:", ...b.examples.map((c) => `- ${c}`));
+  return lines;
+}
+
 export function buildInstructionsBrief(b: InstructionsBrief): string {
   const lines: string[] = [];
   if (b.currentInstructions) {
@@ -289,13 +306,7 @@ export function buildInstructionsBrief(b: InstructionsBrief): string {
     return lines.join("\n");
   }
   lines.push("Write system instructions for a Microsoft Copilot Studio agent. Return only the instructions, written in the second person, as concise imperative guidance the agent follows in every conversation.", "");
-  lines.push(`PURPOSE: ${b.purpose.trim()}`);
-  if (b.audience) lines.push(`AUDIENCE: ${b.audience.trim()}`);
-  if (b.tone) lines.push(`TONE: ${b.tone.trim()}`);
-  if (b.language) lines.push(`LANGUAGE OF THE INSTRUCTIONS: ${b.language.trim()}`);
-  if (b.capabilities?.length) lines.push("CAPABILITIES (tools, knowledge, topics the agent has):", ...b.capabilities.map((c) => `- ${c}`));
-  if (b.boundaries?.length) lines.push("BOUNDARIES (what the agent must not do):", ...b.boundaries.map((c) => `- ${c}`));
-  if (b.examples?.length) lines.push("EXAMPLE USER REQUESTS:", ...b.examples.map((c) => `- ${c}`));
+  lines.push(...briefFacts(b));
   lines.push("", "Cover: role and scope, how to answer (grounding in knowledge, citing sources, asking clarifying questions), when to use each capability, escalation, and what to refuse.");
   return lines.join("\n");
 }
@@ -322,14 +333,19 @@ export interface GenerateOptions {
   inputMode?: "prompt" | "text";
 }
 
-export async function generateWithAiBuilder(o: GenerateOptions): Promise<{ text: string; pac: PacResult }> {
-  if (!o.modelId && !o.modelName) throw new Error("modelId or modelName is required (see cs_list_prompts)");
+/** The argv for `pac copilot model predict`: the prompt by id or by name, and how the brief is passed. */
+function predictArgs(o: GenerateOptions): string[] {
   const args = ["copilot", "model", "predict"];
   if (o.modelId) args.push("--model-id", o.modelId);
   else args.push("--model-name", o.modelName as string);
   args.push(o.inputMode === "text" ? "--text" : "--prompt", o.brief);
   if (o.environment) args.push("--environment", o.environment);
-  const r = await runPac(args, { timeoutMs: 5 * 60_000 });
+  return args;
+}
+
+export async function generateWithAiBuilder(o: GenerateOptions): Promise<{ text: string; pac: PacResult }> {
+  if (!o.modelId && !o.modelName) throw new Error("modelId or modelName is required (see cs_list_prompts)");
+  const r = await runPac(predictArgs(o), { timeoutMs: 5 * 60_000 });
   if (!r.ok) throw new Error(`pac copilot model predict failed: ${explainFailure(r)}`);
   const text = cleanPredictOutput(r.stdout);
   if (!text) throw new Error(`the model returned no text (raw output: ${r.stdout.slice(0, 200)}${errorMessage("") ? "" : ""})`);
