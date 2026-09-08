@@ -116,6 +116,12 @@ pac auth create --name maker --environment <environment id or url>
 pac auth create --name admin --environment <environment id or url>
 ```
 
+Or from the agent, without leaving the session: `cs_create_auth_profile` with `name`, `environment`
+and **`background: true`**. pac opens its own browser and waits for the sign-in, so the call returns
+a `jobId` immediately; `cs_job_status` reports when the profile exists. Every pac wrapper accepts
+`background` for the same reason. Device code still needs a terminal — this server gives pac no
+stdin.
+
 `cs_list_auth_profiles` shows them. Every pac-backed tool takes a `profile` argument; the server
 selects that profile, runs the command and restores the previously active one, serialising calls so
 two tools cannot fight over it. Set `CPS_ADMIN_PROFILE` (used by the `cs_admin_*` tools and

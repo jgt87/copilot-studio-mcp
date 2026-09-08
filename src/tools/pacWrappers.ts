@@ -7,6 +7,7 @@
 
 
 import { errorMessage } from "../log.js";
+import { publicView, startJob } from "../jobs.js";
 import { PAC_COMMANDS, buildPacArgs, describeSpec, isAdminCommand, isMutating, redactArgs, secretValues, zodShapeFor } from "../pacCommands.js";
 import { adminProfileDefault, makerProfileDefault, runPacAs } from "../pacProfile.js";
 import { readOnlyMode, readOnlyRefusal } from "../policy.js";
@@ -27,10 +28,23 @@ for (const spec of PAC_COMMANDS) {
         if (readOnlyMode()) return fail(readOnlyRefusal(`pac ${shown.join(" ")}`));
         if (!input.confirm) return dryRun(`pac ${shown.join(" ")}${profile ? ` (as pac auth profile '${profile}')` : ""}`, spec.note ? { note: spec.note } : {});
       }
-      const r = await runPacAs(profile, args, { cwd: input.cwd as string | undefined, timeoutMs: ((input.timeoutSeconds as number | undefined) ?? (spec.timeoutMs ?? 600_000) / 1000) * 1000, redact: secrets });
-      const summary = pacSummary(r);
-      for (const s of secrets) for (const k of ["command", "stdout", "stderr"] as const) if (typeof summary[k] === "string") summary[k] = (summary[k] as string).split(s).join("***");
-      return text({ ...summary, ...(profile ? { profile } : {}), ...(spec.note ? { note: spec.note } : {}) });
+      const run = async () => {
+        const r = await runPacAs(profile, args, { cwd: input.cwd as string | undefined, timeoutMs: ((input.timeoutSeconds as number | undefined) ?? (spec.timeoutMs ?? 600_000) / 1000) * 1000, redact: secrets });
+        const summary = pacSummary(r);
+        for (const s of secrets) for (const k of ["command", "stdout", "stderr"] as const) if (typeof summary[k] === "string") summary[k] = (summary[k] as string).split(s).join("***");
+        return { ...summary, ...(profile ? { profile } : {}), ...(spec.note ? { note: spec.note } : {}) };
+      };
+      // The gates above have already run, so a background job cannot skip the confirm contract.
+      if (input.background) {
+        const job = startJob({ tool: spec.tool, label: `pac ${shown.join(" ")}${profile ? ` (as '${profile}')` : ""}` }, run);
+        return text({
+          ...publicView(job),
+          note: spec.interactive
+            ? "Started in the background because this command waits for you. pac opens its own browser window: complete the sign-in there, then poll cs_job_status with this jobId. cs_list_auth_profiles shows the profile once it exists."
+            : "Started in the background so the call cannot outlive the client's timeout. Poll cs_job_status with this jobId.",
+        });
+      }
+      return text(await run());
     } catch (err) {
       return fail(errorMessage(err));
     }

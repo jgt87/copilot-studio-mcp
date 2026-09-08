@@ -35,6 +35,11 @@ export interface PacCommandSpec {
   timeoutMs?: number;
   /** Appended to every result: verification status or the portal step that remains. */
   note?: string;
+  /**
+   * pac waits for a person at the keyboard (it opens its own browser). The tool
+   * still runs it, but only usefully with `background: true`, and it says so.
+   */
+  interactive?: boolean;
 }
 
 export const ENV: PacParam = { flag: "--environment", type: "string", description: "Environment id or URL; default: the environment of the active pac auth profile" };

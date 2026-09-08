@@ -94,3 +94,21 @@ test("tool filter: allow-list with wildcards, then deny-list", () => {
   assert.equal(parsePatterns(undefined).length, 0);
   assert.equal(parsePatterns("cs.push")[0].test("csXpush"), false, "dots are literal");
 });
+
+test("every pac wrapper takes background, and auth create is marked interactive", () => {
+  const create = PAC_COMMANDS.find((s) => s.tool === "cs_create_auth_profile");
+  assert.ok(create, "cs_create_auth_profile should exist");
+  assert.equal(create.interactive, true, "interactive sign-in must be flagged so the schema says how to run it");
+
+  for (const spec of PAC_COMMANDS) {
+    assert.ok(zodShapeFor(spec).background, `${spec.tool} should accept background`);
+  }
+  assert.match(zodShapeFor(create).background.description, /sign-in/i);
+});
+
+test("cs_create_auth_profile builds the admin sign-in argv", () => {
+  const spec = PAC_COMMANDS.find((s) => s.tool === "cs_create_auth_profile");
+  assert.deepEqual(buildPacArgs(spec, { name: "admin", environment: "https://contoso.crm4.dynamics.com" }), ["auth", "create", "--name", "admin", "--environment", "https://contoso.crm4.dynamics.com"]);
+  // background is ours, not pac's: it must never reach the command line.
+  assert.deepEqual(buildPacArgs(spec, { name: "admin", background: true }), ["auth", "create", "--name", "admin"]);
+});

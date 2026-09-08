@@ -126,6 +126,14 @@ export function zodShapeFor(spec: PacCommandSpec): Record<string, z.ZodTypeAny> 
   shape.profile = z.string().optional().describe("pac auth profile to run as: the admin account for tenant commands. Defaults to CPS_ADMIN_PROFILE for admin commands and CPS_PAC_PROFILE otherwise, then the active profile. cs_init lists the profiles.");
   shape.cwd = z.string().optional().describe("Working directory for pac (for project commands: the solution project folder)");
   shape.timeoutSeconds = z.number().optional().describe(`Default ${Math.round((spec.timeoutMs ?? 600_000) / 1000)}`);
+  shape.background = z
+    .boolean()
+    .optional()
+    .describe(
+      spec.interactive
+        ? "Run in the background and return a jobId immediately. Use this for interactive sign-in: pac opens a browser and waits, which would otherwise outlive the client's call timeout. Poll cs_job_status."
+        : "Run in the background and return a jobId immediately, for a command that takes longer than the client will wait. Poll cs_job_status.",
+    );
   if (spec.mutating !== false) shape.confirm = z.boolean().optional().describe("Required to actually perform a change in a live environment. Without it the tool returns a dry run.");
   return shape;
 }
