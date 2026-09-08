@@ -540,27 +540,47 @@ export const TOPIC_SUMMARY: Record<GuideTopic, string> = {
  * What to do next in this workspace, most useful first. Derived from the
  * inventory only, so it costs nothing to include in other tool results.
  */
-export function nextSteps(ws: WorkspaceInfo | null, opts: { pacFound?: boolean; pacProfile?: boolean; signedIn?: boolean } = {}): string[] {
+/** What the machine still needs before any cloud tool will work. */
+function machineSteps(opts: { pacFound?: boolean; pacProfile?: boolean; signedIn?: boolean }): string[] {
   const out: string[] = [];
   if (opts.pacFound === false) out.push("Install the Power Platform CLI: dotnet tool install --global Microsoft.PowerApps.CLI.Tool (needs .NET 10). cs_guide topic 'troubleshooting'.");
   if (opts.pacProfile === false) out.push("No pac auth profile: ask the user to run 'pac auth create --environment <id>' in a terminal.");
   if (opts.signedIn === false) out.push("Not signed in for the API-based tools (evaluations, chat, drift): run cs_login.");
+  return out;
+}
+
+/** What the agent is still missing: instructions, and something to answer from. */
+function contentSteps(ws: WorkspaceInfo): string[] {
+  const out: string[] = [];
+  const instructions = (ws.agent?.instructions ?? "").trim();
+  if (ws.harness !== "github-copilot" && instructions.length < 200) {
+    out.push(instructions ? "Instructions are short: expand them with cs_generate_instructions (refine: true) or cs_update_agent. cs_guide topic 'instructions'." : "The agent has no instructions: cs_generate_instructions, then apply. cs_guide topic 'instructions'.");
+  }
+  if (!ws.knowledge.length && !ws.knowledgeFiles.length) out.push("No knowledge sources: cs_add_knowledge_source. cs_guide topic 'knowledge'.");
+  if (!ws.actions.length) out.push("No tools: cs_list_connectors then cs_add_tool. cs_guide topic 'tools'.");
+  if (!ws.topics.some((t) => t.details.triggerKind === "OnRecognizedIntent")) out.push("No custom topics: cs_add_topic for conversations that must follow a fixed path. cs_guide topic 'topics'.");
+  return out;
+}
+
+/** What has to happen before and after the workspace reaches the environment. */
+function syncSteps(ws: WorkspaceInfo): string[] {
+  const out: string[] = [];
+  const unbound = ws.connectionReferences.filter((c) => !c.connectionId).length;
+  if (unbound) out.push(`${unbound} connection reference(s) are not bound: after cs_push, the user connects each tool once in the portal, then run cs_pull.`);
+  out.push(
+    ws.sync.source !== "none"
+      ? "Before editing: cs_check_drift (what changed in the portal since your last sync). Before pushing: cs_review_agent, then cs_validate, then cs_push with confirm."
+      : "Before pushing: cs_review_agent, then cs_validate.",
+  );
+  return out;
+}
+
+export function nextSteps(ws: WorkspaceInfo | null, opts: { pacFound?: boolean; pacProfile?: boolean; signedIn?: boolean } = {}): string[] {
+  const out = machineSteps(opts);
   if (!ws) {
     out.push("No workspace found: cs_clone_agent for an existing agent, or cs_create_agent (with environment and solutionName) for a new one. cs_guide topic 'getting-started'.");
     return out;
   }
   if (ws.sync.source === "none") out.push("This workspace has no sync metadata, so only settings, agent and topics can be packaged. Clone the agent (cs_clone_agent) or init with an environment to use knowledge, tools and flows.");
-  const instructions = (ws.agent?.instructions ?? "").trim();
-  if (ws.harness !== "github-copilot" && instructions.length < 200) {
-    out.push(instructions ? "Instructions are short: expand them with cs_generate_instructions (refine: true) or cs_update_agent. cs_guide topic 'instructions'." : "The agent has no instructions: cs_generate_instructions, then apply. cs_guide topic 'instructions'.");
-  }
-  const customTopics = ws.topics.filter((t) => t.details.triggerKind === "OnRecognizedIntent").length;
-  if (!ws.knowledge.length && !ws.knowledgeFiles.length) out.push("No knowledge sources: cs_add_knowledge_source. cs_guide topic 'knowledge'.");
-  if (!ws.actions.length) out.push("No tools: cs_list_connectors then cs_add_tool. cs_guide topic 'tools'.");
-  if (!customTopics) out.push("No custom topics: cs_add_topic for conversations that must follow a fixed path. cs_guide topic 'topics'.");
-  const unbound = ws.connectionReferences.filter((c) => !c.connectionId).length;
-  if (unbound) out.push(`${unbound} connection reference(s) are not bound: after cs_push, the user connects each tool once in the portal, then run cs_pull.`);
-  if (ws.sync.source !== "none") out.push("Before editing: cs_check_drift (what changed in the portal since your last sync). Before pushing: cs_review_agent, then cs_validate, then cs_push with confirm.");
-  else out.push("Before pushing: cs_review_agent, then cs_validate.");
-  return out;
+  return [...out, ...contentSteps(ws), ...syncSteps(ws)];
 }

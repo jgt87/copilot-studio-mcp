@@ -30,6 +30,26 @@ type Rule = (ws: WorkspaceInfo) => ReviewFinding[];
 
 const f = (rule: string, severity: Severity, message: string, fix: string, file?: string): ReviewFinding => ({ rule, severity, message, fix, ...(file ? { file } : {}) });
 
+/** Knowledge sources that only answer for a signed-in user. */
+const PRIVATE_SOURCE_KINDS = /SharePoint|Dataverse|GraphConnector|Fabric|AzureAISearch|Email|Teams|Meeting/i;
+
+const privateKnowledge = (ws: WorkspaceInfo): ComponentInfo[] => ws.knowledge.filter((k) => PRIVATE_SOURCE_KINDS.test(String(k.details.sourceKind ?? "")));
+
+const customTopics = (ws: WorkspaceInfo): ComponentInfo[] => ws.topics.filter((t) => t.details.triggerKind === "OnRecognizedIntent");
+
+/** Nothing of its own to answer from: no knowledge, no custom topics, no tools. */
+function hasNothingToAnswerFrom(ws: WorkspaceInfo): boolean {
+  if (ws.harness !== "standard") return false;
+  const hasKnowledge = ws.knowledge.length > 0 || ws.knowledgeFiles.length > 0;
+  return !hasKnowledge && customTopics(ws).length === 0 && ws.actions.length === 0;
+}
+
+/** Components that only reach the agent through push, in a workspace that cannot push. */
+function hasPushOnlyComponents(ws: WorkspaceInfo): boolean {
+  if (ws.sync.source !== "none") return false;
+  return [ws.knowledge, ws.actions, ws.triggers, ws.workflows, ws.variables].some((list) => list.length > 0);
+}
+
 const rules: Rule[] = [
   // Instructions
   (ws) => {
@@ -43,16 +63,20 @@ const rules: Rule[] = [
   },
   (ws) => (ws.agent && ws.agent.conversationStarters.length === 0 && ws.harness !== "github-copilot" ? [f("starters-missing", "info", "No conversation starters.", "Add two or three with cs_update_agent addConversationStarters so users see what the agent can do.", "agent.mcs.yml")] : []),
   // Topics
-  (ws) => {
-    const out: ReviewFinding[] = [];
-    const custom = ws.topics.filter((t) => t.details.triggerKind === "OnRecognizedIntent");
-    for (const t of custom) {
+  // Each custom topic on its own: enough phrasings to be recognised, and something to do.
+  (ws) =>
+    customTopics(ws).flatMap((t) => {
+      const out: ReviewFinding[] = [];
       const phrases = (t.details.triggerPhrases as string[] | undefined) ?? [];
       if (phrases.length > 0 && phrases.length < 3) out.push(f("topic-few-phrases", "warning", `Topic '${t.name}' has ${phrases.length} trigger phrase(s).`, "Add 5 to 10 varied phrasings with cs_edit_topic addTriggerPhrases; recognition improves with variety.", t.relPath));
       if ((t.details.actionCount as number) === 0) out.push(f("topic-empty", "warning", `Topic '${t.name}' has no actions.`, "Add nodes with cs_edit_topic appendActions or remove the topic.", t.relPath));
-    }
+      return out;
+    }),
+  // A phrase claimed by two topics makes triggering arbitrary.
+  (ws) => {
+    const out: ReviewFinding[] = [];
     const seen = new Map<string, string>();
-    for (const t of custom) {
+    for (const t of customTopics(ws)) {
       for (const p of (t.details.triggerPhrases as string[] | undefined) ?? []) {
         const key = p.trim().toLowerCase();
         const other = seen.get(key);
@@ -92,25 +116,25 @@ const rules: Rule[] = [
     return [f("connection-unbound", sev, `${unbound.length} connection reference(s) have no connection: ${unbound.map((c) => c.logicalName ?? c.connectionReferenceLogicalName).join(", ")}.`, "After cs_push, open the agent's Tools page, Connect each tool once, then cs_pull.", "connectionreferences.mcs.yml")];
   },
   // Knowledge and authentication
+  // Private sources answer as the signed-in user, so they need authentication.
   (ws) => {
-    const out: ReviewFinding[] = [];
-    const auth = String(ws.settings?.authenticationMode ?? "");
-    const privateSources = ws.knowledge.filter((k) => /SharePoint|Dataverse|GraphConnector|Fabric|AzureAISearch|Email|Teams|Meeting/i.test(String(k.details.sourceKind ?? "")));
-    if (privateSources.length && /^None$/i.test(auth)) out.push(f("auth-none-with-private-knowledge", "error", `Authentication is None but ${privateSources.length} knowledge source(s) need a signed-in user (${privateSources.map((k) => k.name).join(", ")}).`, "Set authenticationMode to Integrated (cs_update_settings) or replace the sources with public ones.", "settings.mcs.yml"));
+    const privateSources = privateKnowledge(ws);
+    if (!privateSources.length || !/^None$/i.test(String(ws.settings?.authenticationMode ?? ""))) return [];
+    return [f("auth-none-with-private-knowledge", "error", `Authentication is None but ${privateSources.length} knowledge source(s) need a signed-in user (${privateSources.map((k) => k.name).join(", ")}).`, "Set authenticationMode to Integrated (cs_update_settings) or replace the sources with public ones.", "settings.mcs.yml")];
+  },
+  (ws) => {
     const gpt = (ws.agent ? loadAgentDoc(ws) : null) as Record<string, unknown> | null;
     const webBrowsing = ((gpt?.gptCapabilities as Record<string, unknown> | undefined)?.webBrowsing as boolean | undefined) ?? false;
-    if (webBrowsing && privateSources.length) out.push(f("web-browsing-with-private-knowledge", "info", "Web browsing is on while internal knowledge sources are configured; answers may mix public and internal content.", "Turn off gptCapabilities.webBrowsing in agent.mcs.yml unless public web answers are wanted.", "agent.mcs.yml"));
-    if (ws.harness === "standard" && ws.knowledge.length === 0 && ws.knowledgeFiles.length === 0 && !ws.topics.some((t) => t.details.triggerKind === "OnRecognizedIntent") && ws.actions.length === 0) {
-      out.push(f("agent-empty", "warning", "No custom topics, knowledge or tools: the agent can only answer from the model's own knowledge.", "Add knowledge (cs_add_knowledge_source), topics (cs_add_topic) or tools (cs_add_tool)."));
-    }
-    return out;
+    if (!webBrowsing || !privateKnowledge(ws).length) return [];
+    return [f("web-browsing-with-private-knowledge", "info", "Web browsing is on while internal knowledge sources are configured; answers may mix public and internal content.", "Turn off gptCapabilities.webBrowsing in agent.mcs.yml unless public web answers are wanted.", "agent.mcs.yml")];
   },
+  (ws) => (hasNothingToAnswerFrom(ws) ? [f("agent-empty", "warning", "No custom topics, knowledge or tools: the agent can only answer from the model's own knowledge.", "Add knowledge (cs_add_knowledge_source), topics (cs_add_topic) or tools (cs_add_tool).")] : []),
   (ws) => {
     const settings = (ws.settings?.configuration as Record<string, unknown> | undefined)?.settings as Record<string, unknown> | undefined;
     if (settings?.GenerativeActionsEnabled === false && ws.actions.length) return [f("orchestration-off-with-tools", "info", `Generative orchestration is off but ${ws.actions.length} tool(s) exist; tools only run when a topic calls them.`, "Enable configuration.settings.GenerativeActionsEnabled with cs_update_settings, or call the tools from topics.", "settings.mcs.yml")];
     return [];
   },
-  // Hygiene
+  // Hygiene: two components of one kind sharing a name are ambiguous to refer to.
   (ws) => {
     const out: ReviewFinding[] = [];
     const byName = new Map<string, string>();
@@ -120,16 +144,17 @@ const rules: Rule[] = [
       if (other) out.push(f("duplicate-name", "warning", `Two ${c.kind} components are named '${c.name}' (${other}, ${c.relPath}).`, "Rename one with cs_edit_topic / cs_edit_tool / cs_edit_knowledge.", c.relPath));
       else byName.set(key, c.relPath);
     }
-    for (const c of [...ws.topics, ...ws.knowledge, ...ws.actions, ...ws.triggers, ...ws.variables]) {
-      const text = fs.readFileSync(c.file, "utf8");
-      if (SECRET_RE.test(text)) out.push(f("secret-in-yaml", "error", `'${c.relPath}' looks like it contains a credential.`, "Move secrets to environment variables or connections; never keep them in the agent definition.", c.relPath));
-      if (c.parseError) out.push(f("yaml-parse-error", "error", `'${c.relPath}' does not parse: ${c.parseError}`, "Fix the YAML (cs_validate shows the location).", c.relPath));
-    }
-    if (ws.sync.source === "none" && (ws.knowledge.length || ws.actions.length || ws.triggers.length || ws.workflows.length || ws.variables.length)) {
-      out.push(f("pack-only-workspace", "info", "This workspace is not sync-connected; knowledge, tools, triggers, flows and variables are not packaged by pac copilot pack.", "Bootstrap or clone the agent (cs_create_agent with environment, cs_clone_agent) and cs_push."));
-    }
     return out;
   },
+  // What the files themselves contain: credentials, and YAML that does not parse.
+  (ws) =>
+    [...ws.topics, ...ws.knowledge, ...ws.actions, ...ws.triggers, ...ws.variables].flatMap((c) => {
+      const out: ReviewFinding[] = [];
+      if (SECRET_RE.test(fs.readFileSync(c.file, "utf8"))) out.push(f("secret-in-yaml", "error", `'${c.relPath}' looks like it contains a credential.`, "Move secrets to environment variables or connections; never keep them in the agent definition.", c.relPath));
+      if (c.parseError) out.push(f("yaml-parse-error", "error", `'${c.relPath}' does not parse: ${c.parseError}`, "Fix the YAML (cs_validate shows the location).", c.relPath));
+      return out;
+    }),
+  (ws) => (hasPushOnlyComponents(ws) ? [f("pack-only-workspace", "info", "This workspace is not sync-connected; knowledge, tools, triggers, flows and variables are not packaged by pac copilot pack.", "Bootstrap or clone the agent (cs_create_agent with environment, cs_clone_agent) and cs_push.")] : []),
 ];
 
 function loadAgentDoc(ws: WorkspaceInfo): Record<string, unknown> | null {
