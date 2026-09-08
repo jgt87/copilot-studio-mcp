@@ -24,6 +24,17 @@ import { botArg, clientArg, cloudContext, confirmArg, dryRun, envArg, fail, pacS
 
 // ---- sync (pac) -----------------------------------------------------------
 
+/** The argv for a local `pac copilot init`: only the flags the caller supplied. */
+function initArgs(a: { name: string; publisherPrefix: string; projectDir: string; authoringMode?: string; template?: string; instructions?: string; schemaName?: string; environment?: string }): string[] {
+  const args = ["copilot", "init", "--name", a.name, "--publisher-prefix", a.publisherPrefix, "--project-dir", a.projectDir];
+  if (a.authoringMode) args.push("--authoring-mode", a.authoringMode);
+  if (a.template) args.push("--template", a.template);
+  if (a.instructions) args.push("--instructions", a.instructions);
+  if (a.schemaName) args.push("--schema-name", a.schemaName);
+  if (a.environment) args.push("--environment", a.environment);
+  return args;
+}
+
 server.registerTool(
   "cs_create_agent",
   {
@@ -53,13 +64,7 @@ server.registerTool(
         return text({ ...r, workspaceInfo: describeWorkspace(readWorkspace(r.workspace)), syncStamp: await stampAfterSync(r.workspace, "init") });
       }
       if (a.solutionName && !a.environment) return fail("solutionName needs environment");
-      const args = ["copilot", "init", "--name", a.name, "--publisher-prefix", a.publisherPrefix, "--project-dir", a.projectDir];
-      if (a.authoringMode) args.push("--authoring-mode", a.authoringMode);
-      if (a.template) args.push("--template", a.template);
-      if (a.instructions) args.push("--instructions", a.instructions);
-      if (a.schemaName) args.push("--schema-name", a.schemaName);
-      if (a.environment) args.push("--environment", a.environment);
-      const r = await runPac(args, { timeoutMs: 15 * 60_000 });
+      const r = await runPac(initArgs(a), { timeoutMs: 15 * 60_000 });
       const root = fs.existsSync(a.projectDir) ? findWorkspaceRoot(a.projectDir) : null;
       return text({ ...pacSummary(r), workspace: root ? describeWorkspace(readWorkspace(root)) : null, ...(root && r.ok && a.environment ? { syncStamp: await stampAfterSync(root, "init") } : {}) });
     } catch (err) {

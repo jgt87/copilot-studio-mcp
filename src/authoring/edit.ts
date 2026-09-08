@@ -96,6 +96,18 @@ export interface EditResult {
   yaml: string;
 }
 
+/** Set, add or remove trigger phrases, in that order; adding is case-insensitively idempotent. */
+function nextPhrases(intent: Doc, e: TopicEdit): string[] {
+  let phrases = Array.isArray(intent.triggerQueries) ? [...(intent.triggerQueries as string[])] : [];
+  if (e.setTriggerPhrases) phrases = [...e.setTriggerPhrases];
+  if (e.addTriggerPhrases) for (const p of e.addTriggerPhrases) if (!phrases.some((x) => x.toLowerCase() === p.toLowerCase())) phrases.push(p);
+  if (e.removeTriggerPhrases) {
+    const drop = new Set(e.removeTriggerPhrases.map((p) => p.toLowerCase()));
+    phrases = phrases.filter((p) => !drop.has(p.toLowerCase()));
+  }
+  return phrases;
+}
+
 export function editTopic(root: string, e: TopicEdit): EditResult {
   const { ws, component } = requireComponent(root, "topic", e.topic);
   const { header, doc } = loadWithHeader<Doc>(component.file);
@@ -106,13 +118,7 @@ export function editTopic(root: string, e: TopicEdit): EditResult {
   if (e.setTriggerPhrases || e.addTriggerPhrases || e.removeTriggerPhrases) {
     if (beginDialog.kind !== "OnRecognizedIntent") throw new Error(`Topic '${component.name}' is triggered by ${String(beginDialog.kind)}, not by phrases`);
     const intent = ((beginDialog.intent as Doc) ?? {}) as Doc;
-    let phrases = Array.isArray(intent.triggerQueries) ? [...(intent.triggerQueries as string[])] : [];
-    if (e.setTriggerPhrases) phrases = [...e.setTriggerPhrases];
-    if (e.addTriggerPhrases) for (const p of e.addTriggerPhrases) if (!phrases.some((x) => x.toLowerCase() === p.toLowerCase())) phrases.push(p);
-    if (e.removeTriggerPhrases) {
-      const drop = new Set(e.removeTriggerPhrases.map((p) => p.toLowerCase()));
-      phrases = phrases.filter((p) => !drop.has(p.toLowerCase()));
-    }
+    const phrases = nextPhrases(intent, e);
     if (phrases.length === 0) throw new Error("A phrase-triggered topic needs at least one trigger phrase");
     intent.triggerQueries = phrases;
     if (!intent.displayName) intent.displayName = component.name;
@@ -174,21 +180,8 @@ function inputNode(i: ToolInput): Doc {
     : { kind: "AutomaticTaskInput", propertyName: i.name, description: i.description, entity: i.entity ? (i.entity.endsWith("PrebuiltEntity") ? i.entity : `${i.entity}PrebuiltEntity`) : "StringPrebuiltEntity", ...(i.shouldPromptUser === undefined ? {} : { shouldPromptUser: i.shouldPromptUser }) };
 }
 
-export function editTool(root: string, e: ToolEdit): EditResult {
-  const { component } = requireComponent(root, "tool", e.tool);
-  const { header, doc } = loadWithHeader<Doc>(component.file);
-  const changed = setMetadata(doc, e.rename, e.description);
-  const simple: [keyof ToolEdit, string][] = [
-    ["modelDescription", "modelDescription"],
-    ["modelDisplayName", "modelDisplayName"],
-    ["outputMode", "outputMode"],
-  ];
-  for (const [key, prop] of simple) {
-    if (e[key] !== undefined) {
-      doc[prop] = e[key];
-      changed.push(prop);
-    }
-  }
+/** The action block: which operation runs, and through which connection. */
+function applyToolAction(doc: Doc, e: ToolEdit, changed: string[]): void {
   const action = ((doc.action as Doc) ?? {}) as Doc;
   if (e.operationId !== undefined) {
     if (action.kind === "InvokeExternalAgentTaskAction") {
@@ -207,6 +200,10 @@ export function editTool(root: string, e: ToolEdit): EditResult {
     changed.push("connectionReference");
   }
   if (Object.keys(action).length) doc.action = action;
+}
+
+/** Set, remove, then add inputs; adding skips a property the tool already declares. */
+function nextInputs(doc: Doc, e: ToolEdit, changed: string[]): Doc[] {
   let inputs = Array.isArray(doc.inputs) ? [...(doc.inputs as Doc[])] : [];
   if (e.setInputs) {
     inputs = e.setInputs.map(inputNode);
@@ -222,6 +219,26 @@ export function editTool(root: string, e: ToolEdit): EditResult {
     inputs.push(...e.addInputs.filter((i) => !existing.has(i.name)).map(inputNode));
     changed.push("inputs (added)");
   }
+  return inputs;
+}
+
+export function editTool(root: string, e: ToolEdit): EditResult {
+  const { component } = requireComponent(root, "tool", e.tool);
+  const { header, doc } = loadWithHeader<Doc>(component.file);
+  const changed = setMetadata(doc, e.rename, e.description);
+  const simple: [keyof ToolEdit, string][] = [
+    ["modelDescription", "modelDescription"],
+    ["modelDisplayName", "modelDisplayName"],
+    ["outputMode", "outputMode"],
+  ];
+  for (const [key, prop] of simple) {
+    if (e[key] !== undefined) {
+      doc[prop] = e[key];
+      changed.push(prop);
+    }
+  }
+  applyToolAction(doc, e, changed);
+  const inputs = nextInputs(doc, e, changed);
   if (inputs.length) doc.inputs = inputs;
   else delete doc.inputs;
   if (!changed.length) throw new Error("Nothing to change");
@@ -243,10 +260,8 @@ export interface KnowledgeEdit {
   additionalSearchTerms?: string | null;
 }
 
-export function editKnowledge(root: string, e: KnowledgeEdit): EditResult {
-  const { component } = requireComponent(root, "knowledge", e.knowledge);
-  const { header, doc } = loadWithHeader<Doc>(component.file);
-  const changed = setMetadata(doc, e.rename, e.description);
+/** The source block: where the knowledge comes from and when it is searched. */
+function applyKnowledgeSource(doc: Doc, e: KnowledgeEdit, changed: string[]): Doc {
   const source = ((doc.source as Doc) ?? {}) as Doc;
   if (e.site !== undefined) {
     source.site = e.site;
@@ -266,7 +281,14 @@ export function editKnowledge(root: string, e: KnowledgeEdit): EditResult {
     else source.additionalSearchTerms = e.additionalSearchTerms;
     changed.push("additionalSearchTerms");
   }
-  doc.source = source;
+  return source;
+}
+
+export function editKnowledge(root: string, e: KnowledgeEdit): EditResult {
+  const { component } = requireComponent(root, "knowledge", e.knowledge);
+  const { header, doc } = loadWithHeader<Doc>(component.file);
+  const changed = setMetadata(doc, e.rename, e.description);
+  doc.source = applyKnowledgeSource(doc, e, changed);
   if (!changed.length) throw new Error("Nothing to change");
   saveWithHeader(component.file, header, doc);
   return { file: component.file, changed, yaml: fs.readFileSync(component.file, "utf8") };
@@ -288,6 +310,22 @@ export interface RemoveResult {
   notes: string[];
 }
 
+/**
+ * Drop the connection reference a removed tool used, unless another tool still
+ * points at it. Returns what to tell the caller either way.
+ */
+function pruneConnectionReference(root: string, ws: WorkspaceInfo, component: ComponentInfo): string[] {
+  const cr = ((component.details.connectionReference as string | null) ?? null) as string | null;
+  if (!cr) return [];
+  const stillUsed = ws.actions.some((a) => a.file !== component.file && a.details.connectionReference === cr);
+  if (stillUsed) return [`connection reference ${cr} kept: other tools use it`];
+  const reg = readConnectionReferences(root);
+  if (!reg.file || !reg.entries.some((e) => e.connectionReferenceLogicalName === cr)) return [];
+  const remaining = reg.entries.filter((e) => e.connectionReferenceLogicalName !== cr);
+  fs.writeFileSync(reg.file, yamlDump({ kind: "ConnectionReferencesSourceFile", connectionReferences: remaining }), "utf8");
+  return [`removed connection reference ${cr} from ${path.basename(reg.file)}`];
+}
+
 export function removeComponent(root: string, r: RemoveSpec): RemoveResult {
   const { ws, component } = requireComponent(root, r.kind, r.name);
   const removed: string[] = [];
@@ -296,20 +334,7 @@ export function removeComponent(root: string, r: RemoveSpec): RemoveResult {
     fs.rmSync(component.file, { recursive: true, force: true });
     removed.push(component.file);
   } else {
-    if (r.kind === "tool" && r.pruneConnectionReference !== false) {
-      const cr = ((component.details.connectionReference as string | null) ?? null) as string | null;
-      if (cr) {
-        const stillUsed = ws.actions.some((a) => a.file !== component.file && a.details.connectionReference === cr);
-        if (!stillUsed) {
-          const reg = readConnectionReferences(root);
-          if (reg.file && reg.entries.some((e) => e.connectionReferenceLogicalName === cr)) {
-            const remaining = reg.entries.filter((e) => e.connectionReferenceLogicalName !== cr);
-            fs.writeFileSync(reg.file, yamlDump({ kind: "ConnectionReferencesSourceFile", connectionReferences: remaining }), "utf8");
-            notes.push(`removed connection reference ${cr} from ${path.basename(reg.file)}`);
-          }
-        } else notes.push(`connection reference ${cr} kept: other tools use it`);
-      }
-    }
+    if (r.kind === "tool" && r.pruneConnectionReference !== false) notes.push(...pruneConnectionReference(root, ws, component));
     fs.rmSync(component.file, { force: true });
     removed.push(component.file);
   }

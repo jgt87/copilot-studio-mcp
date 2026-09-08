@@ -70,10 +70,8 @@ function mergeInto(doc: Record<string, unknown>, key: string, values: Record<str
   doc[key] = { ...((doc[key] as Record<string, unknown>) ?? {}), ...values };
 }
 
-export function updateAgent(root: string, patch: AgentPatch): { file: string; changed: string[] } {
-  const file = agentFile(root);
-  const { header, doc } = loadWithHeader(file);
-  const changed: string[] = [];
+/** The text fields: what the agent is told to do, how to word it, and what it is called. */
+function applyText(doc: Record<string, unknown>, patch: AgentPatch, changed: string[]): void {
   if (patch.instructions !== undefined) {
     doc.instructions = patch.instructions;
     changed.push("instructions");
@@ -94,12 +92,6 @@ export function updateAgent(root: string, patch: AgentPatch): { file: string; ch
     doc.conversationStarters = [...((doc.conversationStarters as unknown[]) ?? []), ...patch.addConversationStarters];
     changed.push("conversationStarters (appended)");
   }
-  if (patch.modelNameHint) {
-    const ai = ((doc.aISettings as Record<string, unknown>) ?? {}) as Record<string, unknown>;
-    ai.model = { ...((ai.model as Record<string, unknown>) ?? {}), modelNameHint: patch.modelNameHint };
-    doc.aISettings = ai;
-    changed.push("aISettings.model.modelNameHint");
-  }
   if (patch.responseInstructions !== undefined) {
     doc.responseInstructions = patch.responseInstructions;
     changed.push("responseInstructions");
@@ -108,6 +100,10 @@ export function updateAgent(root: string, patch: AgentPatch): { file: string; ch
     doc.responseInstructions = `${((doc.responseInstructions as string) ?? "").replace(/\s+$/, "")}\n\n${patch.appendResponseInstructions}\n`.replace(/^\n+/, "");
     changed.push("responseInstructions (appended)");
   }
+}
+
+/** How answers are produced: the response mode and how much history the agent sees. */
+function applyResponseBehaviour(doc: Record<string, unknown>, patch: AgentPatch, changed: string[]): void {
   if (patch.defaultResponseMode !== undefined) {
     if (!RESPONSE_MODES.includes(patch.defaultResponseMode)) throw new Error(`defaultResponseMode must be one of ${RESPONSE_MODES.join(", ")}`);
     doc.defaultResponseMode = patch.defaultResponseMode;
@@ -122,10 +118,23 @@ export function updateAgent(root: string, patch: AgentPatch): { file: string; ch
     doc.historyType = { kind: "ConversationHistory", ...h, numberOfPastUserMessagesToInclude: patch.historyMessages };
     changed.push("historyType.numberOfPastUserMessagesToInclude");
   }
-  if (patch.capabilities && Object.keys(patch.capabilities).length) {
-    const set = Object.fromEntries(Object.entries(patch.capabilities).filter(([, v]) => v !== undefined));
-    mergeInto(doc, "gptCapabilities", set);
-    changed.push(...Object.keys(set).map((k) => `gptCapabilities.${k}`));
+}
+
+/** The capability toggles: only the ones the caller passed are touched. */
+function applyCapabilities(doc: Record<string, unknown>, patch: AgentPatch, changed: string[]): void {
+  if (!patch.capabilities || !Object.keys(patch.capabilities).length) return;
+  const set = Object.fromEntries(Object.entries(patch.capabilities).filter(([, v]) => v !== undefined));
+  mergeInto(doc, "gptCapabilities", set);
+  changed.push(...Object.keys(set).map((k) => `gptCapabilities.${k}`));
+}
+
+/** The aISettings block: the model hint, general knowledge, moderation, file analysis, semantic search. */
+function applyAiSettings(doc: Record<string, unknown>, patch: AgentPatch, changed: string[]): void {
+  if (patch.modelNameHint) {
+    const existing = ((doc.aISettings as Record<string, unknown>) ?? {}) as Record<string, unknown>;
+    existing.model = { ...((existing.model as Record<string, unknown>) ?? {}), modelNameHint: patch.modelNameHint };
+    doc.aISettings = existing;
+    changed.push("aISettings.model.modelNameHint");
   }
   const ai: Record<string, unknown> = {};
   if (patch.useModelKnowledge !== undefined) ai.useModelKnowledge = patch.useModelKnowledge;
@@ -139,6 +148,16 @@ export function updateAgent(root: string, patch: AgentPatch): { file: string; ch
     mergeInto(doc, "aISettings", ai);
     changed.push(...Object.keys(ai).map((k) => `aISettings.${k}`));
   }
+}
+
+export function updateAgent(root: string, patch: AgentPatch): { file: string; changed: string[] } {
+  const file = agentFile(root);
+  const { header, doc } = loadWithHeader(file);
+  const changed: string[] = [];
+  applyText(doc, patch, changed);
+  applyResponseBehaviour(doc, patch, changed);
+  applyCapabilities(doc, patch, changed);
+  applyAiSettings(doc, patch, changed);
   if (changed.length === 0) throw new Error("Nothing to change");
   saveWithHeader(file, header, doc);
   return { file, changed };
