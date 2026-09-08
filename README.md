@@ -1,13 +1,27 @@
 # copilot-studio-mcp
 
-An MCP server that lets a coding agent in VS Code (GitHub Copilot agent mode) or Claude Code do
-Microsoft Copilot Studio agent development from the terminal: scaffold or clone an agent, add
-topics, knowledge sources, tools (connector / MCP / flow), flows and triggers as YAML, validate,
-push and publish, run evaluations, and chat-test the published agent.
+An MCP server that lets a coding agent in VS Code (GitHub Copilot agent mode), Claude Code or any
+other MCP client do Microsoft Copilot Studio work from the editor:
 
-It wraps the official Power Platform CLI (`pac copilot`) for sync, writes the same YAML workspace
-the Copilot Studio VS Code extension uses, and calls the Power Platform, Dataverse, BAP and
-DirectLine APIs directly for everything the CLI does not cover.
+- **Build an agent**: clone or create one, then write its instructions, response settings, topics,
+  knowledge sources, tools, triggers and variables as YAML, edit and remove them later, review the
+  result against a rules check, validate it against the schema, push and publish.
+- **Test it**: chat with the published agent, run repeatable conversation tests, and drive the
+  evaluation API.
+- **Keep it honest**: see what makers changed in the portal since your last sync, and merge before
+  pushing over them.
+- **Ship it**: pull a whole solution and redeploy it to another environment, run Solution Checker,
+  compare environments across a DTAP chain, or deploy through a pipeline.
+- **Build cloud flows**: compose a Power Automate definition from steps, create or rebuild the
+  flow, turn it on, and read its run history.
+- **Administer the tenant**: as a separate admin account, read and change environments, tenant
+  settings, DLP policies, roles and governance, and back the whole configuration up to files.
+
+It wraps the official Power Platform CLI (`pac`) for sync and administration, writes the same YAML
+workspace the Copilot Studio VS Code extension uses, and calls the Power Platform, Dataverse, BAP,
+Power Automate and DirectLine APIs directly for everything the CLI does not cover. Nothing reaches
+a live environment without your approval, and tools ask a follow-up question rather than failing
+when a choice has not been made yet.
 
 ## How this differs from Microsoft's own pac MCP server
 
@@ -21,12 +35,15 @@ model-driven apps and generated pages, Power Pages, code apps and code generatio
 | --- | --- | --- |
 | Purpose | run pac commands in natural language; tenant and environment administration | build, test, ship and maintain Copilot Studio agents from the editor |
 | Copilot Studio commands | `copilot_publish` only | init, clone, pull, push, pack, publish, status, list, delete, templates, translations, quarantine, AI Builder instructions |
-| Authoring | none | topics, knowledge sources, tools (connector / MCP / flow / prompt / agent), flows, triggers, variables, agent settings as YAML; day-two edit and remove; schema validation (744 definitions); rules-based review with a score |
+| Authoring | none | topics, knowledge sources, tools (connector / MCP / flow / prompt / agent), triggers, variables, and the agent's own settings (instructions, response instructions and mode, history, capabilities, moderation) as YAML; day-two edit and remove; schema validation (744 definitions); rules-based review with a score |
 | Testing | none | evaluation test sets and runs (Power Platform API), chat through DirectLine or the client SDK, local conversation tests |
 | ALM | solution list, export, import, check | pull a whole solution with a deployment settings file and redeploy it 1:1, Solution Checker, versioning, staged upgrades, pipelines, DTAP snapshots and comparison |
 | Drift | none | portal changes since the last sync (quick Dataverse check, full clone diff) and a push preflight that blocks on conflicts |
 | Safety | no dry run in the server; the client's approval prompt is the only gate | every environment-changing tool returns a dry run until `confirm: true`; secrets are masked in logs and results |
-| Other pac groups | admin, managed-identity, model, pages, code, modelbuilder as native tools | reachable through `cs_pac` (read-only commands run immediately, others need `confirm`) |
+| Tenant administration | admin commands as native tools | 29 admin tools plus `cs_backup_tenant`, run as a separate admin auth profile |
+| Cloud flows | none beyond raw pac | list, read, create, rebuild, switch on or off, run history, and a step-based definition builder |
+| Guidance | tool descriptions | usage instructions in the handshake, `cs_guide` walkthroughs, MCP prompts, next steps per workspace, and questions with real choices instead of argument errors |
+| Other pac groups | managed-identity, model, pages, code, modelbuilder as native tools | reachable through `cs_pac` (read-only commands run immediately, others need `confirm`) |
 | Sign-in | pac auth profile | pac auth profile, plus MSAL for the APIs pac does not cover (evaluations, Dataverse reads, environments, chat) |
 | Tool list | fixed | `CPS_TOOLS` / `CPS_TOOLS_EXCLUDE` trim it per client |
 
@@ -47,6 +64,10 @@ and a `tools/list` probe of pac 2.11.2 (2026-09-07).
 | Run evaluations, read results | Power Platform API `makerevaluation` endpoints | official, GA, standard harness |
 | Chat with the published agent | DirectLine v3 (no-auth / manual-auth agents) or Copilot Studio client SDK (Entra SSO) | official |
 | Publish | `pac copilot publish` or Dataverse `PvaPublish` | official |
+| Read, create and change cloud flows | Dataverse `workflow` rows (definition in `clientdata`) | official API, shapes unverified live |
+| Flow run history, start a run | Power Automate Process Simple API | the service the portal calls, unverified live |
+| Portal drift since the last sync | `bot` and `botcomponent` rows against a local sync stamp | this server |
+| Tenant configuration to files | `pac admin` read commands into a folder | this server |
 
 Hard limits the server works around rather than hides:
 
@@ -54,6 +75,9 @@ Hard limits the server works around rather than hides:
    the CSV the portal imports (max 100 cases); after one import, runs and results are automated.
 2. **Connector, MCP and prompt tools need a connection that only the portal can authorise.**
    `cs_add_tool` writes the YAML and the connection-reference stub and returns the portal step.
+   The one exception is a service-principal Dataverse connection, which `cs_create_connection`
+   can create. The same limit is why a new cloud flow is created switched off: bind its
+   connections, then `cs_set_flow_state`.
 3. **Evaluations and topic YAML are standard-harness features.** GitHub Copilot harness agents
    (`--authoring-mode cli-copilot`) get init / pack / import / instructions / chat only.
 
@@ -495,15 +519,17 @@ flowchart LR
     VS["VS Code / GitHub Copilot"] --> TOOLS
     CC["Claude Code"] --> TOOLS
     subgraph SERVER["copilot-studio-mcp"]
-        TOOLS["MCP tool call"] --> SYNC["Sync layer: pac copilot"]
-        TOOLS --> AUTH["Authoring layer: YAML + schema validation"]
-        TOOLS --> CLOUD["Cloud layer: evaluations, publish, chat"]
+        TOOLS["MCP tool call"] --> SYNC["Sync layer: pac copilot, pac solution, pac admin"]
+        TOOLS --> AUTH["Authoring layer: YAML + schema validation, flow builder"]
+        TOOLS --> CLOUD["Cloud layer: evaluations, publish, chat, flows, drift"]
     end
     AUTH --> WS["Agent workspace on disk: topics, knowledge, actions, workflows"]
     SYNC --> WS
     SYNC --> DV["Dataverse / Copilot Studio"]
+    SYNC --> BACKUP["Tenant backup and solution folders on disk"]
     CLOUD --> PPAPI["Power Platform API"]
     CLOUD --> DV
+    CLOUD --> FLOW["Power Automate service: flow runs"]
     CLOUD --> DL["Published agent: DirectLine or SDK"]
 ```
 
