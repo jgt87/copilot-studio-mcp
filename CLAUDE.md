@@ -126,7 +126,11 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   before the globs, because the full list is ~50k tokens of schema and a smaller model chooses badly
   from 131 tools. The default (no `CPS_TOOLS`) still registers everything; keep it that way. When
   adding a tool to the core workflow, add it to the `core` preset too, and keep `cs_pac` in every
-  preset that hides pac wrappers.
+  preset that hides pac wrappers. `cs_set_tool_preset` switches presets during a session through the
+  SDK handles kept by the registration wrapper (`applyToolPreset` in `tools/shared.ts`); the SDK
+  sends `tools/list_changed` itself. `presetOptions` builds the menu `cs_init` shows, and a test
+  asserts each advertised count equals what the preset admits, so the session controls must be
+  members of every preset rather than only force-kept.
 
 - **Catalog** (`src/catalog.ts`): connector registry and OpenAPI definitions from `api.powerapps.com`
   (PowerApps Service token), cached under `.cs-catalog/<environment>/`; `parseSwaggerOperations`

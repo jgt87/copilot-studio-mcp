@@ -16,11 +16,15 @@ import { listKinds, schemaPath } from "../schema.js";
 import { adminProfileDefault, makerProfileDefault } from "../pacProfile.js";
 import { guide, nextSteps } from "../guide.js";
 import { readOnlyMode } from "../policy.js";
+import { activePreset, parsePatterns, presetOptions } from "../toolFilter.js";
 
 import { acquireSilent, BAP_SCOPE, COPILOT_INVOKE_SCOPE, effectiveClientId, listAccounts, pendingLoginStatus, PPAPI_SCOPE, resolveTenantId, signOut, startDeviceCodeLogin, startInteractiveLogin, waitForPendingLogin, type AuthConfig } from "../auth.js";
 import { dataverseScope } from "../cloud/dataverse.js";
 import { FLOW_SCOPE } from "../cloud/flowruns.js";
-import { VERSION, clientArg, execFileAsync, fail, registeredTools, server, tenantArg, text, tryWorkspace, withheldTools, workspaceArg } from "./shared.js";
+import { VERSION, applyToolPreset, clientArg, disabledToolCount, execFileAsync, fail, registeredTools, server, tenantArg, text, tryWorkspace, withheldTools, workspaceArg } from "./shared.js";
+
+/** The preset chosen with cs_set_tool_preset during this session, if any. */
+let chosenPreset: string | null = null;
 
 // ---- session start / auth --------------------------------------------------------
 
@@ -43,7 +47,12 @@ server.registerTool(
       serverVersion: VERSION,
       // The first live run tested a different, older checkout than the one that had just been
       // pulled, and concluded four tools were unimplemented. Say which build is answering.
-      serverBuild: { modulePath: fileURLToPath(import.meta.url), registeredTools: registeredTools.length },
+      serverBuild: {
+        modulePath: fileURLToPath(import.meta.url),
+        registeredTools: registeredTools.length,
+        offered: registeredTools.length - disabledToolCount(),
+        toolPreset: chosenPreset ?? activePreset() ?? null,
+      },
       pac: await probePac(pacPath),
       dotnetSdks: await probeDotnet(),
       ...pacAuth,
@@ -55,6 +64,12 @@ server.registerTool(
       profiles: { adminDefault: adminProfileDefault() ?? null, makerDefault: makerProfileDefault() ?? null },
       writePolicy: { confirmRequired: "Every tool that changes a live environment returns a dry run until confirm: true, which the user must approve.", readOnlyMode: readOnlyMode(), ...(withheldTools.length ? { toolsWithheld: withheldTools } : {}) },
       nextSteps: nextSteps(ws, { pacFound: Boolean(pacPath), pacProfile: pacProfiles.length > 0, signedIn: msalAccounts.length > 0 }),
+      toolPresets: {
+        current: chosenPreset ?? activePreset() ?? "full (every tool)",
+        question: "Which set of tools should I offer for this session?",
+        howToApply: "Put the question and this table to the user, then call cs_set_tool_preset with what they choose. Nothing is lost either way: a preset only hides tools, and 'full' brings them all back.",
+        options: presetOptions(registeredTools),
+      },
       guide: "cs_guide topic='getting-started' walks through cloning or creating an agent and taking it to a published, tested state.",
     });
   },
@@ -202,3 +217,37 @@ server.registerTool("cs_logout", { title: "Sign out", description: "Remove cache
     return fail(errorMessage(err));
   }
 });
+
+server.registerTool(
+  "cs_set_tool_preset",
+  {
+    title: "Choose how many tools are offered",
+    description:
+      "Narrow (or restore) the tool list for the rest of this session. The full list is 131 tools and about 50k tokens of schema, which crowds a smaller model's context and makes it choose worse. Presets: core (the loop that builds an agent and gets it live), authoring (local files only), admin (tenant administration), solutions (moving solutions between environments), full (everything). Read-only: it changes nothing in any environment and no tool is lost, only hidden. Ask the user before calling it.",
+    inputSchema: {
+      preset: z.enum(["core", "authoring", "admin", "solutions", "full"]).describe("Which set to offer for the rest of this session"),
+      keep: z.array(z.string()).optional().describe("Extra tool names to keep on top of the preset"),
+    },
+  },
+  async ({ preset, keep }) => {
+    try {
+      // cs_init and this tool must survive every preset, or the session cannot recover.
+      const always = ["cs_init", "cs_guide", "cs_set_tool_preset", "cs_job_status", ...(keep ?? [])];
+      const { enabled, disabled } = applyToolPreset(parsePatterns(preset), always);
+      chosenPreset = preset;
+      return text({
+        preset,
+        offered: enabled.length,
+        hidden: disabled.length,
+        tools: enabled.sort(),
+        note:
+          disabled.length === 0
+            ? "Every tool this server registered is offered."
+            : `${disabled.length} tool(s) are hidden for this session. Nothing is lost: call cs_set_tool_preset with preset 'full' to bring them back, and cs_pac still runs any pac command.`,
+        clientNote: "The server told the client its tool list changed. A client that caches the list may need a restart to notice.",
+      });
+    } catch (err) {
+      return fail(errorMessage(err));
+    }
+  },
+);

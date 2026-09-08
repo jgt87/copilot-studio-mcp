@@ -25,6 +25,7 @@ export const TOOL_PRESETS: Record<string, string[]> = {
   core: [
     "cs_init",
     "cs_guide",
+    "cs_set_tool_preset",
     "cs_login",
     "cs_login_status",
     "cs_list_environments",
@@ -62,6 +63,7 @@ export const TOOL_PRESETS: Record<string, string[]> = {
   authoring: [
     "cs_init",
     "cs_guide",
+    "cs_set_tool_preset",
     "cs_describe_workspace",
     "cs_lookup_schema",
     "cs_validate",
@@ -73,13 +75,14 @@ export const TOOL_PRESETS: Record<string, string[]> = {
     "cs_update_settings",
     "cs_build_flow_definition",
     "cs_create_test_set_csv",
+    "cs_job_status",
   ],
 
   /** Tenant administration, for a session running as the admin account. */
-  admin: ["cs_init", "cs_guide", "cs_admin_*", "cs_backup_tenant", "cs_list_auth_profiles", "cs_list_environments", "cs_job_status", "cs_pac"],
+  admin: ["cs_init", "cs_guide", "cs_set_tool_preset", "cs_admin_*", "cs_backup_tenant", "cs_list_auth_profiles", "cs_list_environments", "cs_job_status", "cs_pac"],
 
   /** Everything about moving solutions between environments. */
-  solutions: ["cs_init", "cs_guide", "cs_list_solutions", "cs_describe_solution", "cs_*_solution", "cs_list_connections", "cs_snapshot_environment", "cs_compare_*", "cs_job_status", "cs_pac"],
+  solutions: ["cs_init", "cs_guide", "cs_set_tool_preset", "cs_list_solutions", "cs_describe_solution", "cs_*_solution", "cs_list_connections", "cs_snapshot_environment", "cs_compare_*", "cs_job_status", "cs_pac"],
 };
 
 export function presetNames(): string[] {
@@ -115,4 +118,21 @@ export function toolEnabled(name: string, env: Record<string, string | undefined
 export function activePreset(env: Record<string, string | undefined> = process.env): string | null {
   const raw = (env.CPS_TOOLS ?? "").trim().toLowerCase();
   return raw && TOOL_PRESETS[raw] ? raw : null;
+}
+
+/** When to pick each preset, shown to the user by cs_init and cs_set_tool_preset. */
+export const PRESET_WHEN: Record<string, string> = {
+  full: "Everything. Use on a large model, or when you do not yet know what the task needs.",
+  core: "Build or change one agent and get it live: clone or create, edit topics, knowledge and tools, validate, push, publish, chat. The usual choice.",
+  authoring: "Write and check files only. No sign-in, and nothing can reach an environment. Use when the user wants to draft offline or is not ready to touch the tenant.",
+  admin: "Tenant administration as an admin account: environments, DLP policies, security roles, tenant settings, and backing the configuration up to files.",
+  solutions: "Move things between environments: pull a solution, map connections, deploy to test or production, compare two environments.",
+};
+
+/** The preset menu with a live count of what each would offer, given the tools this process registered. */
+export function presetOptions(registered: string[]): { preset: string; offers: number; when: string }[] {
+  return Object.keys(TOOL_PRESETS).map((preset) => {
+    const patterns = parsePatterns(preset);
+    return { preset, offers: registered.filter((name) => patterns.some((re) => re.test(name))).length, when: PRESET_WHEN[preset] ?? "" };
+  });
 }

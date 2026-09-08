@@ -807,8 +807,24 @@ model copes; a smaller one spends most of its context on the menu and chooses wo
 | `admin` | 36 | ~13k tokens | tenant administration, plus `cs_backup_tenant` |
 | `solutions` | 20 | ~6k tokens | pull, deploy and compare solutions |
 
-Nothing is removed: a preset only changes which tools are *registered* in that session, and
-`cs_pac` is in `core`, `admin` and `solutions` so any pac command a preset hides is still reachable.
+Or let the user choose during the session: `cs_init` returns a `toolPresets` block with the question,
+the option table and a live count per preset, and `cs_set_tool_preset` applies the answer. The SDK
+sends `notifications/tools/list_changed`, so a client that honours it sees the shorter list at once;
+one that caches the list needs a restart. Runtime switching can only narrow what was registered at
+startup, so leave `CPS_TOOLS` unset if you want every preset available to choose from.
+
+| Preset | When to use it |
+| --- | --- |
+| `core` | build or change one agent and get it live. The usual choice |
+| `authoring` | write and check files only: no sign-in, nothing reaches an environment |
+| `admin` | tenant administration as the admin account |
+| `solutions` | move things between environments, and compare them |
+| `full` | everything; a large model, or you do not know yet what the task needs |
+
+Nothing is removed: a preset only changes which tools are *offered*, and `cs_init`, `cs_guide`,
+`cs_set_tool_preset` and `cs_job_status` survive every preset so a session can always change its
+mind. `cs_pac` is in `core`, `admin` and `solutions` so any pac command a preset hides is still
+reachable.
 Presets compose with each other and with globs: `CPS_TOOLS=core,cs_admin_*`. `cs_init` reports the
 active preset and says that a missing tool is hidden rather than absent, so the model does not
 conclude the feature does not exist.

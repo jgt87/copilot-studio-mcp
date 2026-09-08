@@ -210,6 +210,8 @@ export const skippedTools: string[] = [];
 export const withheldTools: string[] = [];
 /** Tools this process actually registered, so cs_init can say which build is answering. */
 export const registeredTools: string[] = [];
+/** The SDK handle per tool, so a preset can be chosen during a session instead of only at startup. */
+const toolHandles = new Map<string, { enabled: boolean; enable(): void; disable(): void }>();
 {
   const original = server.registerTool.bind(server) as (...a: unknown[]) => unknown;
   server.registerTool = ((name: string, ...rest: unknown[]) => {
@@ -222,7 +224,9 @@ export const registeredTools: string[] = [];
       return undefined;
     }
     registeredTools.push(name);
-    return original(name, ...rest);
+    const handle = original(name, ...rest) as { enabled: boolean; enable(): void; disable(): void } | undefined;
+    if (handle && typeof handle.disable === "function") toolHandles.set(name, handle);
+    return handle;
   }) as unknown as typeof server.registerTool;
 }
 
@@ -261,3 +265,35 @@ export async function dataverseReadsFor(environment: string, tenantId?: string, 
   }
 }
 
+
+/**
+ * Turn tools on and off during a session.
+ *
+ * The SDK sends notifications/tools/list_changed when a tool is enabled or
+ * disabled, so a client that honours it sees the shorter list immediately.
+ * This only reaches tools this process registered: anything already excluded by
+ * CPS_READ_ONLY or CPS_TOOLS at startup was never registered and cannot be
+ * turned back on here.
+ */
+export function applyToolPreset(patterns: RegExp[], keepAlways: string[] = []): { enabled: string[]; disabled: string[] } {
+  const enabled: string[] = [];
+  const disabled: string[] = [];
+  for (const [name, handle] of toolHandles) {
+    const keep = keepAlways.includes(name) || patterns.some((re) => re.test(name));
+    if (keep) {
+      if (!handle.enabled) handle.enable();
+      enabled.push(name);
+    } else {
+      if (handle.enabled) handle.disable();
+      disabled.push(name);
+    }
+  }
+  return { enabled, disabled };
+}
+
+/** How many tools this process registered but has switched off. */
+export function disabledToolCount(): number {
+  let n = 0;
+  for (const handle of toolHandles.values()) if (!handle.enabled) n++;
+  return n;
+}

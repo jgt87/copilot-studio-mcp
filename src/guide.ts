@@ -18,6 +18,7 @@ export const SERVER_INSTRUCTIONS = `copilot-studio-mcp builds Microsoft Copilot 
 
 FIRST
 - Call cs_init before anything else. It reports pac, sign-in, the workspace, and the next steps.
+- cs_init returns toolPresets: show it to the user, then call cs_set_tool_preset with their choice.
 - Call cs_guide before inventing a sequence of calls. Topics: getting-started, instructions, knowledge, tools, topics, evaluations, publish-and-test, drift, transcripts, solutions, administration, troubleshooting.
 
 WHAT AN AGENT IS
@@ -41,8 +42,8 @@ WHEN A CALL DOES NOT DO WHAT YOU EXPECT
 - pac says it failed but the tool says ok: trust the output text and tell the user to check the portal.
 
 OTHER RULES
-- Two separate sign-ins. pac: the user runs "pac auth create --environment <id>" in a terminal. cs_login: for the API tools; it may return status pending with a URL the user opens.
-- Connector, MCP and prompt tools need a connection only the portal can authorise. cs_add_tool writes the YAML and names the portal step. After the user connects, run cs_pull.
+- Two sign-ins. pac: user runs "pac auth create --environment <id>" in a terminal. cs_login: for API tools; may return status pending with a URL to open.
+- Connector, MCP and prompt tools need a portal-authorised connection. cs_add_tool writes the YAML and names the portal step; then run cs_pull.
 - Makers also edit in the portal. cs_check_drift shows what changed there. cs_pull merges it.
 - Use the specific tool. cs_pac is only for pac commands that have no tool of their own.
 - Admin tools and cs_backup_tenant run as a separate account: pass profile (default CPS_ADMIN_PROFILE, listed by cs_list_auth_profiles). Reset, delete, copy and restore destroy whole environments: say what will be lost before you ask.`;
@@ -82,6 +83,8 @@ Follow these steps in order. Do not skip step 0.
 
 ## 0. Check the machine
 Call \`cs_init\`.
+Read \`toolPresets\` in the result. Put its question and the option table to the user, then call
+\`cs_set_tool_preset\` with what they pick. Skip this only if the user already chose.
 Read \`cloudAccess.ready\` in the result.
 IF a resource is not "ok" -> the user must run \`cs_login\` before tools that need it.
 IF there is no pac auth profile -> the user runs this in a terminal. You cannot do it for them:

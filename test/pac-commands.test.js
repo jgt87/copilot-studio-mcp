@@ -3,7 +3,7 @@ import test from "node:test";
 import { z } from "zod";
 
 import { PAC_COMMANDS, buildPacArgs, describeSpec, isMutating, redactArgs, secretValues, zodShapeFor } from "../dist/pacCommands.js";
-import { activePreset, parsePatterns, toolEnabled } from "../dist/toolFilter.js";
+import { activePreset, parsePatterns, presetOptions, toolEnabled } from "../dist/toolFilter.js";
 
 const spec = (tool) => {
   const s = PAC_COMMANDS.find((x) => x.tool === tool);
@@ -139,4 +139,26 @@ test("tool presets: default exposes everything, core is a strict subset, admin k
   assert.equal(activePreset({ CPS_TOOLS: "core" }), "core");
   assert.equal(activePreset({ CPS_TOOLS: "cs_add_*" }), null);
   assert.equal(activePreset({}), null);
+});
+
+test("preset menu: every preset has a when-to-use line and keeps the session controls", () => {
+  const registered = ["cs_init", "cs_guide", "cs_set_tool_preset", "cs_job_status", "cs_push", "cs_add_topic", "cs_backup_tenant", "cs_pull_solution", "cs_pac"];
+  const options = presetOptions(registered);
+  assert.deepEqual(
+    options.map((o) => o.preset).sort(),
+    ["admin", "authoring", "core", "full", "solutions"],
+  );
+  for (const o of options) {
+    assert.ok(o.when.length > 30, `${o.preset} needs a when-to-use line`);
+    assert.ok(o.offers > 0, `${o.preset} offers nothing`);
+    // A session that cannot call cs_init or cs_set_tool_preset cannot recover itself.
+    for (const control of ["cs_init", "cs_guide", "cs_set_tool_preset", "cs_job_status"]) {
+      assert.equal(toolEnabled(control, { CPS_TOOLS: o.preset }), true, `${o.preset} must keep ${control}`);
+    }
+  }
+  // The advertised count must be what the preset actually admits, or the user is told the wrong number.
+  for (const o of options) {
+    const admitted = registered.filter((n) => toolEnabled(n, { CPS_TOOLS: o.preset })).length;
+    assert.equal(o.offers, admitted, `${o.preset} advertises ${o.offers} but admits ${admitted}`);
+  }
 });
