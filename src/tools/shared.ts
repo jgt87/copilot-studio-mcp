@@ -12,6 +12,7 @@ import { z } from "zod";
 
 
 import { errorMessage, log } from "../log.js";
+import { publicView, startJob } from "../jobs.js";
 import { explainFailure, type PacResult } from "../pac.js";
 import { findWorkspaceRoot, readWorkspace, type WorkspaceInfo } from "../workspace.js";
 import { validateWorkspace } from "../validate.js";
@@ -107,6 +108,26 @@ export function dryRun(summary: string, extra: Record<string, unknown> = {}) {
   return text({ dryRun: true, wouldDo: summary, ...extra, hint: "This mutates a live environment. Show the user what will happen, then call again with confirm: true." });
 }
 
+/** What MCP clients observed to allow one tool call. Measured at 60s on VS Code clients. */
+export const CLIENT_CALL_BUDGET_MS = 60_000;
+
+export const backgroundArg = z
+  .boolean()
+  .optional()
+  .describe(`Run in the background and return a jobId immediately, then poll cs_job_status. MCP clients cut a tool call off after about ${Math.round(CLIENT_CALL_BUDGET_MS / 1000)} seconds; this operation can take much longer, and without this the work is orphaned rather than cancelled.`);
+
+/**
+ * Run `body` now, or as a background job when the caller asks.
+ *
+ * Call this only after the read-only and confirm gates have run, so
+ * backgrounding can never be a way around the confirm contract.
+ */
+export async function maybeBackground(o: { tool: string; label: string; background?: boolean; recordFile?: string | null }, body: () => Promise<unknown>) {
+  if (!o.background) return text(await body());
+  const job = startJob({ tool: o.tool, label: o.label, recordFile: o.recordFile ?? null }, body);
+  return text({ ...publicView(job), note: `Running in the background so the call cannot outlive the client's ~${Math.round(CLIENT_CALL_BUDGET_MS / 1000)}s budget. Poll cs_job_status with this jobId.` });
+}
+
 /**
  * Verified against pac 2.11.2: `pac copilot pack` on an init-only workspace
  * accepts settings, agent.mcs.yml, icon.png and topics/ and rejects every
@@ -187,6 +208,8 @@ export const server = new McpServer({ name: "copilot-studio-mcp", version: VERSI
 //  - CPS_TOOLS / CPS_TOOLS_EXCLUDE trim the list for clients with small context windows.
 export const skippedTools: string[] = [];
 export const withheldTools: string[] = [];
+/** Tools this process actually registered, so cs_init can say which build is answering. */
+export const registeredTools: string[] = [];
 {
   const original = server.registerTool.bind(server) as (...a: unknown[]) => unknown;
   server.registerTool = ((name: string, ...rest: unknown[]) => {
@@ -198,6 +221,7 @@ export const withheldTools: string[] = [];
       skippedTools.push(name);
       return undefined;
     }
+    registeredTools.push(name);
     return original(name, ...rest);
   }) as unknown as typeof server.registerTool;
 }

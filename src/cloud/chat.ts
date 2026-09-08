@@ -122,7 +122,11 @@ export async function chatDirectLine(utterance: string, opts: DirectLineChatOpti
   const fetchImpl = opts.fetchImpl;
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const idleMs = opts.idleMs ?? 2500;
-  const maxMs = opts.maxMs ?? 45_000;
+  // MCP clients cut a tool call off at about 60s; a 45s poll plus the token
+  // fetch and conversation start could exceed that, and the caller then saw a
+  // client timeout rather than the agent's reply. Stay well inside the budget
+  // by default and let a caller who is waiting on purpose raise it.
+  const maxMs = opts.maxMs ?? 25_000;
 
   let conversationId = opts.conversationId;
   let session = conversationId ? sessions.get(conversationId) : undefined;

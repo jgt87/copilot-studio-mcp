@@ -5,6 +5,7 @@
  * index.ts imports this module for its side effect, in tool-list order.
  */
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 
@@ -19,7 +20,7 @@ import { readOnlyMode } from "../policy.js";
 import { acquireSilent, BAP_SCOPE, COPILOT_INVOKE_SCOPE, effectiveClientId, listAccounts, pendingLoginStatus, PPAPI_SCOPE, resolveTenantId, signOut, startDeviceCodeLogin, startInteractiveLogin, waitForPendingLogin, type AuthConfig } from "../auth.js";
 import { dataverseScope } from "../cloud/dataverse.js";
 import { FLOW_SCOPE } from "../cloud/flowruns.js";
-import { VERSION, clientArg, execFileAsync, fail, server, tenantArg, text, tryWorkspace, withheldTools, workspaceArg } from "./shared.js";
+import { VERSION, clientArg, execFileAsync, fail, registeredTools, server, tenantArg, text, tryWorkspace, withheldTools, workspaceArg } from "./shared.js";
 
 // ---- session start / auth --------------------------------------------------------
 
@@ -40,6 +41,9 @@ server.registerTool(
     const msalAccounts = Array.isArray(msal.msalAccounts) ? (msal.msalAccounts as unknown[]) : [];
     return text({
       serverVersion: VERSION,
+      // The first live run tested a different, older checkout than the one that had just been
+      // pulled, and concluded four tools were unimplemented. Say which build is answering.
+      serverBuild: { modulePath: fileURLToPath(import.meta.url), registeredTools: registeredTools.length },
       pac: await probePac(pacPath),
       dotnetSdks: await probeDotnet(),
       ...pacAuth,

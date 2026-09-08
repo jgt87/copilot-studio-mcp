@@ -16,24 +16,36 @@ import type { WorkspaceInfo } from "./workspace.js";
 
 export const SERVER_INSTRUCTIONS = `copilot-studio-mcp builds Microsoft Copilot Studio agents from files.
 
-Start here
-- Call cs_init first in a session: it reports the pac CLI, sign-in state and the workspace it found, and ends with concrete next steps.
-- Call cs_guide (topic: "getting-started", "instructions", "knowledge", "tools", "topics", "evaluations", "publish-and-test", "drift", "transcripts", "solutions", "administration", "troubleshooting") for a walkthrough before improvising a sequence of calls.
+FIRST
+- Call cs_init before anything else. It reports pac, sign-in, the workspace, and the next steps.
+- Call cs_guide before inventing a sequence of calls. Topics: getting-started, instructions, knowledge, tools, topics, evaluations, publish-and-test, drift, transcripts, solutions, administration, troubleshooting.
 
-How the pieces fit
-- An agent is a folder of YAML: agent.mcs.yml, settings.mcs.yml, topics/, knowledge/, actions/ (tools), trigger/, variables/, workflows/. Authoring tools write those files; nothing reaches the live agent until cs_push.
-- Get a workspace with cs_clone_agent (existing agent) or cs_create_agent (new one). cs_describe_workspace inventories it.
-- Order that works: edit files, cs_review_agent, cs_validate, cs_push, then cs_publish, then cs_chat.
+WHAT AN AGENT IS
+- A folder of YAML: agent.mcs.yml, settings.mcs.yml, topics/, knowledge/, actions/, trigger/, variables/, workflows/.
+- Authoring tools only write files. Files reach the live agent only through cs_push.
+- Get a workspace with cs_clone_agent (existing agent) or cs_create_agent (new one). List what is in it with cs_describe_workspace.
+- Order that works: edit files, cs_review_agent, cs_validate, cs_push, cs_publish, cs_chat.
 
-Rules to respect
-- Nothing reaches the live agent without the user's approval. Every tool that changes an environment returns a dry run until you pass confirm: true. Show that dry run in your own words, ask, and pass confirm only after the user says yes: never on your own initiative, never for a batch of steps in advance, and one approval covers one call. Writing and editing local files needs no approval; sending them to Copilot Studio does.
-- If CPS_READ_ONLY is set, the environment-changing tools are not registered at all: report that the user has locked this session to local work rather than looking for a way around it.
-- Two sign-ins: pac (the user runs "pac auth create --environment <id>" in a terminal) and cs_login for the API-based tools. cs_login may return status "pending" with a URL for the user to open.
-- Connector, MCP and prompt tools need a connection that only the portal can authorise. cs_add_tool writes the YAML and tells you the portal step; after the user connects, run cs_pull.
-- Makers may edit the same agent in the portal. cs_check_drift shows what changed there since your last sync; cs_pull merges it.
-- A result with needsInput: true is a question, not a failure: nothing was written. Put its question to the user, offer the choices it lists rather than inventing values, then call the same tool again with the argument it names.
-- Prefer the specific tool over cs_pac. cs_pac is the escape hatch for pac commands that have no tool.
-- Tenant administration runs as a separate account: those tools and cs_backup_tenant take a 'profile' (default CPS_ADMIN_PROFILE; cs_list_auth_profiles lists them). Reset, delete, copy and restore wipe or overwrite whole environments: say what will be lost before asking.`;
+APPROVAL - NEVER SKIP
+- A tool that changes an environment returns a dry run and does nothing else.
+- Show the dry run to the user in your own words. Ask. Only then call again with confirm: true.
+- One approval covers one call. Never pass confirm on your own initiative. Never approve several steps at once.
+- Writing and editing local files needs no approval. Sending them to Copilot Studio does.
+- If CPS_READ_ONLY is set, the environment-changing tools are absent on purpose. Say so. Do not look for a way around it.
+
+WHEN A CALL DOES NOT DO WHAT YOU EXPECT
+- needsInput: true is a question, not an error. Nothing was written. Ask the user the question, offer the choices listed, then call the same tool again with that argument.
+- The call died after about a minute: that is the client's limit, not the tool's, and the work is still running. Call again with background: true, then poll cs_job_status. Never retry with a shorter path or smaller arguments.
+- A tool named here is missing from tools/list: the server binary is older than its documentation. Say the build is stale. Check cs_init serverBuild.modulePath.
+- A cloud tool fails: read cs_init cloudAccess.ready. If a resource is not ok, the user must run cs_login.
+- pac says it failed but the tool says ok: trust the output text and tell the user to check the portal.
+
+OTHER RULES
+- Two separate sign-ins. pac: the user runs "pac auth create --environment <id>" in a terminal. cs_login: for the API tools; it may return status pending with a URL the user opens.
+- Connector, MCP and prompt tools need a connection only the portal can authorise. cs_add_tool writes the YAML and names the portal step. After the user connects, run cs_pull.
+- Makers also edit in the portal. cs_check_drift shows what changed there. cs_pull merges it.
+- Use the specific tool. cs_pac is only for pac commands that have no tool of their own.
+- Admin tools and cs_backup_tenant run as a separate account: pass profile (default CPS_ADMIN_PROFILE, listed by cs_list_auth_profiles). Reset, delete, copy and restore destroy whole environments: say what will be lost before you ask.`;
 
 export type GuideTopic =
   | "getting-started"

@@ -20,7 +20,7 @@ import { briefQuick, fullDrift, gitState, readStamp } from "../drift.js";
 import { getToken } from "../auth.js";
 import { dataverseScope, publishBot } from "../cloud/dataverse.js";
 import { createSolution, initAgentInSolution } from "../bootstrap.js";
-import { botArg, clientArg, cloudContext, confirmArg, dryRun, envArg, fail, pacSummary, quickDriftFor, resolveRoot, server, stampAfterSync, tenantArg, text, validateWorkspaceFiles, workspaceArg } from "./shared.js";
+import { backgroundArg, botArg, clientArg, cloudContext, confirmArg, dryRun, envArg, fail, maybeBackground, pacSummary, quickDriftFor, resolveRoot, server, stampAfterSync, tenantArg, text, validateWorkspaceFiles, workspaceArg } from "./shared.js";
 
 // ---- sync (pac) -----------------------------------------------------------
 
@@ -214,7 +214,7 @@ server.registerTool(
   {
     title: "Publish the agent",
     description: "Make the draft agent live for its channels. via 'pac' runs 'pac copilot publish'; via 'dataverse' calls the PvaPublish action with the MSAL token and polls until publishedon changes. Requires confirm: true.",
-    inputSchema: { workspace: workspaceArg, botId: botArg, environmentId: envArg, dataverseUrl: z.string().optional(), via: z.enum(["pac", "dataverse"]).optional(), tenantId: tenantArg, clientId: clientArg, timeoutSeconds: z.number().optional(), confirm: confirmArg },
+    inputSchema: { workspace: workspaceArg, botId: botArg, environmentId: envArg, dataverseUrl: z.string().optional(), via: z.enum(["pac", "dataverse"]).optional(), tenantId: tenantArg, clientId: clientArg, timeoutSeconds: z.number().optional(), background: backgroundArg, confirm: confirmArg },
   },
   async (a) => {
     try {
@@ -223,11 +223,13 @@ server.registerTool(
       if ((a.via ?? "pac") === "pac") {
         const args = ["copilot", "publish", "--bot", ctx.botId as string];
         if (ctx.environmentId) args.push("--environment", ctx.environmentId);
-        // pac prints "Failed to publish" and still exits 0, so the exit code alone would report success.
-        const r = await runPac(args, { timeoutMs: 15 * 60_000, failOnOutput: [PUBLISH_FAILED] });
-        return text({
-          ...pacSummary(r),
-          ...(r.ok ? {} : { hint: "pac reported the publish as failed. Check the agent in the portal before assuming it is live; publishing again, or via: 'dataverse' (which polls publishedon), usually says more about why." }),
+        return await maybeBackground({ tool: "cs_publish", label: `publish agent ${ctx.botId}`, background: a.background }, async () => {
+          // pac prints "Failed to publish" and still exits 0, so the exit code alone would report success.
+          const r = await runPac(args, { timeoutMs: 15 * 60_000, failOnOutput: [PUBLISH_FAILED] });
+          return {
+            ...pacSummary(r),
+            ...(r.ok ? {} : { hint: "pac reported the publish as failed. Check the agent in the portal before assuming it is live; publishing again, or via: 'dataverse' (which polls publishedon), usually says more about why." }),
+          };
         });
       }
       const c2 = await cloudContext(a, { bot: true, dataverse: true });

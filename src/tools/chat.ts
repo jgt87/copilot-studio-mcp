@@ -14,7 +14,7 @@ import { COPILOT_INVOKE_SCOPE, getToken } from "../auth.js";
 import { dataverseScope, getBot } from "../cloud/dataverse.js";
 import { chatDirectLine, chatSdk, directLineTokenEndpoint, type ChatResult } from "../cloud/chat.js";
 import { CONVERSATION_TESTS_EXAMPLE, evaluateReplies, parseConversationTests, type ConversationTest } from "../evals.js";
-import { CloudContext, botArg, clientArg, cloudContext, envArg, fail, server, tenantArg, text, workspaceArg } from "./shared.js";
+import { CloudContext, backgroundArg, botArg, clientArg, cloudContext, envArg, fail, maybeBackground, server, tenantArg, text, workspaceArg } from "./shared.js";
 
 type ChatArgs = { workspace?: string; conversationId?: string; transport?: string; tokenEndpoint?: string; directLineSecret?: string; environmentId?: string; schemaName?: string; tenantId?: string; clientId?: string; dataverseUrl?: string; botId?: string };
 type ChatMode = "directline" | "sdk";
@@ -78,10 +78,23 @@ const chatArgs = {
   clientId: clientArg,
 };
 
-server.registerTool("cs_chat", { title: "Chat with the published agent", description: "Send one utterance to the published agent and return its replies (and raw activities). Use conversationId to continue. If the agent answers with a sign-in card, signInUrl is returned.", inputSchema: { utterance: z.string(), ...chatArgs } }, async (a) => {
+server.registerTool("cs_chat", { title: "Chat with the published agent", description: "Send one utterance to the published agent and return its replies (and raw activities). Use conversationId to continue. If the agent answers with a sign-in card, signInUrl is returned.", inputSchema: { utterance: z.string(), ...chatArgs, maxMs: z.number().optional().describe("How long to wait for replies, ms (default 25000, kept under the client call budget)"), background: backgroundArg } }, async (a) => {
   try {
-    const r = await runChat(a.utterance, a);
-    return text({ protocol: r.protocol, conversationId: r.conversationId, replies: r.replies, signInUrl: r.signInUrl, activityCount: r.activities.length, activities: r.activities.map((x) => ({ type: x.type, text: x.text, name: x.name, attachments: x.attachments?.map((at) => at.contentType), value: x.value })) });
+    return await maybeBackground({ tool: "cs_chat", label: `chat: ${a.utterance.slice(0, 60)}`, background: a.background }, async () => {
+      const r = await runChat(a.utterance, a);
+      return {
+        protocol: r.protocol,
+        conversationId: r.conversationId,
+        replies: r.replies,
+        signInUrl: r.signInUrl,
+        activityCount: r.activities.length,
+        activities: r.activities.map((x) => ({ type: x.type, text: x.text, name: x.name, attachments: x.attachments?.map((at) => at.contentType), value: x.value })),
+        // A silent agent and a broken route look identical without this.
+        ...(r.replies.length === 0
+          ? { note: `No reply within the poll budget over '${r.protocol}'. The agent may be slow, unpublished, or not reachable on this route: raise maxMs, or pass background: true and poll cs_job_status. For a DirectLine agent, passing directLineSecret bypasses the derived token endpoint and tells you which of the two is at fault.` }
+          : {}),
+      };
+    });
   } catch (err) {
     return fail(errorMessage(err));
   }
