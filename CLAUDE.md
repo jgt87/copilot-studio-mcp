@@ -112,6 +112,12 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   (`parseSolutionList`, `parseCopilotList`, `parseConnectionList`), and per environment optionally
   the Dataverse reads. The pac runner is injectable, so `test/tenant.test.js` drives the whole
   backup with a fake pac and asserts the files, the parsing and the isolation of a failed capture.
+- **Question-shaped results** (`src/needs.ts`): `needsInput(tool, needs)` returns a non-error result
+  describing what is missing, with `choices` when the server can enumerate them and `moreWith`
+  naming the listing tool; `rankChoices` orders candidates (exact, prefix, substring, all words) and
+  callers fall back to the full list when nothing matches. Used by `cs_add_tool`,
+  `cs_add_knowledge_source` and `cs_clone_agent`; prefer it over `fail()` whenever the fix is a
+  decision the user has to make.
 - **Tool filter** (`src/toolFilter.ts`): `CPS_TOOLS` / `CPS_TOOLS_EXCLUDE` glob lists applied by a
   wrapper around `server.registerTool`; hidden tools are logged at startup.
 

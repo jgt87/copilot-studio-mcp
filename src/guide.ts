@@ -26,13 +26,14 @@ How the pieces fit
 - Order that works: edit files, cs_review_agent, cs_validate, cs_push, then cs_publish, then cs_chat.
 
 Rules to respect
-- Nothing reaches the live agent without the user's approval. Every tool that changes an environment (cs_push, cs_publish, cs_run_evaluation, cs_import_solution, cs_deploy_solution, cs_create_agent with an environment, the delete tools) returns a dry run until you pass confirm: true. Show the user that dry run in your own words, ask, and pass confirm only after they say yes. Never confirm on your own initiative, never confirm a batch of steps in advance, and treat approval for one call as approval for that call only. Local file changes (authoring, editing) do not need approval; sending them to Copilot Studio does.
+- Nothing reaches the live agent without the user's approval. Every tool that changes an environment returns a dry run until you pass confirm: true. Show that dry run in your own words, ask, and pass confirm only after the user says yes: never on your own initiative, never for a batch of steps in advance, and one approval covers one call. Writing and editing local files needs no approval; sending them to Copilot Studio does.
 - If CPS_READ_ONLY is set, the environment-changing tools are not registered at all: report that the user has locked this session to local work rather than looking for a way around it.
-- Two sign-ins exist: pac (run "pac auth create --environment <id>" in a terminal, this server cannot do it interactively) and MSAL for the API-based tools (cs_login). cs_login can return status "pending" with a URL; give that URL to the user to open.
+- Two sign-ins: pac (the user runs "pac auth create --environment <id>" in a terminal) and cs_login for the API-based tools. cs_login may return status "pending" with a URL for the user to open.
 - Connector, MCP and prompt tools need a connection that only the portal can authorise. cs_add_tool writes the YAML and tells you the portal step; after the user connects, run cs_pull.
 - Makers may edit the same agent in the portal. cs_check_drift shows what changed there since your last sync; cs_pull merges it.
+- A result with needsInput: true is a question, not a failure: nothing was written. Put its question to the user, offer the choices it lists rather than inventing values, then call the same tool again with the argument it names.
 - Prefer the specific tool over cs_pac. cs_pac is the escape hatch for pac commands that have no tool.
-- Tenant administration runs as a different account from agent making. The tenant-administration tools and cs_backup_tenant take a 'profile' (the pac auth profile of the admin account, default CPS_ADMIN_PROFILE); cs_list_auth_profiles shows what exists. Reset, delete, copy and restore destroy or overwrite whole environments: say what will be lost before asking for confirmation.`;
+- Tenant administration runs as a separate account: those tools and cs_backup_tenant take a 'profile' (default CPS_ADMIN_PROFILE; cs_list_auth_profiles lists them). Reset, delete, copy and restore wipe or overwrite whole environments: say what will be lost before asking.`;
 
 export type GuideTopic =
   | "getting-started"

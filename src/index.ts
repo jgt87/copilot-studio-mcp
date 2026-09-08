@@ -57,6 +57,7 @@ import { PAC_COMMANDS, buildPacArgs, describeSpec, isAdminCommand, isMutating, r
 import { adminProfileDefault, listProfiles, makerProfileDefault, runPacAs, withPacProfile } from "./pacProfile.js";
 import { backupTenant, summarizeBackup, type EnvironmentTarget } from "./tenantBackup.js";
 import { toolEnabled } from "./toolFilter.js";
+import { needsInput, rankChoices, type NeedChoice } from "./needs.js";
 import { GUIDE_TOPICS, SERVER_INSTRUCTIONS, TOPIC_SUMMARY, guide, nextSteps, type GuideTopic } from "./guide.js";
 import { ENVIRONMENT_WRITE_TOOLS, readOnlyMode, readOnlyRefusal } from "./policy.js";
 import { briefQuick, fullDrift, gitState, quickDrift, readStamp, remoteStateFrom, STAMP_REL, writeStamp, type QuickDriftReport, type SyncOperation } from "./drift.js";
@@ -576,10 +577,26 @@ server.registerTool(
   {
     title: "Clone an agent to disk",
     description: "pac copilot clone: download an existing agent into a sync-connected workspace (a subfolder named after the agent under outputDir). Needs a pac auth profile. Records a sync stamp (.mcs/cs-sync.json) that cs_check_drift and the cs_push preflight compare against.",
-    inputSchema: { bot: z.string().describe("Agent id (GUID) or schema name"), environment: z.string().optional().describe("Environment id or URL; default active profile"), outputDir: z.string().optional(), displayName: z.string().optional().describe("Folder name override"), componentCollections: z.array(z.string()).optional() },
+    inputSchema: { bot: z.string().optional().describe("Agent id (GUID) or schema name; omit to be shown the agents in the environment"), environment: z.string().optional().describe("Environment id or URL; default active profile"), outputDir: z.string().optional(), displayName: z.string().optional().describe("Folder name override"), componentCollections: z.array(z.string()).optional() },
   },
   async (a) => {
     try {
+      if (!a.bot) {
+        const listed = await runPac(["copilot", "list", ...(a.environment ? ["--environment", a.environment] : [])], { timeoutMs: 180_000 });
+        const rows = listed.ok ? parseCopilotList(listed.stdout) : [];
+        return text(
+          needsInput("cs_clone_agent", [
+            {
+              argument: "bot",
+              question: "Which agent should I clone?",
+              why: rows.length ? "Cloning downloads one agent into a workspace." : `The agents could not be listed: ${listed.ok ? "the environment returned none" : explainFailure(listed)}`,
+              choices: rows.map((r) => ({ value: r.botId, label: r.name, ...(r.isManaged === true ? { detail: "managed" } : {}) })),
+              totalChoices: rows.length,
+              moreWith: "cs_list_agents",
+            },
+          ]),
+        );
+      }
       const args = ["copilot", "clone", "--bot", a.bot];
       if (a.environment) args.push("--environment", a.environment);
       if (a.outputDir) args.push("--output-dir", a.outputDir);
@@ -1302,6 +1319,23 @@ server.registerTool(
   async (a) => {
     try {
       const root = resolveRoot(a.workspace);
+      if ((a.kind === "public-site" || a.kind === "sharepoint") && !a.site) {
+        return text(
+          needsInput("cs_add_knowledge_source", [
+            {
+              argument: "site",
+              question: a.kind === "sharepoint" ? "Which SharePoint site or document library should the agent search? Paste the URL." : "Which website should the agent search? Paste the URL.",
+              why: a.kind === "sharepoint" ? "A SharePoint source points at one folder URL, and the signed-in user's permissions apply." : "A public website source is scoped to one URL, at most two path levels deep.",
+            },
+          ]),
+        );
+      }
+      if (a.kind === "files" && !a.files?.length) {
+        return text(needsInput("cs_add_knowledge_source", [{ argument: "files", question: "Which documents should the agent use? Give their full paths.", why: "File knowledge copies the documents into the workspace and uploads them on push." }]));
+      }
+      if (a.kind === "graph-connector" && !a.connectionEnvironmentVariable) {
+        return text(needsInput("cs_add_knowledge_source", [{ argument: "connectionEnvironmentVariable", question: "Which environment variable holds the Graph connector connection?", why: "A Graph connector source is bound through an environment variable so it can differ per environment.", moreWith: "cs_describe_solution (environment variables)" }]));
+      }
       const r = addKnowledgeSource(root, a);
       const yamlFile = r.files.find((f) => f.endsWith(".yml"));
       const validation = yamlFile ? validateWorkspaceFiles(root, yamlFile).files[0]?.diagnostics ?? [] : [];
@@ -1349,8 +1383,55 @@ server.registerTool(
       const root = resolveRoot(a.workspace);
       const ws = readWorkspace(root);
       const catalog: Record<string, unknown> = {};
+      const needsConnector = a.type === "connector" || a.type === "mcp";
+      if (needsConnector && !a.connectorId) {
+        const { choices, total, source } = connectorChoices(root, ws.sync.environmentId, a.name);
+        return text(
+          needsInput("cs_add_tool", [
+            {
+              argument: "connectorId",
+              question: a.type === "mcp" ? "Which MCP server should this tool call?" : "Which connector should this tool use?",
+              why: `The connector decides what the tool can do and which connection has to be authorised. Listed from the ${source}.`,
+              choices,
+              totalChoices: total,
+              moreWith: "cs_list_connectors (search, mcpOnly, customOnly)",
+            },
+          ]),
+        );
+      }
       const connector = resolveConnectorId(root, ws, a.connectorId, catalog);
-      if ("error" in connector) return fail(connector.error);
+      if ("error" in connector) {
+        const { choices, total } = connectorChoices(root, ws.sync.environmentId, a.connectorId);
+        if (!choices.length) return fail(connector.error);
+        return text(
+          needsInput("cs_add_tool", [
+            { argument: "connectorId", question: `'${a.connectorId}' matches more than one connector. Which one did you mean?`, choices, totalChoices: total, moreWith: "cs_list_connectors" },
+          ]),
+        );
+      }
+      if (needsConnector && connector.id && !a.operationId) {
+        const ops = operationChoices(root, ws.sync.environmentId, connector.id, a.name);
+        return text(
+          needsInput("cs_add_tool", [
+            {
+              argument: "operationId",
+              question: `Which operation of ${connector.id} should the tool call?`,
+              why: ops ? "One tool calls one operation." : `The connector definition is not cached yet, so the operations cannot be listed here.`,
+              ...(ops ? { choices: ops.choices, totalChoices: ops.total } : {}),
+              moreWith: `cs_describe_connector connector=${connector.id}`,
+            },
+          ]),
+        );
+      }
+      if (a.type === "flow" && !a.flowId) {
+        return text(needsInput("cs_add_tool", [{ argument: "flowId", question: "Which cloud flow should the agent be able to call?", why: "A flow tool refers to an existing flow by id.", moreWith: "cs_list_flows" }]));
+      }
+      if (a.type === "prompt" && !a.aiModelId) {
+        return text(needsInput("cs_add_tool", [{ argument: "aiModelId", question: "Which AI Builder prompt should the tool run?", moreWith: "cs_list_prompts" }]));
+      }
+      if (a.type === "connected-agent" && !a.botSchemaName) {
+        return text(needsInput("cs_add_tool", [{ argument: "botSchemaName", question: "Which agent should this agent be able to hand work to?", why: "A connected agent is referenced by its schema name.", moreWith: "cs_list_agents" }]));
+      }
       const inputs = a.type === "connector" && connector.id && a.operationId ? catalogInputs({ root, environmentId: ws.sync.environmentId, connectorId: connector.id, operationId: a.operationId }, a, catalog) : { inputs: a.inputs };
       if ("error" in inputs) return fail(inputs.error);
       const spec = buildToolSpec({ ...a, connectorId: connector.id, inputs: inputs.inputs });
@@ -1383,6 +1464,35 @@ type AddToolArgs = {
   outputs?: string[];
   overwrite?: boolean;
 };
+
+/** Connectors to offer when the caller has not picked one, ranked by what the user said. */
+function connectorChoices(root: string | undefined, environmentId: string | null, search?: string): { choices: NeedChoice[]; total: number; source: string } {
+  const cached = root && environmentId ? readConnectorList(catalogDir(root), environmentId)?.connectors : null;
+  // The environment catalog and the offline seed carry different fields; reduce both to a choice.
+  const all: NeedChoice[] = cached
+    ? cached.map((c) => ({ value: c.name, label: c.displayName, ...(c.mcpLikely ? { detail: "MCP server" } : c.isCustom ? { detail: "custom connector" } : {}) }))
+    : loadSeed().map((c) => ({ value: c.name, label: c.displayName }));
+  const ranked = search ? rankChoices(all, search, (c) => `${c.label ?? ""} ${c.value}`) : all;
+  // A search that matches nothing must not leave the user with no options to pick from.
+  const matched = ranked.length > 0;
+  const list = matched ? ranked : all;
+  const where = cached ? "environment catalog" : "offline seed of public connectors";
+  return {
+    choices: list.slice(0, 200),
+    total: list.length,
+    source: !search ? where : matched ? `${where}, ranked against '${search}'` : `${where}; nothing matched '${search}', so all of them are listed`,
+  };
+}
+
+/** Operations of a connector whose definition is cached. */
+function operationChoices(root: string | undefined, environmentId: string | null, connectorId: string, search?: string): { choices: NeedChoice[]; total: number } | null {
+  if (!root) return null;
+  const def = readConnectorDefinition(catalogDir(root), environmentId, connectorId);
+  if (!def?.operations?.length) return null;
+  const ranked = rankChoices(def.operations, search, (o) => `${o.summary ?? ""} ${o.operationId}`);
+  const list = search ? ranked : def.operations;
+  return { choices: list.map((o) => ({ value: o.operationId, label: o.summary ?? o.operationId, ...(o.description ? { detail: String(o.description).slice(0, 120) } : {}) })), total: list.length };
+}
 
 /** A display name such as "Office 365 Outlook" is resolved through the cached list or the seed; shared_ names pass through. */
 function resolveConnectorId(root: string, ws: WorkspaceInfo, connectorId: string | undefined, catalog: Record<string, unknown>): { id: string | undefined } | { error: string } {

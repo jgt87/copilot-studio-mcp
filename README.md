@@ -212,6 +212,13 @@ The server also sends usage instructions in the MCP handshake, `cs_init` and
 (new agent, add knowledge, add tool, write instructions, review and push, check drift) are
 available in clients that show prompts as commands.
 
+When a call cannot proceed because something has not been decided yet, the tool returns a
+**question** rather than an error: `needsInput: true`, what it needs, why, the real choices when the
+server can list them (connectors ranked against what you asked for, a connector's operations, the
+agents in an environment), and the tool that lists more. Nothing is written, and the calling agent
+is told to ask you and call again. This works in every client, including those that do not support
+the MCP elicitation feature.
+
 Setup and sync (pac)
 
 | Tool | Purpose |
