@@ -303,33 +303,27 @@ function countFiles(dir: string): number {
   return n;
 }
 
-export function inventorySolutionFolder(folder: string): SolutionInventory {
-  const solutionXml = readIf(path.join(folder, "Other", "Solution.xml")) ?? "";
-  const customizations = readIf(path.join(folder, "Other", "Customizations.xml")) ?? "";
+type Agent = SolutionInventory["agents"][number];
+
+/** Solution.xml: identity, version, publisher and the count of unmet dependencies. */
+function readSolutionHeader(solutionXml: string): Pick<SolutionInventory, "uniqueName" | "friendlyName" | "version" | "managed" | "publisher" | "missingDependencies"> {
   const manifest = /<SolutionManifest>([\s\S]*?)<\/SolutionManifest>/i.exec(solutionXml)?.[1] ?? solutionXml;
   const publisherXml = /<Publisher>([\s\S]*?)<\/Publisher>/i.exec(manifest)?.[1] ?? "";
-  const inv: SolutionInventory = {
-    folder,
+  const managed = tag(manifest, "Managed");
+  return {
+    // The publisher block carries a UniqueName of its own; drop it before reading the solution's.
     uniqueName: tag(manifest.replace(publisherXml, ""), "UniqueName"),
     friendlyName: /<LocalizedName description="([^"]*)"/i.exec(manifest)?.[1] ?? null,
     version: tag(manifest, "Version"),
-    managed: (() => {
-      const v = tag(manifest, "Managed");
-      return v === null ? null : v === "1";
-    })(),
+    managed: managed === null ? null : managed === "1",
     publisher: { uniqueName: tag(publisherXml, "UniqueName"), prefix: tag(publisherXml, "CustomizationPrefix") },
-    agents: [],
-    botComponents: [],
-    flows: [],
-    connectionReferences: [],
-    environmentVariables: [],
-    customConnectors: [],
-    otherFolders: [],
     missingDependencies: (solutionXml.match(/<MissingDependency\b/gi) ?? []).length,
   };
+}
 
-  // Agents
-  for (const schema of listDirs(path.join(folder, "bots"))) {
+/** bots/<schema>/: bot.xml for the identity, configuration.json for the harness. */
+function readAgents(folder: string): Agent[] {
+  return listDirs(path.join(folder, "bots")).map((schema) => {
     const xml = readIf(path.join(folder, "bots", schema, "bot.xml")) ?? "";
     let recognizer: string | null = null;
     let authoringModel: string | null = null;
@@ -341,7 +335,7 @@ export function inventorySolutionFolder(folder: string): SolutionInventory {
       // ignore
     }
     const am = tag(xml, "authenticationmode");
-    inv.agents.push({
+    return {
       schemaName: attr(xml, "schemaname") ?? schema,
       name: tag(xml, "name"),
       authenticationMode: am === null ? null : Number(am),
@@ -349,35 +343,36 @@ export function inventorySolutionFolder(folder: string): SolutionInventory {
       recognizer,
       authoringModel,
       componentCount: 0,
-    });
-  }
+    };
+  });
+}
 
-  // Bot components
-  for (const schema of listDirs(path.join(folder, "botcomponents"))) {
+/** botcomponents/<schema>/: botcomponent.xml plus the `data` YAML the kind comes from. */
+function readBotComponents(folder: string): SolutionInventory["botComponents"] {
+  return listDirs(path.join(folder, "botcomponents")).map((schema) => {
     const dir = path.join(folder, "botcomponents", schema);
     const xml = readIf(path.join(dir, "botcomponent.xml")) ?? "";
     const dataFile = fs.existsSync(path.join(dir, "data")) ? path.join(dir, "data") : fs.readdirSync(dir).map((f) => path.join(dir, f)).find((f) => /data/i.test(path.basename(f))) ?? null;
     const data = dataFile ? (readIf(dataFile) ?? "") : "";
-    const kind = /^kind:\s*(\S+)/m.exec(data)?.[1] ?? null;
     const ct = tag(xml, "componenttype");
-    const parent = /<parentbotid>[\s\S]*?<schemaname>([^<]*)<\/schemaname>/i.exec(xml)?.[1] ?? null;
-    inv.botComponents.push({
+    return {
       schemaName: attr(xml, "schemaname") ?? schema,
       name: tag(xml, "name"),
-      parentBot: parent,
+      parentBot: /<parentbotid>[\s\S]*?<schemaname>([^<]*)<\/schemaname>/i.exec(xml)?.[1] ?? null,
       componentType: ct === null ? null : Number(ct),
-      kind,
+      kind: /^kind:\s*(\S+)/m.exec(data)?.[1] ?? null,
       description: tag(xml, "description"),
-    });
-    const agent = inv.agents.find((a) => a.schemaName === parent);
-    if (agent) agent.componentCount++;
-  }
+    };
+  });
+}
 
-  // Flows (Customizations.xml <Workflow> entries; JSON definitions under Workflows/)
+/** Cloud flows: the `<Workflow>` entries of Customizations.xml, or the JSON files when there are none. */
+function readFlows(folder: string, customizations: string): SolutionInventory["flows"] {
+  const flows: SolutionInventory["flows"] = [];
   for (const m of customizations.matchAll(/<Workflow\b([^>]*)>([\s\S]*?)<\/Workflow>/gi)) {
     const attrs = m[1];
     const body = m[2];
-    inv.flows.push({
+    flows.push({
       workflowId: attr(attrs, "WorkflowId")?.replace(/[{}]/g, "") ?? null,
       name: attr(attrs, "Name"),
       jsonFile: tag(body, "JsonFileName"),
@@ -385,25 +380,27 @@ export function inventorySolutionFolder(folder: string): SolutionInventory {
       state: tag(body, "StateCode") === "1" ? "Activated" : tag(body, "StateCode") === "0" ? "Draft" : tag(body, "StateCode"),
     });
   }
-  if (inv.flows.length === 0) {
-    const wfDir = path.join(folder, "Workflows");
-    for (const f of fs.existsSync(wfDir) ? fs.readdirSync(wfDir).filter((f) => f.endsWith(".json")) : []) {
-      inv.flows.push({ workflowId: GUID_RE.exec(f)?.[0] ?? null, name: f.replace(/-[0-9a-f-]{36}\.json$/i, ""), jsonFile: `/Workflows/${f}`, category: null, state: null });
-    }
+  if (flows.length) return flows;
+  const wfDir = path.join(folder, "Workflows");
+  for (const f of fs.existsSync(wfDir) ? fs.readdirSync(wfDir).filter((f) => f.endsWith(".json")) : []) {
+    flows.push({ workflowId: GUID_RE.exec(f)?.[0] ?? null, name: f.replace(/-[0-9a-f-]{36}\.json$/i, ""), jsonFile: `/Workflows/${f}`, category: null, state: null });
   }
+  return flows;
+}
 
-  // Connection references
-  for (const m of customizations.matchAll(/<connectionreference\b([^>]*)>([\s\S]*?)<\/connectionreference>/gi)) {
-    inv.connectionReferences.push({
-      logicalName: attr(m[1], "connectionreferencelogicalname") ?? "",
-      displayName: tag(m[2], "connectionreferencedisplayname"),
-      connectorId: tag(m[2], "connectorid") ?? tag(m[2], "customconnectorid"),
-    });
-  }
+/** The `<connectionreference>` entries of Customizations.xml. */
+function readConnectionReferences(customizations: string): SolutionInventory["connectionReferences"] {
+  return [...customizations.matchAll(/<connectionreference\b([^>]*)>([\s\S]*?)<\/connectionreference>/gi)].map((m) => ({
+    logicalName: attr(m[1], "connectionreferencelogicalname") ?? "",
+    displayName: tag(m[2], "connectionreferencedisplayname"),
+    connectorId: tag(m[2], "connectorid") ?? tag(m[2], "customconnectorid"),
+  }));
+}
 
-  // Environment variables
+/** environmentvariabledefinitions/<schema>/: the definition, plus the last value found beside it. */
+function readEnvironmentVariables(folder: string): SolutionInventory["environmentVariables"] {
   const evDir = path.join(folder, "environmentvariabledefinitions");
-  for (const schema of listDirs(evDir)) {
+  return listDirs(evDir).map((schema) => {
     const xml = readIf(path.join(evDir, schema, "environmentvariabledefinition.xml")) ?? "";
     let currentValue: string | null = null;
     const valDir = path.join(evDir, schema, "environmentvariablevalues");
@@ -412,24 +409,57 @@ export function inventorySolutionFolder(folder: string): SolutionInventory {
       currentValue = tag(vx, "value") ?? currentValue;
     }
     const type = tag(xml, "type");
-    inv.environmentVariables.push({
+    return {
       schemaName: attr(xml, "schemaname") ?? schema,
       displayName: /<displayname default="([^"]*)"/i.exec(xml)?.[1] ?? null,
       type: type ? (ENV_VAR_TYPES[type] ?? type) : null,
       defaultValue: tag(xml, "defaultvalue"),
       currentValue,
-    });
-  }
+    };
+  });
+}
 
-  // Custom connectors
+/** Connectors/<name>.xml, one custom connector each. */
+function readCustomConnectors(folder: string): string[] {
   const connDir = path.join(folder, "Connectors");
-  if (fs.existsSync(connDir)) inv.customConnectors = fs.readdirSync(connDir).filter((f) => f.endsWith(".xml")).map((f) => f.replace(/\.xml$/i, ""));
+  if (!fs.existsSync(connDir)) return [];
+  return fs.readdirSync(connDir).filter((f) => f.endsWith(".xml")).map((f) => f.replace(/\.xml$/i, ""));
+}
 
-  // Everything else, by folder
-  const known = new Set(["bots", "botcomponents", "Other", "Workflows", "environmentvariabledefinitions", "Connectors"]);
-  for (const d of listDirs(folder)) if (!known.has(d)) inv.otherFolders.push({ folder: d, files: countFiles(path.join(folder, d)) });
+const KNOWN_FOLDERS = new Set(["bots", "botcomponents", "Other", "Workflows", "environmentvariabledefinitions", "Connectors"]);
 
-  return inv;
+/** Everything this inventory does not read, so the caller knows what it is not seeing. */
+function readOtherFolders(folder: string): SolutionInventory["otherFolders"] {
+  return listDirs(folder)
+    .filter((d) => !KNOWN_FOLDERS.has(d))
+    .map((d) => ({ folder: d, files: countFiles(path.join(folder, d)) }));
+}
+
+export function inventorySolutionFolder(folder: string): SolutionInventory {
+  const customizations = readIf(path.join(folder, "Other", "Customizations.xml")) ?? "";
+  const agents = readAgents(folder);
+  const botComponents = readBotComponents(folder);
+  for (const c of botComponents) {
+    const agent = agents.find((a) => a.schemaName === c.parentBot);
+    if (agent) agent.componentCount++;
+  }
+  const header = readSolutionHeader(readIf(path.join(folder, "Other", "Solution.xml")) ?? "");
+  return {
+    folder,
+    uniqueName: header.uniqueName,
+    friendlyName: header.friendlyName,
+    version: header.version,
+    managed: header.managed,
+    publisher: header.publisher,
+    agents,
+    botComponents,
+    flows: readFlows(folder, customizations),
+    connectionReferences: readConnectionReferences(customizations),
+    environmentVariables: readEnvironmentVariables(folder),
+    customConnectors: readCustomConnectors(folder),
+    otherFolders: readOtherFolders(folder),
+    missingDependencies: header.missingDependencies,
+  };
 }
 
 export function summarizeInventory(inv: SolutionInventory): Record<string, unknown> {

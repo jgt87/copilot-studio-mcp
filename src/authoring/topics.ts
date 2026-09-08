@@ -91,118 +91,128 @@ function activity(text: string | string[], speak?: string | string[]): unknown {
   return { text: texts, ...(speak ? { speak: Array.isArray(speak) ? speak : [speak] } : {}) };
 }
 
+/** One action spec of a given type, for the builder table below. */
+type ActionOf<T extends ActionSpec["type"]> = Extract<ActionSpec, { type: T }>;
+
+/** A builder turns one spec into the node it becomes, or into the nodes it expands to. */
+type NodeBuilder<T extends ActionSpec["type"]> = (a: ActionOf<T>, agentSchemaName?: string) => Record<string, unknown> | Record<string, unknown>[];
+
+const question: NodeBuilder<"question"> = (a) => {
+  const variable = scoped(a.variable);
+  const node: Record<string, unknown> = {
+    kind: "Question",
+    id: newId("question"),
+    alwaysPrompt: true,
+    variable: variable.startsWith("init:") ? variable : `init:${variable}`,
+    prompt: a.prompt,
+  };
+  if (a.allowInterruption === false) node.interruptionPolicy = { allowInterruption: false };
+  if (a.choices && a.choices.length > 0) {
+    node.entity = {
+      kind: "EmbeddedEntity",
+      definition: {
+        kind: "ClosedListEntity",
+        items: a.choices.map((c) => ({ id: kebab(c).replace(/-/g, "_"), displayName: c })),
+      },
+    };
+  } else {
+    node.entity = `${a.entity ?? "String"}PrebuiltEntity`;
+  }
+  return node;
+};
+
+/**
+ * A knowledge search, optionally followed by the condition that ends the topic
+ * once an answer was found: two nodes from one spec.
+ */
+const searchKnowledge: NodeBuilder<"searchKnowledge"> = (a, agentSchemaName) => {
+  const variable = scoped(a.variable ?? "Answer");
+  const search: Record<string, unknown> = { kind: "SearchAndSummarizeContent", id: newId("searchContent"), userInput: "=System.Activity.Text", variable };
+  if (a.autoSend !== undefined) search.autoSend = a.autoSend;
+  if (a.sources?.length) {
+    // Reference format documented by Microsoft's authoring skills: <agentSchema>.topic.<knowledge file stem>
+    search.knowledgeSources = { kind: "SearchSpecificKnowledgeSources", knowledgeSources: a.sources.map((s) => (s.includes(".") ? s : `${agentSchemaName ?? "<AGENT_SCHEMA>"}.topic.${pascal(s)}`)) };
+  }
+  const nodes: Record<string, unknown>[] = [search];
+  if (a.endIfAnswered !== false) {
+    nodes.push({
+      kind: "ConditionGroup",
+      id: newId("conditionGroup"),
+      conditions: [{ id: newId("conditionItem"), condition: `=!IsBlank(${variable})`, actions: [{ kind: "EndDialog", id: newId("endDialog"), clearTopicQueue: true }] }],
+    });
+  }
+  return nodes;
+};
+
+const card: NodeBuilder<"card"> = (a) => {
+  const cardJson = typeof a.card === "string" ? a.card : JSON.stringify(a.card, null, 2);
+  const outputs = a.outputs ?? {};
+  const fields = Object.keys(outputs);
+  if (fields.length === 0) {
+    // Display-only card: an attachment on a message.
+    return { kind: "SendActivity", id: newId("sendMessage"), activity: { attachments: [{ kind: "AdaptiveCardTemplate", cardContent: cardJson }] } };
+  }
+  return {
+    kind: "AdaptiveCardPrompt",
+    id: newId("adaptiveCardPrompt"),
+    card: cardJson,
+    output: { binding: Object.fromEntries(fields.map((f) => [f, scoped(outputs[f])])) },
+    outputType: { properties: Object.fromEntries(fields.map((f) => [f, { type: a.outputTypes?.[f] ?? "String" }])) },
+  };
+};
+
+/** One builder per action type; `buildActions` is the dispatch over this table. */
+const BUILDERS: { [T in ActionSpec["type"]]: NodeBuilder<T> } = {
+  message: (a) => ({ kind: "SendActivity", id: newId("sendMessage"), activity: activity(a.text, a.speak) }),
+  question,
+  condition: (a, agentSchemaName) => ({
+    kind: "ConditionGroup",
+    id: newId("conditionGroup"),
+    conditions: a.cases.map((c) => ({ id: newId("conditionItem"), condition: pfx(c.condition), actions: buildActions(c.actions, agentSchemaName) })),
+    ...(a.else && a.else.length ? { elseActions: buildActions(a.else, agentSchemaName) } : {}),
+  }),
+  redirect: (a, agentSchemaName) => ({ kind: a.replace ? "ReplaceDialog" : "BeginDialog", id: newId(a.replace ? "replaceDialog" : "beginDialog"), dialog: topicReference(agentSchemaName, a.topic) }),
+  setVariable: (a) => ({
+    kind: "SetVariable",
+    id: newId("setVariable"),
+    variable: `init:${scoped(a.variable)}`,
+    value: typeof a.value === "string" ? (a.value.startsWith("=") ? a.value : a.value) : a.value,
+  }),
+  searchKnowledge,
+  http: (a) => ({
+    kind: "HttpRequestAction",
+    id: newId("httpRequest"),
+    method: a.method ?? "Get",
+    url: a.url,
+    ...(a.headers ? { headers: a.headers } : {}),
+    ...(a.body !== undefined ? { body: a.body } : {}),
+    response: scoped(a.responseVariable),
+  }),
+  invokeFlow: (a) => ({
+    kind: "InvokeFlowAction",
+    id: newId("invokeFlow"),
+    flowId: a.flowId,
+    ...(a.input ? { input: { binding: a.input } } : {}),
+    ...(a.output ? { output: { binding: a.output } } : {}),
+  }),
+  card,
+  transfer: (a) => ({
+    kind: "TransferConversationV2",
+    id: newId("transferConversation"),
+    transferType: a.phoneNumber ? { kind: "TransferToPhoneNumber", phoneNumber: a.phoneNumber } : { kind: "TransferToAgent", ...(a.message ? { messageToAgent: a.message } : {}) },
+  }),
+  endConversation: () => ({ kind: "EndConversation", id: newId("endConversation") }),
+  end: (a) => ({ kind: "EndDialog", id: newId("endDialog"), ...(a.clearTopicQueue ? { clearTopicQueue: true } : {}) }),
+  raw: (a) => ({ id: newId("node"), ...a.node }),
+};
+
 export function buildActions(specs: ActionSpec[], agentSchemaName?: string): Record<string, unknown>[] {
-  return specs.map((a) => {
-    switch (a.type) {
-      case "message":
-        return { kind: "SendActivity", id: newId("sendMessage"), activity: activity(a.text, a.speak) };
-      case "question": {
-        const variable = scoped(a.variable);
-        const node: Record<string, unknown> = {
-          kind: "Question",
-          id: newId("question"),
-          alwaysPrompt: true,
-          variable: variable.startsWith("init:") ? variable : `init:${variable}`,
-          prompt: a.prompt,
-        };
-        if (a.allowInterruption === false) node.interruptionPolicy = { allowInterruption: false };
-        if (a.choices && a.choices.length > 0) {
-          node.entity = {
-            kind: "EmbeddedEntity",
-            definition: {
-              kind: "ClosedListEntity",
-              items: a.choices.map((c) => ({ id: kebab(c).replace(/-/g, "_"), displayName: c })),
-            },
-          };
-        } else {
-          node.entity = `${a.entity ?? "String"}PrebuiltEntity`;
-        }
-        return node;
-      }
-      case "condition":
-        return {
-          kind: "ConditionGroup",
-          id: newId("conditionGroup"),
-          conditions: a.cases.map((c) => ({ id: newId("conditionItem"), condition: pfx(c.condition), actions: buildActions(c.actions, agentSchemaName) })),
-          ...(a.else && a.else.length ? { elseActions: buildActions(a.else, agentSchemaName) } : {}),
-        };
-      case "redirect":
-        return { kind: a.replace ? "ReplaceDialog" : "BeginDialog", id: newId(a.replace ? "replaceDialog" : "beginDialog"), dialog: topicReference(agentSchemaName, a.topic) };
-      case "setVariable":
-        return {
-          kind: "SetVariable",
-          id: newId("setVariable"),
-          variable: `init:${scoped(a.variable)}`,
-          value: typeof a.value === "string" ? (a.value.startsWith("=") ? a.value : a.value) : a.value,
-        };
-      case "searchKnowledge": {
-        const variable = scoped(a.variable ?? "Answer");
-        const search: Record<string, unknown> = { kind: "SearchAndSummarizeContent", id: newId("searchContent"), userInput: "=System.Activity.Text", variable };
-        if (a.autoSend !== undefined) search.autoSend = a.autoSend;
-        if (a.sources?.length) {
-          // Reference format documented by Microsoft's authoring skills: <agentSchema>.topic.<knowledge file stem>
-          search.knowledgeSources = { kind: "SearchSpecificKnowledgeSources", knowledgeSources: a.sources.map((s) => (s.includes(".") ? s : `${agentSchemaName ?? "<AGENT_SCHEMA>"}.topic.${pascal(s)}`)) };
-        }
-        const nodes: Record<string, unknown>[] = [search];
-        if (a.endIfAnswered !== false) {
-          nodes.push({
-            kind: "ConditionGroup",
-            id: newId("conditionGroup"),
-            conditions: [{ id: newId("conditionItem"), condition: `=!IsBlank(${variable})`, actions: [{ kind: "EndDialog", id: newId("endDialog"), clearTopicQueue: true }] }],
-          });
-        }
-        return { __multi: nodes };
-      }
-      case "http":
-        return {
-          kind: "HttpRequestAction",
-          id: newId("httpRequest"),
-          method: a.method ?? "Get",
-          url: a.url,
-          ...(a.headers ? { headers: a.headers } : {}),
-          ...(a.body !== undefined ? { body: a.body } : {}),
-          response: scoped(a.responseVariable),
-        };
-      case "invokeFlow":
-        return {
-          kind: "InvokeFlowAction",
-          id: newId("invokeFlow"),
-          flowId: a.flowId,
-          ...(a.input ? { input: { binding: a.input } } : {}),
-          ...(a.output ? { output: { binding: a.output } } : {}),
-        };
-      case "card": {
-        const cardJson = typeof a.card === "string" ? a.card : JSON.stringify(a.card, null, 2);
-        const outputs = a.outputs ?? {};
-        const fields = Object.keys(outputs);
-        if (fields.length === 0) {
-          // Display-only card: an attachment on a message.
-          return { kind: "SendActivity", id: newId("sendMessage"), activity: { attachments: [{ kind: "AdaptiveCardTemplate", cardContent: cardJson }] } };
-        }
-        return {
-          kind: "AdaptiveCardPrompt",
-          id: newId("adaptiveCardPrompt"),
-          card: cardJson,
-          output: { binding: Object.fromEntries(fields.map((f) => [f, scoped(outputs[f])])) },
-          outputType: { properties: Object.fromEntries(fields.map((f) => [f, { type: a.outputTypes?.[f] ?? "String" }])) },
-        };
-      }
-      case "transfer":
-        return {
-          kind: "TransferConversationV2",
-          id: newId("transferConversation"),
-          transferType: a.phoneNumber ? { kind: "TransferToPhoneNumber", phoneNumber: a.phoneNumber } : { kind: "TransferToAgent", ...(a.message ? { messageToAgent: a.message } : {}) },
-        };
-      case "endConversation":
-        return { kind: "EndConversation", id: newId("endConversation") };
-      case "end":
-        return { kind: "EndDialog", id: newId("endDialog"), ...(a.clearTopicQueue ? { clearTopicQueue: true } : {}) };
-      case "raw":
-        return { id: newId("node"), ...a.node };
-      default:
-        throw new Error(`Unknown action type ${(a as { type: string }).type}`);
-    }
-  }).flatMap((n) => (Array.isArray((n as { __multi?: unknown }).__multi) ? ((n as { __multi: Record<string, unknown>[] }).__multi) : [n]));
+  return specs.flatMap((a) => {
+    const build = BUILDERS[a.type] as NodeBuilder<ActionSpec["type"]> | undefined;
+    if (!build) throw new Error(`Unknown action type ${(a as { type: string }).type}`);
+    const nodes = build(a, agentSchemaName);
+    return Array.isArray(nodes) ? nodes : [nodes];
+  });
 }
 
 export function buildTopicDocument(spec: TopicSpec): Record<string, unknown> {
