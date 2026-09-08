@@ -7,7 +7,8 @@ import test from "node:test";
 import * as yaml from "js-yaml";
 
 import { readWorkspace, findWorkspaceRoot, describeWorkspace } from "../dist/workspace.js";
-import { validateDocument, listKinds, summarizeDefinition, validKindsFromOneOf, lookupDefinition } from "../dist/schema.js";
+import { listKinds, summarizeDefinition, validKindsFromOneOf, lookupDefinition } from "../dist/schema.js";
+import { validateDocument } from "../dist/schemaValidate.js";
 import { addTopic, buildTopicDocument, topicReference } from "../dist/authoring/topics.js";
 import { addKnowledgeSource, normalizeSharePointUrl } from "../dist/authoring/knowledge.js";
 import { addTool, readConnectionReferences } from "../dist/authoring/tools.js";

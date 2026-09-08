@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import * as yaml from "js-yaml";
 import { errorMessage } from "./log.js";
-import { validateDocument, type Diagnostic } from "./schema.js";
+import { validateDocument, type Diagnostic } from "./schemaValidate.js";
 import { readWorkspace, type WorkspaceInfo } from "./workspace.js";
 import { connectorFromReference, readConnectionReferences, type ConnectionReferenceEntry } from "./authoring/tools.js";
 import { catalogDir, checkOperation } from "./catalog.js";

@@ -8,7 +8,8 @@ import * as yaml from "js-yaml";
 
 import { parseSwaggerOperations, toDefinition, writeConnectorDefinition, readConnectorDefinition, writeConnectorList, readConnectorList, checkOperation, inputsFromOperation, searchConnectors, loadSeed, parseModelList } from "../dist/catalog.js";
 import { addTool, TOOL_KIND_SUPPORT, connectorFromReference } from "../dist/authoring/tools.js";
-import { validKindsFromOneOf, validateDocument } from "../dist/schema.js";
+import { validKindsFromOneOf } from "../dist/schema.js";
+import { validateDocument } from "../dist/schemaValidate.js";
 
 const FIXTURES = fileURLToPath(new URL("./fixtures/", import.meta.url));
 

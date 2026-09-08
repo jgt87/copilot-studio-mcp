@@ -23,6 +23,20 @@ export function schemaPath(): string {
   return SCHEMA_PATH;
 }
 
+/**
+ * Record which definition each `kind` constant belongs to. A kind can appear
+ * in several definitions; the one whose name equals the kind wins, otherwise
+ * the first seen.
+ */
+function indexKinds(kindProp: Node, name: string, kindToDefinition: Map<string, string>): void {
+  const consts: string[] = [];
+  if (typeof kindProp.const === "string") consts.push(kindProp.const);
+  if (Array.isArray(kindProp.enum)) consts.push(...(kindProp.enum as string[]));
+  for (const k of consts) {
+    if (!kindToDefinition.has(k) || name === k) kindToDefinition.set(k, name);
+  }
+}
+
 export function loadSchema(): SchemaIndex {
   if (cached) return cached;
   const raw = JSON.parse(fs.readFileSync(SCHEMA_PATH, "utf8")) as { definitions?: Record<string, Node> };
@@ -32,13 +46,7 @@ export function loadSchema(): SchemaIndex {
     const props = def.properties as Node | undefined;
     const kindProp = props?.kind as Node | undefined;
     if (!kindProp) continue;
-    const consts: string[] = [];
-    if (typeof kindProp.const === "string") consts.push(kindProp.const);
-    if (Array.isArray(kindProp.enum)) consts.push(...(kindProp.enum as string[]));
-    for (const k of consts) {
-      // Prefer the definition whose name equals the kind; otherwise first seen.
-      if (!kindToDefinition.has(k) || name === k) kindToDefinition.set(k, name);
-    }
+    indexKinds(kindProp, name, kindToDefinition);
   }
   cached = { definitions, kindToDefinition, kinds: [...kindToDefinition.keys()].sort() };
   return cached;
@@ -107,6 +115,28 @@ export function resolveDefinition(name: string, maxDepth = 4): unknown {
 }
 
 /** Compact one-screen description of a definition: properties, required, oneOf kinds. */
+/** How one property reads in a summary: its type, a \`$ref\`, a const, a oneOf, or an array of one of those. */
+function propertyType(pd: Node): string {
+  let type = (pd.type as string | undefined) ?? "";
+  const r = refName(pd.$ref);
+  if (r) type = r;
+  if (typeof pd.const === "string") type = `const ${pd.const}`;
+  if (Array.isArray(pd.oneOf)) type = `oneOf(${(pd.oneOf as Node[]).map((o) => refName(o.$ref) ?? (o.type as string) ?? "?").join("|")})`;
+  const items = pd.items as Node | undefined;
+  if (type === "array" && items) type = `array<${refName(items.$ref) ?? (items.type as string) ?? "?"}>`;
+  return type;
+}
+
+function propertyLines(props: Record<string, Node> | undefined): string[] {
+  if (!props) return [];
+  const lines = ["Properties:"];
+  for (const [p, pd] of Object.entries(props)) {
+    const suffix = pd.default !== undefined ? ` (default ${JSON.stringify(pd.default)})` : "";
+    lines.push(`  - ${p}: ${propertyType(pd)}${suffix}`);
+  }
+  return lines;
+}
+
 export function summarizeDefinition(name: string): string {
   const found = lookupDefinition(name);
   if (!found) {
@@ -114,22 +144,7 @@ export function summarizeDefinition(name: string): string {
     return `Definition '${name}' not found.${similar.length ? ` Similar: ${similar.join(", ")}` : ""}`;
   }
   const def = found.definition;
-  const lines = [`Definition: ${found.name}`];
-  const props = def.properties as Record<string, Node> | undefined;
-  if (props) {
-    lines.push("Properties:");
-    for (const [p, pd] of Object.entries(props)) {
-      let type = (pd.type as string | undefined) ?? "";
-      const r = refName(pd.$ref);
-      if (r) type = r;
-      if (typeof pd.const === "string") type = `const ${pd.const}`;
-      if (Array.isArray(pd.oneOf)) type = `oneOf(${(pd.oneOf as Node[]).map((o) => refName(o.$ref) ?? (o.type as string) ?? "?").join("|")})`;
-      const items = pd.items as Node | undefined;
-      if (type === "array" && items) type = `array<${refName(items.$ref) ?? (items.type as string) ?? "?"}>`;
-      const def_ = pd.default !== undefined ? ` (default ${JSON.stringify(pd.default)})` : "";
-      lines.push(`  - ${p}: ${type}${def_}`);
-    }
-  }
+  const lines = [`Definition: ${found.name}`, ...propertyLines(def.properties as Record<string, Node> | undefined)];
   if (Array.isArray(def.required)) lines.push(`Required: ${(def.required as string[]).join(", ")}`);
   for (const key of ["oneOf", "anyOf", "allOf"] as const) {
     const arr = def[key] as Node[] | undefined;
@@ -158,6 +173,18 @@ export function validKindsFromOneOf(definitionName: string): string[] {
 }
 
 /** Property names of a definition, unioned across oneOf variants. */
+/** A \`oneOf\` definition accepts the properties of every branch, whether inline or behind a \`$ref\`. */
+function addOneOfProperties(def: Node, out: Set<string>): void {
+  const oneOf = def.oneOf as Node[] | undefined;
+  if (!oneOf) return;
+  for (const entry of oneOf) {
+    const r = refName(entry.$ref);
+    if (r) for (const k of validProperties(r)) out.add(k);
+    const p = entry.properties as Node | undefined;
+    if (p) for (const k of Object.keys(p)) out.add(k);
+  }
+}
+
 export function validProperties(definitionName: string): Set<string> {
   const { definitions } = loadSchema();
   const def = definitions[definitionName];
@@ -165,15 +192,7 @@ export function validProperties(definitionName: string): Set<string> {
   if (!def) return out;
   const props = def.properties as Node | undefined;
   if (props) for (const k of Object.keys(props)) out.add(k);
-  const oneOf = def.oneOf as Node[] | undefined;
-  if (oneOf) {
-    for (const entry of oneOf) {
-      const r = refName(entry.$ref);
-      if (r) for (const k of validProperties(r)) out.add(k);
-      const p = entry.properties as Node | undefined;
-      if (p) for (const k of Object.keys(p)) out.add(k);
-    }
-  }
+  addOneOfProperties(def, out);
   return out;
 }
 
@@ -181,4 +200,3 @@ export function validProperties(definitionName: string): Set<string> {
 // Validation
 // ---------------------------------------------------------------------------
 
-export { validateDocument, type Diagnostic } from "./schemaValidate.js";
