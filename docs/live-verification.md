@@ -10,7 +10,10 @@ returned, redact, and hand the result back.
 ## Before you start
 
 **Use a development environment, not production.** Phases E to G create an agent, push, publish and
-import a solution. Everything they create is named `zzVerify*` so it is easy to find and delete.
+import a solution. Everything they create is named `zzVerify*` so it is easy to find and delete —
+but deleting it is a manual step, and the first run of this runbook left `zzVerify` agents behind in
+a production environment. Before you start, write down which environment each phase will touch, and
+do the cleanup at the end in the same sitting.
 
 **The phases are ordered by what they settle per unit of risk, not by the checklist order.**
 Phases A to D are entirely read-only: they touch nothing in your tenant and they settle most of the
@@ -32,11 +35,28 @@ npm test                      # 147 tests, offline; confirms the build is sound 
 cp docs/verification-template.md verification-results.md
 ```
 
+**Rebuild, then restart your MCP client.** `npm run build` writes `dist/`, which is what the server
+runs, and most clients read the tool list once at startup. If you pull and do not do both, you will
+be testing the previous build against the current runbook — on the first run this made four
+transcript tools look "not implemented" when they were present in the very commit under test.
+Confirm with `cs_guide` topic `transcripts`: if that topic is unknown, your server is stale.
+
 Register the server in your MCP client (README "Install and register"), then sign in:
 
 - `pac auth create --environment <environment id>` in a terminal, for the pac-backed tools.
 - `cs_login` for the cloud tools. On a machine where the browser does not launch, it returns
   `status: pending` with a URL — open it manually; that is a known and supported path.
+
+**Which sign-in each phase needs.** Three steps silently did something different on the first run
+because only the pac profile was present:
+
+| Needs | Steps |
+| --- | --- |
+| pac auth profile only | A1, A6, A8, B1, C4, C5, E1-E10, F1, G1-G5 |
+| `cs_login` (MSAL) as well | A2, A3 with `via: "dataverse"`, C1/C3 (`mode: "quick"`), **all of phase D**, F3-F5 |
+
+If `cs_login` has not completed, `cs_check_drift` quick and the transcript tools will not work, and
+`cs_list_agents` quietly answers from pac instead of Dataverse. Do the sign-in before phase A.
 
 Throughout: **paste the full JSON result** under the matching heading in `verification-results.md`,
 and add a line saying whether it matched what the tool claimed. A result that disagrees with the
@@ -53,7 +73,8 @@ connector registry endpoint (`api.powerapps.com` with `$expand=swagger`), which 
 | --- | --- | --- | --- |
 | A1 | `cs_init` | full JSON | pac version, the auth profile and the signed-in user all appear |
 | A2 | `cs_list_environments` | count + one row, no names | your environments are listed with ids and URLs |
-| A3 | `cs_list_agents` | count + one row | agents in the environment, with `publishedOn` and `authenticationMode` |
+| A3 | `cs_list_agents` | count + one row, and the `via` field | agents are listed. `via: "pac"` returns componentState/statusCode/stateCode/solutionId; that is correct, not a gap |
+| A3b | `cs_list_agents` with `via: "dataverse"` | count + one row | the Dataverse `bots` query works and returns `publishedOn` and `authenticationMode`. Needs `cs_login` |
 | A4 | `cs_list_connectors` with `search: "Office 365 Outlook"` | the `source` field | `source` says the live registry, not `seed`. **If it says `seed`, the registry call failed — paste the error.** |
 | A5 | `cs_describe_connector` for `shared_office365` | first 3 operations | operations come back with parameters |
 | A6 | `cs_list_solutions` | count | your unmanaged solutions are listed |
@@ -84,7 +105,7 @@ Settles the `bot_botcomponent` query, the `_parentbotid_value` fallback, the sch
 
 | # | Call | Record | Pass if |
 | --- | --- | --- | --- |
-| C1 | `cs_check_drift` `mode: "quick"` on the Phase B workspace | full JSON | it returns components, not an error; `modifiedBy` shows **names**, not GUIDs (that is the formatted-value annotation working) |
+| C1 | `cs_check_drift` `mode: "quick"` on the Phase B workspace. **Quick needs `cs_login`; if it refuses, sign in rather than falling back to `full`** | full JSON | it returns components, not an error; `modifiedBy` shows **names**, not GUIDs (that is the formatted-value annotation working) |
 | C2 | Edit one topic in the Copilot Studio portal, save | what you changed | — |
 | C3 | `cs_check_drift` `mode: "quick"` again | full JSON | the edited topic is listed as changed, mapped to the right local file |
 | C4 | `cs_check_drift` `mode: "full"` | full JSON | files classified local/remote/conflict with diffs |
@@ -142,7 +163,7 @@ Only if you have a second environment to deploy into. Heaviest phase, least surp
 
 | # | Call | Record | Pass if |
 | --- | --- | --- | --- |
-| G1 | `cs_pull_solution` on a solution with an agent, a flow and a connector tool | full JSON + `solution.json` | export, unpack and per-agent clone all succeed |
+| G1 | `cs_pull_solution` with `background: true` (a full pull runs for minutes and will otherwise outlive the client's call timeout), then poll `cs_job_status` with the returned `jobId` | the final job result + `solution.json` | export, unpack and per-agent clone all succeed. `packagetype: "Unmanaged"` halves the work by skipping the second export |
 | G2 | `cs_describe_solution` | full JSON | the inventory matches what the portal shows |
 | G3 | `cs_create_deployment_settings` | the file | environment variables and connection references listed |
 | G4 | `cs_list_connections` in the **target** environment | full JSON | connection ids to bind |

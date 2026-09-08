@@ -24,7 +24,18 @@ export interface PacRunOptions {
   cwd?: string;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
+  /**
+   * Patterns that mean failure even though pac exited 0. `pac copilot publish`
+   * prints "Failed to publish" and still exits 0, which made this server report
+   * a successful publish of an agent that had not published (found on a live
+   * tenant, 2026-09-09). Opt in per command: applied to everything, a pattern
+   * like this would misread the word "failed" in an unrelated log line.
+   */
+  failOnOutput?: RegExp[];
 }
+
+/** `pac copilot publish` reporting failure on a zero exit. */
+export const PUBLISH_FAILED = /\bFailed to publish\b/i;
 
 const IS_WIN = process.platform === "win32";
 const ANSI = new RegExp(String.fromCharCode(27) + "\\[[0-9;]*[A-Za-z]", "g");
@@ -133,11 +144,16 @@ export function runPac(args: string[], options: PacRunOptions = {}): Promise<Pac
     child.on("close", (code) => {
       clearTimeout(timer);
       if (timedOut) stderr += `\n[copilot-studio-mcp] pac timed out after ${timeoutMs} ms`;
+      const out = stdout.replace(ANSI, "");
+      let err = stderr.replace(ANSI, "");
+      // pac can report a failure and still exit 0; only the commands that opt in are checked.
+      const reportedFailure = code === 0 ? (options.failOnOutput ?? []).find((re) => re.test(out) || re.test(err)) : undefined;
+      if (reportedFailure) err += `\n[copilot-studio-mcp] pac exited 0 but its output reports failure (matched ${String(reportedFailure)})`;
       resolve({
-        ok: !timedOut && code === 0,
+        ok: !timedOut && code === 0 && !reportedFailure,
         code,
-        stdout: stdout.replace(ANSI, ""),
-        stderr: stderr.replace(ANSI, ""),
+        stdout: out,
+        stderr: err,
         command,
         durationMs: Date.now() - started,
       });

@@ -10,7 +10,7 @@ import { z } from "zod";
 
 
 import { errorMessage } from "../log.js";
-import { explainFailure, parseCopilotList, runPac } from "../pac.js";
+import { explainFailure, parseCopilotList, runPac, PUBLISH_FAILED } from "../pac.js";
 import { describeWorkspace, findWorkspaceRoot, readWorkspace } from "../workspace.js";
 import { adminProfileDefault, makerProfileDefault, runPacAs } from "../pacProfile.js";
 import { needsInput } from "../needs.js";
@@ -223,7 +223,12 @@ server.registerTool(
       if ((a.via ?? "pac") === "pac") {
         const args = ["copilot", "publish", "--bot", ctx.botId as string];
         if (ctx.environmentId) args.push("--environment", ctx.environmentId);
-        return text(pacSummary(await runPac(args, { timeoutMs: 15 * 60_000 })));
+        // pac prints "Failed to publish" and still exits 0, so the exit code alone would report success.
+        const r = await runPac(args, { timeoutMs: 15 * 60_000, failOnOutput: [PUBLISH_FAILED] });
+        return text({
+          ...pacSummary(r),
+          ...(r.ok ? {} : { hint: "pac reported the publish as failed. Check the agent in the portal before assuming it is live; publishing again, or via: 'dataverse' (which polls publishedon), usually says more about why." }),
+        });
       }
       const c2 = await cloudContext(a, { bot: true, dataverse: true });
       const tok = await getToken(c2.authCfg, [dataverseScope(c2.dataverseUrl as string)]);

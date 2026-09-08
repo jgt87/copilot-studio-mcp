@@ -13,3 +13,9 @@ dist/
 verification-results.md
 *.results.md
 !verification-results.redacted.md
+
+# Scratch space for exports, unpacked solutions and verification runs.
+temp/
+tmp/
+.temp/
+.tmp/

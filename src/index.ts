@@ -36,6 +36,7 @@ import "./tools/evaluations.js";
 import "./tools/transcripts.js";
 import "./tools/chat.js";
 import "./tools/solutions.js";
+import "./tools/jobs.js";
 import "./tools/compare.js";
 
 // A crash shows up in MCP clients as a broken pipe with no explanation. Log and keep serving;

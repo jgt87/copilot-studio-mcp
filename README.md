@@ -347,6 +347,17 @@ Evaluation and testing (cloud)
 | `cs_chat` | one utterance to the published agent (DirectLine or SDK), multi-turn via `conversationId` |
 | `cs_run_conversation_tests` | YAML test file of utterances + expectations, run through `cs_chat` |
 
+Background jobs
+
+| Tool | Purpose |
+| --- | --- |
+| `cs_job_status` | state, phases and result of a tool started with `background: true`; reads the on-disk record when the server has restarted |
+
+`cs_pull_solution` accepts `background: true`: a full pull (export, unpack, settings, a clone per
+agent) runs for minutes and MCP clients cap how long a call may take, so it returns a `jobId`
+immediately and writes its outcome to `pull-job.json` in the target directory. The confirm contract
+is unaffected — a tool decides whether it may change anything before it starts a job.
+
 Production conversations (cloud, read-only)
 
 | Tool | Purpose |

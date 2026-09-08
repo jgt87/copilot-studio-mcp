@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, before } from "node:test";
 
-import { runPac } from "../dist/pac.js";
+import { PUBLISH_FAILED, runPac } from "../dist/pac.js";
 
 const IS_WIN = process.platform === "win32";
 const ESC = String.fromCharCode(27);
@@ -35,6 +35,8 @@ process.stdout.write("telemetry=" + String(process.env.PAC_CLI_TELEMETRY_OPTOUT)
 process.stdout.write("marker=" + String(process.env.SMOKE_MARKER) + "\\n");
 process.stdout.write("cwd=" + process.cwd() + "\\n");
 if (args.includes("--ansi")) process.stdout.write(ansi + "coloured" + ansi + "\\n");
+const say = opt("--say", null);
+if (say !== null) process.stdout.write(say.replace(/_/g, " ") + "\\n");
 const err = opt("--stderr", null);
 if (err !== null) process.stderr.write(err + "\\n");
 const sleep = Number(opt("--sleep", 0));
@@ -129,4 +131,39 @@ test("a run that outlives its timeout is killed and says so", async () => {
   const r = await runPac(["x", "--sleep", "5000"], { timeoutMs: 300 });
   assert.equal(r.ok, false);
   assert.match(r.stderr, /timed out after 300 ms/);
+});
+
+// `--say` makes the fake print a line of its own, so these assert on pac's
+// output rather than on the argv echo. Underscores become spaces: the phrase
+// has to arrive as one argument.
+const PUBLISH_OK = "Publish_complete.";
+const PUBLISH_BAD = "..Failed_to_publish._9596_Failed_[08/09/2026_21:44:44].";
+
+test("failOnOutput turns a zero exit that reports failure into a failure", async () => {
+  // pac copilot publish prints this and still exits 0 (live tenant, 2026-09-09).
+  const failed = await runPac(["publish", "--say", PUBLISH_BAD], { failOnOutput: [PUBLISH_FAILED] });
+  assert.match(failed.stdout, /Failed to publish/, "the fake must actually print it");
+  assert.equal(failed.code, 0, "pac still exited 0");
+  assert.equal(failed.ok, false, "but the result must not claim success");
+  assert.match(failed.stderr, /exited 0 but its output reports failure/);
+});
+
+test("failOnOutput leaves a genuine success alone", async () => {
+  const r = await runPac(["publish", "--say", PUBLISH_OK], { failOnOutput: [PUBLISH_FAILED] });
+  assert.match(r.stdout, /Publish complete/);
+  assert.equal(r.ok, true);
+  assert.ok(!r.stderr.includes("reports failure"));
+});
+
+test("failOnOutput does nothing unless the command opts in", async () => {
+  const r = await runPac(["publish", "--say", PUBLISH_BAD]);
+  assert.match(r.stdout, /Failed to publish/);
+  assert.equal(r.ok, true, "no opt-in, no change in behaviour");
+});
+
+test("a non-zero exit is still a failure, and is not attributed to the output check", async () => {
+  const r = await runPac(["publish", "--say", PUBLISH_OK, "--exit", "1"], { failOnOutput: [PUBLISH_FAILED] });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 1);
+  assert.ok(!r.stderr.includes("reports failure"));
 });

@@ -10,6 +10,7 @@ import { z } from "zod";
 
 
 import { errorMessage, log } from "../log.js";
+import { publicView, startJob, type Progress } from "../jobs.js";
 import { explainFailure, runPac } from "../pac.js";
 import { findWorkspaceRoot, readWorkspace } from "../workspace.js";
 import { updateAgent, updateCliCopilotInstructions } from "../authoring/agent.js";
@@ -169,71 +170,101 @@ server.registerTool(
       environment: envOrProfile,
       packagetype: z.enum(["Unmanaged", "Managed", "Both"]).optional().describe("Default Both: exports both zips, unpacks both"),
       cloneAgents: z.boolean().optional().describe("Default true"),
+      background: z.boolean().optional().describe("Run in the background and return a jobId immediately. Use this when the export is large enough that the MCP client times the call out; poll with cs_job_status."),
     },
   },
-  async ({ name, targetDir, environment, packagetype, cloneAgents }) => {
+  async ({ name, targetDir, environment, packagetype, cloneAgents, background }) => {
     try {
-      const pt: PackageType = packagetype ?? "Both";
       const dir = path.resolve(targetDir);
-      fs.mkdirSync(path.join(dir, "export"), { recursive: true });
-      const unmanagedZip = path.join(dir, "export", `${name}_unmanaged.zip`);
-      const managedZip = path.join(dir, "export", `${name}_managed.zip`);
-      const exports: PullManifest["exports"] = { unmanaged: null, managed: null };
-      if (pt !== "Managed") {
-        await exportSolution({ name, zipPath: unmanagedZip, environment, managed: false });
-        exports.unmanaged = unmanagedZip;
+      const label = `pull solution '${name}'${environment ? ` from ${environment}` : ""} into ${dir}`;
+      const run = (progress: Progress) => pullSolution({ name, targetDir, environment, packagetype, cloneAgents }, progress);
+      if (background) {
+        const job = startJob({ tool: "cs_pull_solution", label, recordFile: path.join(dir, "pull-job.json") }, run);
+        return text({
+          ...publicView(job),
+          note: "Running in the background so the call cannot outlive the client's timeout. Poll cs_job_status with this jobId; the outcome is also written to pull-job.json in the target directory, so it survives a server restart.",
+        });
       }
-      if (pt !== "Unmanaged") {
-        await exportSolution({ name, zipPath: managedZip, environment, managed: true });
-        exports.managed = managedZip;
-      }
-      const src = path.join(dir, "src");
-      await unpackSolution(exports.unmanaged ?? (exports.managed as string), src, pt);
-      const inv = inventorySolutionFolder(src);
-      let settingsFile: string | null = null;
-      try {
-        settingsFile = path.join(dir, "deployment-settings.json");
-        await createDeploymentSettings({ zipPath: exports.unmanaged ?? (exports.managed as string) }, settingsFile);
-      } catch (err) {
-        log(`create-settings skipped: ${errorMessage(err)}`);
-        settingsFile = null;
-      }
-      const agents: PullManifest["agents"] = [];
-      for (const a of inv.agents) {
-        let workspace: string | null = null;
-        let cloneError: string | null = null;
-        if (cloneAgents !== false) {
-          const agentsDir = path.join(dir, "agents");
-          fs.mkdirSync(agentsDir, { recursive: true });
-          const r = await runPac(["copilot", "clone", "--bot", a.schemaName, "--output-dir", agentsDir, ...(environment ? ["--environment", environment] : [])], { timeoutMs: 15 * 60_000 });
-          if (r.ok) {
-            const root = findWorkspaceRoot(agentsDir);
-            workspace = root ?? agentsDir;
-            // several agents: locate the folder created for this one by schema name
-            for (const d of fs.readdirSync(agentsDir, { withFileTypes: true })) {
-              if (!d.isDirectory()) continue;
-              const ws = tryWorkspace(path.join(agentsDir, d.name));
-              if (ws?.schemaName === a.schemaName) workspace = ws.root;
-            }
-          } else cloneError = explainFailure(r);
-        }
-        agents.push({ schemaName: a.schemaName, name: a.name, workspace, cloneError });
-      }
-      const manifest: PullManifest = { solution: name, sourceEnvironment: environment ?? null, pulledAt: new Date().toISOString(), packagetype: pt, exports, srcFolder: src, settingsFile, agents };
-      const manifestFile = writeManifest(dir, manifest);
-      const settings = settingsFile ? readDeploymentSettings(settingsFile) : null;
-      return text({
-        manifestFile,
-        ...summarizeInventory(inv),
-        agentsCloned: agents,
-        deploymentSettings: settings ? { file: settingsFile, unmapped: unmappedSettings(settings) } : null,
-        next: "Map connection references and environment variables for the target with cs_create_deployment_settings (use cs_list_connections on the target), then cs_deploy_solution.",
-      });
+      return text(await run(() => {}));
     } catch (err) {
       return fail(errorMessage(err));
     }
   },
 );
+
+/**
+ * Export, unpack, write the settings file and clone every agent. Minutes of
+ * work: it reports each phase through `progress` so a background run can say
+ * where it is, and it is the same code path either way.
+ */
+async function pullSolution(
+  { name, targetDir, environment, packagetype, cloneAgents }: { name: string; targetDir: string; environment?: string; packagetype?: PackageType; cloneAgents?: boolean },
+  progress: Progress,
+): Promise<Record<string, unknown>> {
+  const pt: PackageType = packagetype ?? "Both";
+  const dir = path.resolve(targetDir);
+  fs.mkdirSync(path.join(dir, "export"), { recursive: true });
+  const unmanagedZip = path.join(dir, "export", `${name}_unmanaged.zip`);
+  const managedZip = path.join(dir, "export", `${name}_managed.zip`);
+  const exports: PullManifest["exports"] = { unmanaged: null, managed: null };
+  if (pt !== "Managed") {
+    progress("exporting the unmanaged solution");
+    await exportSolution({ name, zipPath: unmanagedZip, environment, managed: false });
+    exports.unmanaged = unmanagedZip;
+  }
+  if (pt !== "Unmanaged") {
+    progress("exporting the managed solution");
+    await exportSolution({ name, zipPath: managedZip, environment, managed: true });
+    exports.managed = managedZip;
+  }
+  const src = path.join(dir, "src");
+  progress("unpacking");
+  await unpackSolution(exports.unmanaged ?? (exports.managed as string), src, pt);
+  const inv = inventorySolutionFolder(src);
+  progress(`inventory: ${inv.agents.length} agent(s), ${inv.flows.length} flow(s)`);
+  let settingsFile: string | null = null;
+  try {
+    settingsFile = path.join(dir, "deployment-settings.json");
+    progress("writing deployment settings");
+    await createDeploymentSettings({ zipPath: exports.unmanaged ?? (exports.managed as string) }, settingsFile);
+  } catch (err) {
+    log(`create-settings skipped: ${errorMessage(err)}`);
+    settingsFile = null;
+  }
+  const agents: PullManifest["agents"] = [];
+  for (const a of inv.agents) {
+    let workspace: string | null = null;
+    let cloneError: string | null = null;
+    if (cloneAgents !== false) {
+      progress(`cloning agent ${a.schemaName}`);
+      const agentsDir = path.join(dir, "agents");
+      fs.mkdirSync(agentsDir, { recursive: true });
+      const r = await runPac(["copilot", "clone", "--bot", a.schemaName, "--output-dir", agentsDir, ...(environment ? ["--environment", environment] : [])], { timeoutMs: 15 * 60_000 });
+      if (r.ok) {
+        const root = findWorkspaceRoot(agentsDir);
+        workspace = root ?? agentsDir;
+        // several agents: locate the folder created for this one by schema name
+        for (const d of fs.readdirSync(agentsDir, { withFileTypes: true })) {
+          if (!d.isDirectory()) continue;
+          const ws = tryWorkspace(path.join(agentsDir, d.name));
+          if (ws?.schemaName === a.schemaName) workspace = ws.root;
+        }
+      } else cloneError = explainFailure(r);
+    }
+    agents.push({ schemaName: a.schemaName, name: a.name, workspace, cloneError });
+  }
+  const manifest: PullManifest = { solution: name, sourceEnvironment: environment ?? null, pulledAt: new Date().toISOString(), packagetype: pt, exports, srcFolder: src, settingsFile, agents };
+  const manifestFile = writeManifest(dir, manifest);
+  const settings = settingsFile ? readDeploymentSettings(settingsFile) : null;
+  progress("done");
+  return {
+    manifestFile,
+    ...summarizeInventory(inv),
+    agentsCloned: agents,
+    deploymentSettings: settings ? { file: settingsFile, unmapped: unmappedSettings(settings) } : null,
+    next: "Map connection references and environment variables for the target with cs_create_deployment_settings (use cs_list_connections on the target), then cs_deploy_solution.",
+  };
+}
 
 server.registerTool(
   "cs_create_deployment_settings",
