@@ -173,118 +173,153 @@ function readSync(root: string): SyncInfo {
   return { source: "none", environmentId: null, agentId: null, tenantId: null, dataverseUrl: null, agentManagementUrl: null, raw: null };
 }
 
+/** `agent.mcs.yml`: the parts of the agent definition the inventory reports. */
+function readAgent(root: string): WorkspaceInfo["agent"] {
+  const agentFile = firstExisting(root, ["agent.mcs.yml", "agent.mcs.yaml"]);
+  if (!agentFile) return null;
+  const a = (readYamlSafe(agentFile).doc ?? {}) as Record<string, unknown>;
+  const ai = (a.aISettings ?? {}) as Record<string, unknown>;
+  const model = (ai.model ?? {}) as Record<string, unknown>;
+  return {
+    file: agentFile,
+    displayName: (a.displayName as string) ?? null,
+    instructions: (a.instructions as string) ?? null,
+    conversationStarters: Array.isArray(a.conversationStarters) ? (a.conversationStarters as { title?: string; text?: string }[]) : [],
+    model: (model.modelNameHint as string) ?? (model.series as string) ?? null,
+  };
+}
+
+/** Every component of one kind, from whichever folder name the layout uses. */
+function readComponents(root: string, sub: string | string[], detail: (doc: Record<string, unknown>) => Record<string, unknown>): ComponentInfo[] {
+  return yamlFilesIn(root, sub).map((f) => readComponent(root, f, detail));
+}
+
+function readTopics(root: string): ComponentInfo[] {
+  return readComponents(root, "topics", (d) => {
+    const bd = (d.beginDialog ?? {}) as Record<string, unknown>;
+    const intent = (bd.intent ?? {}) as Record<string, unknown>;
+    const actions = Array.isArray(bd.actions) ? (bd.actions as Record<string, unknown>[]) : [];
+    return {
+      triggerKind: bd.kind ?? null,
+      priority: bd.priority ?? null,
+      triggerPhrases: Array.isArray(intent.triggerQueries) ? intent.triggerQueries : [],
+      actionKinds: actions.map((a) => a?.kind).filter(Boolean),
+      actionCount: actions.length,
+    };
+  });
+}
+
+function readKnowledge(root: string): ComponentInfo[] {
+  return readComponents(root, "knowledge", (d) => {
+    const src = (d.source ?? {}) as Record<string, unknown>;
+    return { sourceKind: src.kind ?? null, site: src.site ?? null, connectionName: src.connectionName ?? null, triggerCondition: src.triggerCondition ?? null };
+  });
+}
+
+/** Uploaded knowledge documents, listed by path rather than parsed. */
+function readKnowledgeFiles(root: string): string[] {
+  const filesDir = path.join(root, "knowledge", "files");
+  if (!fs.existsSync(filesDir)) return [];
+  return listFilesRecursive(filesDir, () => true, 2).map((f) => path.relative(root, f).split(path.sep).join("/"));
+}
+
+function readActions(root: string): ComponentInfo[] {
+  return readComponents(root, ["actions", "tools"], (d) => {
+    const act = (d.action ?? {}) as Record<string, unknown>;
+    const od = (act.operationDetails ?? {}) as Record<string, unknown>;
+    const inputs = Array.isArray(d.inputs) ? (d.inputs as Record<string, unknown>[]) : [];
+    return {
+      actionKind: act.kind ?? null,
+      operationId: act.operationId ?? od.operationId ?? null,
+      connectionReference: act.connectionReference ?? null,
+      flowId: act.flowId ?? null,
+      modelDisplayName: d.modelDisplayName ?? null,
+      modelDescription: d.modelDescription ?? null,
+      inputs: inputs.map((i) => ({ kind: i.kind, propertyName: i.propertyName })),
+    };
+  });
+}
+
+function readTriggers(root: string): ComponentInfo[] {
+  return readComponents(root, ["trigger", "triggers"], (d) => {
+    const src = (d.externalTriggerSource ?? {}) as Record<string, unknown>;
+    return { sourceKind: src.kind ?? null, flowId: src.flowId ?? null };
+  });
+}
+
+function readVariables(root: string): ComponentInfo[] {
+  return readComponents(root, "variables", (d) => ({ name: d.name ?? null, scope: d.scope ?? null, defaultValue: d.defaultValue ?? null, aIVisibility: d.aIVisibility ?? null }));
+}
+
+/** `workflows/<Name>/`: one entry per folder, with its metadata when present. */
+function readWorkflows(root: string): WorkspaceInfo["workflows"] {
+  const workflows: WorkspaceInfo["workflows"] = [];
+  const wfDir = path.join(root, "workflows");
+  if (!fs.existsSync(wfDir)) return workflows;
+  for (const e of fs.readdirSync(wfDir, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    const dir = path.join(wfDir, e.name);
+    const meta = firstExisting(dir, ["metadata.yaml", "metadata.yml"]);
+    workflows.push({
+      name: e.name,
+      dir,
+      hasDefinition: fs.existsSync(path.join(dir, "workflow.json")),
+      metadata: meta ? ((readYamlSafe(meta).doc ?? null) as Record<string, unknown> | null) : null,
+    });
+  }
+  return workflows;
+}
+
+/**
+ * `connectionreferences.mcs.yml`: either a document with a
+ * `connectionReferences` list or a bare list. The misspelled file name is one
+ * pac has been seen to write.
+ */
+function readConnectionReferences(root: string): Record<string, unknown>[] {
+  const crFile = firstExisting(root, ["connectionreferences.mcs.yml", "connectionreferences.mcs.yaml", "connectioreferences.mcs.yml"]);
+  if (!crFile) return [];
+  const doc = readYamlSafe(crFile).doc as Record<string, unknown> | null;
+  const list = doc?.connectionReferences;
+  if (Array.isArray(list)) return list as Record<string, unknown>[];
+  if (Array.isArray(doc)) return doc as Record<string, unknown>[];
+  return [];
+}
+
+/** Files in the workspace that are not a component, a workflow or a knowledge document. */
+function readOtherFiles(root: string, components: ComponentInfo[]): string[] {
+  const known = new Set(components.map((c) => c.file));
+  return listFilesRecursive(root, (f) => !known.has(f) && !f.includes(`${path.sep}workflows${path.sep}`) && !f.includes(`${path.sep}knowledge${path.sep}files${path.sep}`), 1).map((f) => path.relative(root, f).split(path.sep).join("/"));
+}
+
 export function readWorkspace(root: string): WorkspaceInfo {
   const settingsFile = firstExisting(root, ["settings.mcs.yml", "settings.mcs.yaml"]);
   const settings = settingsFile ? ((readYamlSafe(settingsFile).doc ?? null) as Record<string, unknown> | null) : null;
-  const agentFile = firstExisting(root, ["agent.mcs.yml", "agent.mcs.yaml"]);
-  let agent: WorkspaceInfo["agent"] = null;
-  if (agentFile) {
-    const a = (readYamlSafe(agentFile).doc ?? {}) as Record<string, unknown>;
-    const ai = (a.aISettings ?? {}) as Record<string, unknown>;
-    const model = (ai.model ?? {}) as Record<string, unknown>;
-    agent = {
-      file: agentFile,
-      displayName: (a.displayName as string) ?? null,
-      instructions: (a.instructions as string) ?? null,
-      conversationStarters: Array.isArray(a.conversationStarters) ? (a.conversationStarters as { title?: string; text?: string }[]) : [],
-      model: (model.modelNameHint as string) ?? (model.series as string) ?? null,
-    };
-  }
   const configuration = (settings?.configuration ?? {}) as Record<string, unknown>;
   const authoringModel = configuration.authoringModel as string | undefined;
   const harness: Harness = authoringModel === "CliCopilot" ? "github-copilot" : settings ? "standard" : "unknown";
 
-  const topics = yamlFilesIn(root, "topics").map((f) =>
-    readComponent(root, f, (d) => {
-      const bd = (d.beginDialog ?? {}) as Record<string, unknown>;
-      const intent = (bd.intent ?? {}) as Record<string, unknown>;
-      const actions = Array.isArray(bd.actions) ? (bd.actions as Record<string, unknown>[]) : [];
-      return {
-        triggerKind: bd.kind ?? null,
-        priority: bd.priority ?? null,
-        triggerPhrases: Array.isArray(intent.triggerQueries) ? intent.triggerQueries : [],
-        actionKinds: actions.map((a) => a?.kind).filter(Boolean),
-        actionCount: actions.length,
-      };
-    }),
-  );
-  const knowledge = yamlFilesIn(root, "knowledge").map((f) =>
-    readComponent(root, f, (d) => {
-      const src = (d.source ?? {}) as Record<string, unknown>;
-      return { sourceKind: src.kind ?? null, site: src.site ?? null, connectionName: src.connectionName ?? null, triggerCondition: src.triggerCondition ?? null };
-    }),
-  );
-  const filesDir = path.join(root, "knowledge", "files");
-  const knowledgeFiles = fs.existsSync(filesDir) ? listFilesRecursive(filesDir, () => true, 2).map((f) => path.relative(root, f).split(path.sep).join("/")) : [];
-  const actions = yamlFilesIn(root, ["actions", "tools"]).map((f) =>
-    readComponent(root, f, (d) => {
-      const act = (d.action ?? {}) as Record<string, unknown>;
-      const od = (act.operationDetails ?? {}) as Record<string, unknown>;
-      const inputs = Array.isArray(d.inputs) ? (d.inputs as Record<string, unknown>[]) : [];
-      return {
-        actionKind: act.kind ?? null,
-        operationId: act.operationId ?? od.operationId ?? null,
-        connectionReference: act.connectionReference ?? null,
-        flowId: act.flowId ?? null,
-        modelDisplayName: d.modelDisplayName ?? null,
-        modelDescription: d.modelDescription ?? null,
-        inputs: inputs.map((i) => ({ kind: i.kind, propertyName: i.propertyName })),
-      };
-    }),
-  );
-  const triggers = yamlFilesIn(root, ["trigger", "triggers"]).map((f) =>
-    readComponent(root, f, (d) => {
-      const src = (d.externalTriggerSource ?? {}) as Record<string, unknown>;
-      return { sourceKind: src.kind ?? null, flowId: src.flowId ?? null };
-    }),
-  );
-  const variables = yamlFilesIn(root, "variables").map((f) =>
-    readComponent(root, f, (d) => ({ name: d.name ?? null, scope: d.scope ?? null, defaultValue: d.defaultValue ?? null, aIVisibility: d.aIVisibility ?? null })),
-  );
-  const workflows: WorkspaceInfo["workflows"] = [];
-  const wfDir = path.join(root, "workflows");
-  if (fs.existsSync(wfDir)) {
-    for (const e of fs.readdirSync(wfDir, { withFileTypes: true })) {
-      if (!e.isDirectory()) continue;
-      const dir = path.join(wfDir, e.name);
-      const meta = firstExisting(dir, ["metadata.yaml", "metadata.yml"]);
-      workflows.push({
-        name: e.name,
-        dir,
-        hasDefinition: fs.existsSync(path.join(dir, "workflow.json")),
-        metadata: meta ? ((readYamlSafe(meta).doc ?? null) as Record<string, unknown> | null) : null,
-      });
-    }
-  }
-  const crFile = firstExisting(root, ["connectionreferences.mcs.yml", "connectionreferences.mcs.yaml", "connectioreferences.mcs.yml"]);
-  let connectionReferences: Record<string, unknown>[] = [];
-  if (crFile) {
-    const doc = readYamlSafe(crFile).doc as Record<string, unknown> | null;
-    const list = doc?.connectionReferences;
-    if (Array.isArray(list)) connectionReferences = list as Record<string, unknown>[];
-    else if (Array.isArray(doc)) connectionReferences = doc as Record<string, unknown>[];
-  }
-  const known = new Set([...topics, ...knowledge, ...actions, ...triggers, ...variables].map((c) => c.file));
-  const otherFiles = listFilesRecursive(root, (f) => !known.has(f) && !f.includes(`${path.sep}workflows${path.sep}`) && !f.includes(`${path.sep}knowledge${path.sep}files${path.sep}`), 1).map((f) =>
-    path.relative(root, f).split(path.sep).join("/"),
-  );
+  const topics = readTopics(root);
+  const knowledge = readKnowledge(root);
+  const actions = readActions(root);
+  const triggers = readTriggers(root);
+  const variables = readVariables(root);
 
   return {
     root,
     harness,
     settings,
-    agent,
+    agent: readAgent(root),
     schemaName: (settings?.schemaName as string) ?? null,
     sync: readSync(root),
     topics,
     knowledge,
-    knowledgeFiles,
+    knowledgeFiles: readKnowledgeFiles(root),
     actions,
     triggers,
     variables,
-    workflows,
-    connectionReferences,
-    otherFiles,
+    workflows: readWorkflows(root),
+    connectionReferences: readConnectionReferences(root),
+    otherFiles: readOtherFiles(root, [...topics, ...knowledge, ...actions, ...triggers, ...variables]),
   };
 }
 
