@@ -23,6 +23,29 @@ Power Automate and DirectLine APIs directly for everything the CLI does not cove
 a live environment without your approval, and tools ask a follow-up question rather than failing
 when a choice has not been made yet.
 
+## Status
+
+Early release (`0.1.0` on npm). Honest summary of what has actually been exercised:
+
+**Verified offline** - 171 unit tests over the compiled output, plus a pack oracle that round-trips
+every authoring tool's YAML through `pac copilot init` and `pac copilot pack`.
+
+**Verified against a real tenant** (2026-09-08, phases A to F of `docs/live-verification.md`) - the
+connector registry endpoint, the `pac connection list` column layout, the `pac copilot clone` layout
+and its sync metadata, drift detection and the `cs_push` conflict refusal, and the whole evaluation
+path end to end including the portal's CSV import format and the metric status strings. A
+portal-made agent validates clean, so `cs_validate` produces no false positives against real
+content. That run also caught a real bug: `pac copilot publish` prints "Failed to publish" and exits
+0, so a failed publish was being reported as a success. Fixed.
+
+**Not yet verified live** - the transcript tools (never exercised at all), `cs_check_drift` in quick
+mode, `cs_chat`, the Dataverse `listBots` path, and moving a solution between environments. No flow
+produced by the flow builder has been imported into an environment yet, so `cs_add_flow`,
+`cs_create_flow` and `cs_update_flow` remain the least-proven area.
+
+`docs/verify.md` is the short list of what is still open, `docs/STATUS.md` the full record. Check
+the dry run before confirming anything that writes.
+
 ## How this differs from Microsoft's own pac MCP server
 
 The Power Platform CLI ships a built-in MCP server (`pac copilot mcp --run`, preview, named
