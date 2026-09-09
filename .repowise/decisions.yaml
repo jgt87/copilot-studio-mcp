@@ -1,0 +1,71 @@
+# Accepted architectural decisions for this repository.
+#
+# Generated and rewritten by repowise; edits survive, comments do not.
+# Commit this file: it is the source of truth, and the index is a copy.
+# Candidates and evidence stay out of it on purpose.
+version: 1
+decisions:
+- id: 42c457cd683be9e379b5d61db7450fa8
+  title: The Dataverse client is split by table behind one facade
+  decision: 'The calls live in one module per table: dataverseBots.ts (bot, botcomponent, PvaPublish),
+    dataverseFlows.ts (the workflow table, category 5), dataverseEnvironment.ts (connection references
+    and environment variables), with dataverseApi.ts holding the request helper and scope they share.
+    src/cloud/dataverse.ts is a re-export facade and stays the import path for everything outside src/cloud/;
+    callers do not import the table modules directly.'
+  reason: 'A feature that touches flows should edit the flow module, not a file the bot and environment
+    calls also live in. Keeping the facade means the partitioning is an internal detail: it can be repartitioned
+    again without touching the eight call sites, and the facade doubles as the list of what the Dataverse
+    layer offers.'
+  scope:
+  - src/cloud/dataverse.ts
+  - src/cloud/dataverseApi.ts
+  - src/cloud/dataverseBots.ts
+  - src/cloud/dataverseEnvironment.ts
+  - src/cloud/dataverseFlows.ts
+  currency: active
+  source: cli
+  accepted_at: '2026-09-08T19:41:36.740756'
+  accepted_by: web
+  evidence:
+  - accepted by web
+- id: a030a5227d4287a89eb7898e70c0027a
+  title: drift.ts stays one module; the split proposals are rejected
+  decision: 'src/drift.ts stays one module. The sync stamp, the quick Dataverse check and the full clone
+    comparison are one subject: portal drift. Extract named helpers inside the file when a function grows,
+    as commit 0e59307d did with driftedComponents, changeSentence and describeFull, but do not split the
+    file across modules.'
+  reason: 'The proposed groups cut the module''s own call graph: quickDrift reaches into two other groups,
+    componentStatus into a third, compareWithClone into a fourth, and the shared types (SyncStamp, RemoteState,
+    FileDrift, ComponentDrift, Baseline) would need a fifth file imported everywhere. That is 8 cut edges
+    against 25 internal ones on a 350-NLOC file, and the index scores the split impact_delta 0 and recoverable_health
+    0: it recovers no health by its own measurement.'
+  scope:
+  - src/drift.ts
+  currency: active
+  source: cli
+  accepted_at: '2026-09-09T15:22:51.414054'
+  accepted_by: jgt87
+  evidence:
+  - accepted by jgt87
+- id: de8b674929274fdc9bc2e1b1cd55bf93
+  title: Tool registration lives in tools/, index.ts only wires it
+  decision: 'src/index.ts is an entry point, not a hub: it imports one module per tool area from src/tools/
+    for their registration side effects, installs the process-level uncaughtException and unhandledRejection
+    handlers, and starts the stdio transport. Each src/tools/*.ts registers the tools of one area; src/tools/shared.ts
+    holds the server instance, the read-only and CPS_TOOLS registration gates, and the helpers the areas
+    share (text, fail, dryRun, cloudContext, resolveRoot, silentDataverse). Handlers still only resolve
+    context, call a module function and shape the result; logic stays in modules with unit tests.'
+  reason: The MCP SDK needs one server object, but it does not need one file. A module per area means
+    a feature touches its own area instead of a file every other feature also edits, which is what made
+    index.ts read as a churn hotspot with 25 co-change partners. The import list is the tool-list order,
+    so the order stays reviewable in one place.
+  scope:
+  - src/index.ts
+  - src/tools
+  - src/tools/shared.ts
+  currency: active
+  source: cli
+  accepted_at: '2026-09-08T19:41:48.868055'
+  accepted_by: web
+  evidence:
+  - accepted by web
