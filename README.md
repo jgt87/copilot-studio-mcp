@@ -315,6 +315,7 @@ Tenant administration (Power Platform admin centre; run as the admin profile)
 | Tool | Purpose |
 | --- | --- |
 | `cs_backup_tenant` | write the whole tenant configuration to local files: settings, environments, DLP policies, groups, service principals, applications, templates, and per environment its details, solutions, agents, connections, roles and platform backups |
+| `cs_admin_assign_users` | give a roster of users their security roles in one environment, from a CSV or an inline list, under a single approval; the dry run lists every user-and-role pair first (`confirm`) |
 | `cs_list_auth_profiles` | the pac auth profiles on this machine, which is active, and the defaults for maker and admin |
 | `cs_admin_list_environments`, `cs_admin_environment_status`, `cs_admin_list_backups` | environments, operations in progress, platform backups |
 | `cs_admin_list_tenant_settings`, `cs_admin_update_tenant_settings` | read the tenant settings (optionally to a JSON file) or change one (`confirm`) |
@@ -340,6 +341,27 @@ Remaining pac commands (declarative wrappers over `pac <group> <command>`; flags
 | `cs_create_connection`, `cs_update_connection`, `cs_delete_connection` | service-principal Dataverse connections, the only kind pac can create (`confirm`) |
 | `cs_create_auth_profile`, `cs_select_auth_profile`, `cs_auth_who`, `cs_delete_auth_profile` | pac auth profiles, including service-principal, certificate, managed-identity and federated profiles for pipelines |
 | `cs_env_list`, `cs_env_who`, `cs_env_fetch`, `cs_env_select` | environments through pac (no MSAL sign-in needed), including FetchXML queries |
+
+Onboarding a team into a new environment is `cs_admin_create_environment` (async: pair it with
+`background: true` and `cs_job_status`, since provisioning is slow) and then `cs_admin_assign_users`
+with a CSV:
+
+```csv
+UPN,Security Roles,Business Unit
+alice@contoso.com,"System Customizer,Basic User",Sales
+bob@contoso.com,Environment Maker,
+```
+
+`pac admin assign-user` takes one user and one role per call, so that roster is five calls;
+`cs_admin_assign_users` expands it and runs them under one approval, having first shown you every
+pair. Rows are independent, so a mistyped UPN is reported and the rest still run.
+
+**Prefer `cs_admin_assign_group` when the roster is really a group.** Binding an Entra group to a
+role through a Dataverse team is one call per role however many people are in the group, and new
+joiners inherit access without anyone touching Dataverse; Microsoft recommends it over per-user
+assignment. Two things to check first either way: role names are per-environment
+(`cs_admin_list_security_roles` against the new one), and a user who has not been provisioned into
+the environment yet cannot hold a role there.
 
 The Microsoft 365 agent catalogue (Microsoft Graph; a separate sign-in, `cs_login scope='graph'`)
 
