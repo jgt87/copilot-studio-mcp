@@ -14,7 +14,7 @@
  * not name one; `CPS_PAC_PROFILE` does the same for everything else.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
-import { parseAuthList, runPacRaw, type AuthProfile, type PacResult } from "./pac.js";
+import { parseAuthList, runPacRaw, type AuthProfile, type PacResult } from "./pacRun.js";
 import { log } from "./log.js";
 
 export interface ProfileSwitch {

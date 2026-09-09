@@ -29,10 +29,15 @@ There is no linter configured.
 
 Three layers behind one tool list, all registered in `src/index.ts`:
 
-- **Sync** (`src/pac.ts`): spawns `pac` with an argv array and no shell, strips ANSI, returns
-  `{ok, code, stdout, stderr}`; `explainFailure` maps known pac errors to hints. Parsers for
-  `pac auth list` and `pac copilot list` anchor on regexes (bracketed index, GUID columns), not
-  column offsets. `dotnetRootDefault()` sets `DOTNET_ROOT` to `~/.dotnet` when the SDK lives there.
+- **Sync** (`src/pacRun.ts`, `src/pac.ts`): `pacRun.ts` is the account-independent layer - it finds
+  pac, spawns it with an argv array and no shell, strips ANSI, returns `{ok, code, stdout, stderr}`,
+  terminates the process tree on a timeout, and parses `pac auth list` (the coordinator needs the
+  profile list to choose a profile, so reading it must not itself require one).
+  `dotnetRootDefault()` sets `DOTNET_ROOT` to `~/.dotnet` when the SDK lives there. `src/pac.ts` is
+  the facade every other module imports: it re-exports all of `pacRun.ts`, adds the account-aware
+  `runPac`, and holds `explainFailure` and the `pac copilot list` parser. Both parsers anchor on
+  regexes (bracketed index, GUID columns), not column offsets. `pacRun.ts` must not import `pac.ts`
+  or `pacProfile.ts`; that direction is the import cycle the split removed.
 - **Authoring** (`src/workspace.ts`, `src/schema.ts`, `src/authoring/*`): pure file operations.
   `workspace.ts` finds the root (marker files `agent.mcs.yml` / `settings.mcs.yml` /
   `agent.sync.yaml`, start dir, single child, or ancestor), reads sync metadata from `.mcs/conn.json`
