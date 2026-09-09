@@ -291,16 +291,29 @@ server.registerTool(
 
 const READ_ONLY_PAC = [/^(help|--version|-v)$/, /^auth (list|who)$/, /^org (who|list|fetch)$/, /^env (list|who|fetch)$/, /^copilot (list|status|model list)$/, /^solution (list|version)$/, /^admin (list|list-tenant-settings|status)$/, /^connection list$/, /^connector list$/, /^pipeline list$/];
 
+/** A pac command that only reads. It runs without confirm, and survives CPS_READ_ONLY. */
+export function isReadOnlyPac(args: string[]): boolean {
+  const first = args[0] ?? "";
+  return READ_ONLY_PAC.some((re) => re.test(args.slice(0, 2).join(" ")) || re.test(args.slice(0, 3).join(" ")) || re.test(first));
+}
+
+/** Which account runs a bare pac command: the admin group defaults to the admin profile. */
+export function defaultPacProfile(args: string[]): string | undefined {
+  return args[0] === "admin" ? adminProfileDefault() : makerProfileDefault();
+}
+
 server.registerTool(
   "cs_pac",
   { title: "Run any pac command", description: "Escape hatch: run 'pac <args...>' directly. Read-only commands (list/who/status/help) run immediately; anything else needs confirm: true. 'profile' runs it as another pac auth profile, for example the tenant admin account.", inputSchema: { args: z.array(z.string()).describe("Arguments after 'pac', e.g. [\"env\",\"list\"]"), cwd: z.string().optional(), profile: z.string().optional().describe("pac auth profile to run as (cs_init lists them)"), confirm: confirmArg, timeoutSeconds: z.number().optional() } },
   async ({ args, cwd, profile, confirm, timeoutSeconds }) => {
     try {
-      const head = args.slice(0, 3).join(" ");
-      const readOnly = READ_ONLY_PAC.some((re) => re.test(args.slice(0, 2).join(" ")) || re.test(head) || re.test(args[0] ?? ""));
-      if (!readOnly && readOnlyMode()) return fail(readOnlyRefusal(`pac ${args.join(" ")}`));
-      if (!readOnly && !confirm) return dryRun(`pac ${args.join(" ")}${profile ? ` (as pac auth profile '${profile}')` : ""}`);
-      return text({ ...pacSummary(await runPacAs(profile ?? (args[0] === "admin" ? adminProfileDefault() : makerProfileDefault()), args, { cwd, timeoutMs: (timeoutSeconds ?? 600) * 1000 })), ...(profile ? { profile } : {}) });
+      if (!isReadOnlyPac(args)) {
+        if (readOnlyMode()) return fail(readOnlyRefusal(`pac ${args.join(" ")}`));
+        if (!confirm) return dryRun(`pac ${args.join(" ")}${profile ? ` (as pac auth profile '${profile}')` : ""}`);
+      }
+      const runAs = profile ?? defaultPacProfile(args);
+      const r = await runPacAs(runAs, args, { cwd, timeoutMs: (timeoutSeconds ?? 600) * 1000 });
+      return text({ ...pacSummary(r), ...(profile ? { profile } : {}) });
     } catch (err) {
       return fail(errorMessage(err));
     }
