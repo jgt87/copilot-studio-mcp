@@ -25,7 +25,7 @@ when a choice has not been made yet.
 
 ## Status
 
-Early release (`0.1.0` on npm). Honest summary of what has actually been exercised:
+Early release. Honest summary of what has actually been exercised:
 
 **Verified offline** - 171 unit tests over the compiled output, plus a pack oracle that round-trips
 every authoring tool's YAML through `pac copilot init` and `pac copilot pack`.
