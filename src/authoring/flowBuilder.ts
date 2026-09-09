@@ -63,6 +63,8 @@ export interface FlowBuildSpec {
   outputs?: { name: string; type?: FlowValueType; value?: unknown }[];
   /** Prefix for generated connection reference logical names (usually the publisher prefix). */
   connectionReferencePrefix?: string;
+  /** Existing bindings when rebuilding a flow; reused unless explicitly replaced by the caller. */
+  existingConnectionReferences?: Record<string, unknown>;
 }
 
 export interface BuiltFlow {
@@ -75,6 +77,16 @@ export interface BuiltFlow {
   /** Action names in order, for a summary. */
   actionNames: string[];
   notes: string[];
+}
+
+/** Assemble the update the tool will persist, keeping old bindings and adding new ones. */
+export function buildFlowUpdate(before: { name: string; clientData: Record<string, unknown> | null }, input: Omit<FlowBuildSpec, "name"> & { name?: string; definition?: Record<string, unknown>; clientData?: Record<string, unknown>; connectionReferences?: Record<string, unknown> }) {
+  if ((input.steps || input.trigger) && (input.definition || input.clientData)) throw new Error("Pass steps/trigger, definition, or clientData as a single source of the definition.");
+  if (input.clientData && input.connectionReferences) throw new Error("Put connection references inside clientData when replacing the whole document.");
+  const existing = ((before.clientData?.properties as Record<string, unknown> | undefined)?.connectionReferences ?? {}) as Record<string, unknown>;
+  const rebuilt = input.steps || input.trigger ? buildFlow({ ...input, name: input.name ?? before.name, existingConnectionReferences: { ...existing, ...input.connectionReferences } }) : null;
+  const changes = { name: input.name, description: input.description, definition: input.definition ?? rebuilt?.definition, clientData: input.clientData, connectionReferences: rebuilt ? { ...rebuilt.connectionReferences, ...input.connectionReferences } : input.connectionReferences };
+  return { rebuilt, changes };
 }
 
 const DEFINITION_SCHEMA = "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#";
@@ -106,14 +118,17 @@ function schemaOf(params: FlowParam[]): Record<string, unknown> {
 class ConnectionCollector {
   readonly refs: Record<string, unknown> = {};
   readonly list: { connectorId: string; connectionReference: string }[] = [];
-  constructor(private readonly prefix: string) {}
+  constructor(private readonly prefix: string, private readonly existing: Record<string, unknown> = {}) {}
 
   use(connectorId: string, explicit?: string): string {
     const name = connectorName(connectorId);
     const existing = this.list.find((c) => connectorName(c.connectorId) === name);
-    if (existing && !explicit) return existing.connectionReference;
-    const logical = explicit ?? `${this.prefix}_${name.replace(/^shared_/, "")}`;
-    this.refs[name] = { runtimeSource: "embedded", connection: { connectionReferenceLogicalName: logical }, api: { name } };
+    const saved = this.existing[name] as { connection?: { connectionReferenceLogicalName?: string } } | undefined;
+    const previous = existing?.connectionReference ?? saved?.connection?.connectionReferenceLogicalName;
+    if (previous && explicit && previous !== explicit) throw new Error(`Connector ${name} already uses ${previous}. Pass connectionReferences to explicitly replace its binding, or omit connectionReference to preserve it.`);
+    if (existing) return existing.connectionReference;
+    const logical = explicit ?? previous ?? `${this.prefix}_${name.replace(/^shared_/, "")}`;
+    this.refs[name] = saved ?? { runtimeSource: "embedded", connection: { connectionReferenceLogicalName: logical }, api: { name } };
     if (!existing) this.list.push({ connectorId, connectionReference: logical });
     return logical;
   }
@@ -239,7 +254,7 @@ function buildTrigger(spec: FlowTriggerSpec | undefined, conn: ConnectionCollect
 export function buildFlow(spec: FlowBuildSpec): BuiltFlow {
   if (!spec.name?.trim()) throw new Error("A flow needs a name");
   const notes: string[] = [];
-  const conn = new ConnectionCollector(spec.connectionReferencePrefix ?? "cr");
+  const conn = new ConnectionCollector(spec.connectionReferencePrefix ?? "cr", spec.existingConnectionReferences);
   const { key: triggerKey, trigger, agentCallable } = buildTrigger(spec.trigger, conn);
 
   const steps = [...(spec.steps ?? [])];

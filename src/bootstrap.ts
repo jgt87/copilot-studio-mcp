@@ -4,6 +4,7 @@
  * prompt. Everything runs through pac (no MSAL needed).
  */
 import fs from "node:fs";
+import { withPacProfile, makerProfileDefault, hasPacProfileLock } from "./pacProfile.js";
 import path from "node:path";
 import { explainFailure, runPac, type PacResult } from "./pac.js";
 import { importSolution, packSolution, listSolutions, type SolutionRow } from "./solutions.js";
@@ -139,6 +140,7 @@ export interface CreateSolutionResult {
 }
 
 export async function createSolution(spec: SolutionSpec & { environment?: string; workDir: string }): Promise<CreateSolutionResult> {
+  if (!hasPacProfileLock()) return (await withPacProfile(makerProfileDefault(), () => createSolution(spec))).result;
   const { solutions } = await listSolutions(spec.environment);
   const existing = solutions.find((s) => s.uniqueName.toLowerCase() === spec.uniqueName.toLowerCase());
   const zip = path.join(spec.workDir, `${spec.uniqueName}.zip`);
@@ -199,6 +201,7 @@ async function scaffoldWorkspace(o: InitInSolutionOptions, projectDir: string): 
 }
 
 export async function initAgentInSolution(o: InitInSolutionOptions): Promise<InitInSolutionResult> {
+  if (!hasPacProfileLock()) return (await withPacProfile(makerProfileDefault(), () => initAgentInSolution(o))).result;
   validatePrefix(o.publisherPrefix);
   const projectDir = path.resolve(o.projectDir);
   const parent = path.dirname(projectDir);

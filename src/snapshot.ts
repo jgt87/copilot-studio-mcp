@@ -6,6 +6,7 @@
  * and compared offline (`compareReport.ts`).
  */
 import fs from "node:fs";
+import { withPacProfile, makerProfileDefault, hasPacProfileLock } from "./pacProfile.js";
 import path from "node:path";
 import { explainFailure, parseCopilotList, runPac } from "./pac.js";
 import { findWorkspaceRoot, readWorkspace } from "./workspace.js";
@@ -153,6 +154,7 @@ function applyDataverseDetails(agents: SnapshotAgent[], dataverse: DataverseRead
 }
 
 export async function captureSnapshot(o: CaptureOptions): Promise<Snapshot> {
+  if (!hasPacProfileLock()) return (await withPacProfile(makerProfileDefault(), () => captureSnapshot(o))).result;
   const dir = path.resolve(o.dir);
   const agentsDir = path.join(dir, "agents");
   fs.rmSync(agentsDir, { recursive: true, force: true });

@@ -166,7 +166,7 @@ export async function updateFlow(
   envUrl: string,
   token: string,
   workflowId: string,
-  changes: { name?: string; description?: string; definition?: Record<string, unknown>; clientData?: Record<string, unknown> },
+  changes: { name?: string; description?: string; definition?: Record<string, unknown>; clientData?: Record<string, unknown>; connectionReferences?: Record<string, unknown> },
   fetchImpl?: FetchLike,
 ): Promise<{ workflowId: string; name: string; changed: string[] }> {
   const before = await getFlow(envUrl, token, workflowId, fetchImpl);
@@ -183,11 +183,16 @@ export async function updateFlow(
   if (changes.clientData) {
     body.clientdata = JSON.stringify(changes.clientData);
     changed.push("clientData");
-  } else if (changes.definition) {
+  } else if (changes.definition || changes.connectionReferences) {
     if (!before.clientData) throw new Error(`Flow ${workflowId} has no readable clientdata; pass the whole clientData instead of a definition`);
-    const next = { ...before.clientData, properties: { ...((before.clientData.properties as Record<string, unknown>) ?? {}), definition: changes.definition } };
+    const props = (before.clientData.properties as Record<string, unknown>) ?? {};
+    const next = { ...before.clientData, properties: { ...props,
+      ...(changes.definition ? { definition: changes.definition } : {}),
+      ...(changes.connectionReferences ? { connectionReferences: { ...((props.connectionReferences as Record<string, unknown>) ?? {}), ...changes.connectionReferences } } : {}),
+    } };
     body.clientdata = JSON.stringify(next);
-    changed.push("definition");
+    if (changes.definition) changed.push("definition");
+    if (changes.connectionReferences) changed.push("connectionReferences");
   }
   if (!changed.length) throw new Error("Nothing to update: pass name, description, definition or clientData");
   await requestJson(`${api(envUrl)}/workflows(${workflowId})`, { method: "PATCH", token, fetchImpl, headers: ODATA_HEADERS, body, hints: { 400: "Dataverse refused the update; check the definition against the Power Automate schema and that the flow is unmanaged" } });

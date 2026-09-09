@@ -141,14 +141,17 @@ pac auth create --name admin --environment <environment id or url>
 
 Or from the agent, without leaving the session: `cs_create_auth_profile` with `name`, `environment`
 and **`background: true`**. pac opens its own browser and waits for the sign-in, so the call returns
-a `jobId` immediately; `cs_job_status` reports when the profile exists. Every pac wrapper accepts
+a `jobId` immediately; `cs_job_status` reports when the profile exists. Every declarative PAC wrapper accepts
 `background` for the same reason. Device code still needs a terminal — this server gives pac no
 stdin.
 
-`cs_list_auth_profiles` shows them. Every pac-backed tool takes a `profile` argument; the server
-selects that profile, runs the command and restores the previously active one, serialising calls so
-two tools cannot fight over it. Set `CPS_ADMIN_PROFILE` (used by the `cs_admin_*` tools and
-`cs_backup_tenant`) and `CPS_PAC_PROFILE` (used by the rest) to make that automatic.
+`cs_list_auth_profiles` shows them. Declarative PAC wrappers and `cs_pac` accept a `profile`
+argument. Core sync and solution tools use `CPS_PAC_PROFILE`; admin commands and tenant backup
+use `CPS_ADMIN_PROFILE`. When a profile is selected, the server restores the previously active
+one afterwards. Every PAC call, including calls using the active profile, shares the same queue.
+Multi-command bootstrap, solution pull/deploy and snapshot operations hold the profile for the
+whole operation. This coordination applies within one server process; other server instances
+and terminal PAC commands can still change the machine-wide active profile.
 
 The MSAL sign-in used by the API-based tools is separate again, and independent of pac.
 
@@ -857,13 +860,13 @@ cs_compare_snapshots a=snapshots/TEST b=snapshots/ACC failOnDrift=true
 
 ## Running on a smaller model
 
-The full tool list is 131 tools, about **50k tokens of schema** before any work starts. A frontier
+The full tool list is 137 tools, about **50k tokens of schema** before any work starts. A frontier
 model copes; a smaller one spends most of its context on the menu and chooses worse from it. Set
 `CPS_TOOLS` to a preset in the server's environment:
 
 | Preset | Tools | Schema | What it is |
 | --- | --- | --- | --- |
-| (unset) | 131 | ~50k tokens | everything; the default, unchanged |
+| (unset) | 137 | ~50k tokens | everything; the default, unchanged |
 | `core` | 33 | ~13k tokens | the loop that builds an agent and gets it live |
 | `authoring` | 23 | ~11k tokens | local files only: no sign-in, nothing that reaches an environment |
 | `admin` | 36 | ~13k tokens | tenant administration, plus `cs_backup_tenant` |
@@ -898,8 +901,10 @@ failing for want of a sign-in, pac reporting failure while exiting 0) with the a
 
 ## Verifying against a real tenant
 
-Everything below the unit tests and the pack oracle was built from documentation and the published
-schema. `docs/live-verification.md` is the runbook that settles it: phases A to D are read-only and
+The cloud workflows were initially built from documentation and the published schema; phases A
+to F received a first live verification on 2026-09-08. `docs/verify.md` is the current follow-up
+list and supersedes earlier unverified entries in the historical build log.
+`docs/live-verification.md` is the full runbook: phases A to D are read-only and
 retire most of the open questions without touching the tenant, E to G write and say so.
 `docs/verification-template.md` is the results file to fill in, and
 `scripts/redact-verification.mjs` replaces GUIDs, org URLs, emails and tokens with stable

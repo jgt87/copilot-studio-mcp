@@ -106,9 +106,12 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   the server does not register, so update the guides together with the tool list.
 - **Two accounts** (`src/pacProfile.ts`): pac's active auth profile is machine-wide state.
   `withPacProfile` selects a profile, runs the work and restores the previous one, serialised
-  through a promise queue so concurrent tool calls cannot interleave. Every pac wrapper takes
-  `profile`, defaulting to `CPS_ADMIN_PROFILE` for `admin` commands and `CPS_PAC_PROFILE`
-  otherwise.
+  through a process-local promise queue, including calls without a named profile. `runPac`
+  applies `CPS_ADMIN_PROFILE` for admin commands and `CPS_PAC_PROFILE` for maker commands;
+  auth/session inspection uses the current profile. Declarative wrappers and `cs_pac` also
+  accept an explicit `profile`. Bootstrap, solution pull/deploy and snapshots hold the lock
+  across their PAC steps. Nested calls reuse the async context; only coordinator internals
+  may call `runPacRaw`. External PAC processes are outside this lock.
 - **Tenant backup** (`src/tenantBackup.ts`): `backupTenant` runs a fixed list of read-only pac
   commands into a folder, storing raw stdout plus parsed rows where a parser exists
   (`parseSolutionList`, `parseCopilotList`, `parseConnectionList`), and per environment optionally
@@ -124,7 +127,7 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   wrapper around `server.registerTool`; hidden tools are logged at startup. `TOOL_PRESETS` gives
   named subsets (`core`, `authoring`, `admin`, `solutions`, `full`) that `expandPresets` resolves
   before the globs, because the full list is ~50k tokens of schema and a smaller model chooses badly
-  from 131 tools. The default (no `CPS_TOOLS`) still registers everything; keep it that way. When
+  from 137 tools. The default (no `CPS_TOOLS`) still registers everything; keep it that way. When
   adding a tool to the core workflow, add it to the `core` preset too, and keep `cs_pac` in every
   preset that hides pac wrappers. `cs_set_tool_preset` switches presets during a session through the
   SDK handles kept by the registration wrapper (`applyToolPreset` in `tools/shared.ts`); the SDK
@@ -204,8 +207,9 @@ stdout is the MCP transport. All diagnostics go through `log()` to stderr.
   command line and hands it to `cmd /d /s /c` verbatim instead. Found live on 2026-09-09; latent
   wherever pac resolves to `pac.exe`.
 - pac can report failure and still exit 0 (`pac copilot publish` prints "Failed to publish"), so a
-  command that does this opts into `PacRunOptions.failOnOutput`. Do not apply such a pattern
-  globally: an unrelated log line containing "failed" would misread as a failure.
+  `runPacRaw` applies the publish-failure pattern to every `copilot publish` call, including
+  deployment. Other commands can opt into `PacRunOptions.failOnOutput`; never match "failed"
+  globally, because unrelated log lines can contain it.
 - Fire-and-forget processes go through `auth.launchDetached`: a child process emits `error`
   asynchronously (ENOENT when the command is missing) and an unlistened `error` event kills the
   server, which clients report only as a broken pipe. index.ts also logs `uncaughtException` /
@@ -239,7 +243,9 @@ properties at the document root are warnings (the published schema lags the prod
 
 ## Live verification checklist (needs a Power Platform environment)
 
-Nothing below the unit tests and the pack oracle has been run against a tenant.
+Phases A to F were exercised against a tenant on 2026-09-08. `docs/verify.md` is the current
+follow-up list; the checklist below describes the original acceptance workflow. The code-review
+fixes recorded in `docs/CODE_REVIEW.md` were verified offline, not through new live writes.
 
 1. `pac auth create --environment <id>` in a terminal; `cs_init` shows the profile.
 2. `cs_create_agent` with `environment` + `confirm`; `cs_describe_workspace` reports `sync.source != none`.

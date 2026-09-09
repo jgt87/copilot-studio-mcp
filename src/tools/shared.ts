@@ -7,6 +7,7 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
@@ -27,14 +28,15 @@ import { dataverseScope, getBot, listBotComponents, listBots, listConnectionRefe
 import { type DataverseReads } from "../compare.js";
 
 export const execFileAsync = promisify(execFile);
-export const VERSION = "0.1.0";
+export const VERSION: string = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 export function text(payload: unknown) {
-  return { content: [{ type: "text" as const, text: typeof payload === "string" ? payload : JSON.stringify(payload, null, 2) }] };
+  const outcome = payload as { ok?: boolean; state?: string } | null;
+  return { content: [{ type: "text" as const, text: typeof payload === "string" ? payload : JSON.stringify(payload, null, 2) }], ...(outcome?.ok === false || outcome?.state === "failed" ? { isError: true as const } : {}) };
 }
 
 export function fail(message: string) {
@@ -85,23 +87,32 @@ export interface CloudContext {
   authCfg: AuthConfig;
 }
 
-export async function cloudContext(args: { workspace?: string; tenantId?: string; clientId?: string; environmentId?: string; botId?: string; dataverseUrl?: string }, needs: { environment?: boolean; bot?: boolean; dataverse?: boolean } = {}): Promise<CloudContext> {
+export async function cloudContext(args: { workspace?: string; tenantId?: string; clientId?: string; environmentId?: string; botId?: string; dataverseUrl?: string }, needs: { environment?: boolean; bot?: boolean; dataverse?: boolean } = {}, resolveEnvironment = async (authCfg: AuthConfig, id: string) => {
+  const bap = await getToken(authCfg, [BAP_SCOPE]);
+  return (await getEnvironment(bap.accessToken, id)).dataverseUrl;
+}): Promise<CloudContext> {
   const ws = tryWorkspace(args.workspace);
-  const tenantId = resolveTenantId(args.tenantId ?? ws?.sync.tenantId ?? undefined);
+  // Environment identity and its URL, tenant and agent must move together.
+  const same = (a: string | null | undefined, b: string | null | undefined) => Boolean(a && b && a.replace(/\/+$/, "").toLowerCase() === b.replace(/\/+$/, "").toLowerCase());
+  const explicitEnvironment = args.environmentId !== undefined || args.dataverseUrl !== undefined;
+  const matchesWorkspace = (!args.environmentId || same(args.environmentId, ws?.sync.environmentId)) && (!args.dataverseUrl || same(args.dataverseUrl, ws?.sync.dataverseUrl));
+  const useWorkspace = !explicitEnvironment || matchesWorkspace;
+  const matchesDefaults = (!args.environmentId || same(args.environmentId, process.env.CPS_ENVIRONMENT_ID)) && (!args.dataverseUrl || same(args.dataverseUrl, process.env.CPS_ENVIRONMENT_URL));
+  const useDefaults = !explicitEnvironment || matchesDefaults;
+  const tenantId = args.tenantId ?? (useWorkspace ? ws?.sync.tenantId : null) ?? (useDefaults ? process.env.CPS_TENANT_ID : null) ?? "organizations";
   const clientId = effectiveClientId(args.clientId);
-  const environmentId = args.environmentId ?? ws?.sync.environmentId ?? process.env.CPS_ENVIRONMENT_ID ?? null;
-  const botId = args.botId ?? ws?.sync.agentId ?? process.env.CPS_AGENT_ID ?? null;
-  let dataverseUrl = args.dataverseUrl ?? ws?.sync.dataverseUrl ?? process.env.CPS_ENVIRONMENT_URL ?? null;
+  const environmentId = args.environmentId ?? (useWorkspace ? ws?.sync.environmentId : null) ?? (useDefaults ? process.env.CPS_ENVIRONMENT_ID : null) ?? null;
+  const botId = args.botId ?? (useWorkspace ? ws?.sync.agentId : null) ?? (useDefaults ? process.env.CPS_AGENT_ID : null) ?? null;
+  let dataverseUrl = args.dataverseUrl ?? (useWorkspace ? ws?.sync.dataverseUrl : null) ?? (useDefaults ? process.env.CPS_ENVIRONMENT_URL : null) ?? null;
   const authCfg: AuthConfig = { tenantId, clientId };
   if (needs.environment && !environmentId) throw new Error("environmentId is required (pass it, set CPS_ENVIRONMENT_ID, or use a synced workspace)");
   if (needs.bot && !botId) throw new Error("botId is required (pass it, set CPS_AGENT_ID, or use a synced workspace)");
   if (needs.dataverse && !dataverseUrl) {
     if (!environmentId) throw new Error("dataverseUrl or environmentId is required");
-    const bap = await getToken(authCfg, [BAP_SCOPE]);
-    dataverseUrl = (await getEnvironment(bap.accessToken, environmentId)).dataverseUrl;
+    dataverseUrl = await resolveEnvironment(authCfg, environmentId);
     if (!dataverseUrl) throw new Error(`Environment ${environmentId} has no Dataverse instance`);
   }
-  return { tenantId, clientId, environmentId, botId, dataverseUrl, schemaName: ws?.schemaName ?? null, authCfg };
+  return { tenantId, clientId, environmentId, botId, dataverseUrl, schemaName: useWorkspace ? ws?.schemaName ?? null : null, authCfg };
 }
 
 export function dryRun(summary: string, extra: Record<string, unknown> = {}) {

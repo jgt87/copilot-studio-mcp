@@ -10,7 +10,7 @@ import { z } from "zod";
 
 
 import { errorMessage } from "../log.js";
-import { buildFlow, type FlowBuildSpec, type FlowStepSpec, type FlowTriggerSpec } from "../authoring/flowBuilder.js";
+import { buildFlow, buildFlowUpdate, type FlowBuildSpec, type FlowStepSpec, type FlowTriggerSpec } from "../authoring/flowBuilder.js";
 
 import { getToken } from "../auth.js";
 import { createFlow, dataverseScope, getFlow, listFlows, setFlowState, updateFlow } from "../cloud/dataverse.js";
@@ -163,6 +163,7 @@ server.registerTool(
       ...flowSpecArgs,
       definition: z.record(z.unknown()).optional().describe("Power Automate definition object (properties.definition), instead of steps"),
       clientData: z.record(z.unknown()).optional().describe("The whole clientdata document; overrides 'definition'"),
+      connectionReferences: z.record(z.unknown()).optional().describe("Connection reference entries to add or explicitly replace; existing entries are otherwise preserved"),
       confirm: confirmArg,
     },
   },
@@ -170,8 +171,7 @@ server.registerTool(
     try {
       const dv = await flowContext(a);
       const before = await getFlow(dv.url, dv.token, a.flowId);
-      const rebuilt = a.steps || a.trigger ? buildFlow({ name: a.name ?? before.name, description: a.description, steps: a.steps, trigger: a.trigger, outputs: a.outputs, connectionReferencePrefix: a.connectionReferencePrefix }) : null;
-      const changes = { name: a.name, description: a.description, definition: a.definition ?? rebuilt?.definition, clientData: a.clientData };
+      const { rebuilt, changes } = buildFlowUpdate(before, a);
       const fields = Object.entries(changes).filter(([, v]) => v !== undefined).map(([k]) => k);
       if (!fields.length) return fail("Nothing to update: pass name, description, definition or clientData");
       if (!a.confirm) return dryRun(`update flow '${before.name}' (${fields.join(", ")}) in ${dv.url}`, { flowId: a.flowId, isManaged: before.isManaged, state: before.state, ...(before.isManaged ? { warning: "This flow is managed; Dataverse refuses in-place edits of managed flows." } : {}) });

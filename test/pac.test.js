@@ -4,7 +4,7 @@
  * what it does to the output, and how it reports a failure.
  */
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, before } from "node:test";
@@ -24,6 +24,7 @@ let previousPacPath;
  *   argv: [--exit N] [--stderr TEXT] [--sleep MS] [--ansi]
  */
 const FAKE = `
+import fs from "node:fs";
 const args = process.argv.slice(2);
 const opt = (name, fallback) => {
   const i = args.indexOf(name);
@@ -41,7 +42,10 @@ const err = opt("--stderr", null);
 if (err !== null) process.stderr.write(err + "\\n");
 const sleep = Number(opt("--sleep", 0));
 const exit = Number(opt("--exit", 0));
-if (sleep > 0) setTimeout(() => process.exit(exit), sleep);
+if (sleep > 0) setTimeout(() => {
+  if (opt("--marker", null)) fs.writeFileSync(opt("--marker", null), "child survived timeout");
+  process.exit(exit);
+}, sleep);
 else process.exit(exit);
 `;
 
@@ -128,9 +132,15 @@ test("env and cwd options are passed through", async () => {
 });
 
 test("a run that outlives its timeout is killed and says so", async () => {
-  const r = await runPac(["x", "--sleep", "5000"], { timeoutMs: 300 });
+  const marker = join(dir, "timeout-marker.txt");
+  const started = Date.now();
+  const r = await runPac(["x", "--sleep", "5000", "--marker", marker], { timeoutMs: 1000 });
   assert.equal(r.ok, false);
-  assert.match(r.stderr, /timed out after 300 ms/);
+  assert.match(r.stderr, /timed out after 1000 ms/);
+  assert.ok(Date.now() - started < 4000, "timeout must finish before the child naturally exits");
+  assert.match(r.stderr, /termination completed/);
+  await new Promise(resolve => setTimeout(resolve, Math.max(0, 5500 - (Date.now() - started))));
+  assert.equal(existsSync(marker), false, "the descendant must not perform its delayed side effect");
 });
 
 // `--say` makes the fake print a line of its own, so these assert on pac's

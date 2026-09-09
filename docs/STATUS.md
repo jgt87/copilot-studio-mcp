@@ -1,5 +1,9 @@
 # Build status
 
+Current verification follow-up: [verify.md](verify.md). The table below is a historical build
+log; later dated entries and that follow-up list supersede earlier "untested" notes.
+The 2026-09-10 review fixes are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
+
 Plan: `~/.claude/plans/twinkly-inventing-hopper.md` (approved 2026-09-05).
 
 | Step | Status | Notes |

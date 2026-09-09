@@ -13,7 +13,8 @@
  * `CPS_ADMIN_PROFILE` names the profile the admin tools use when a call does
  * not name one; `CPS_PAC_PROFILE` does the same for everything else.
  */
-import { parseAuthList, runPac, type AuthProfile, type PacResult } from "./pac.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { parseAuthList, runPacRaw, type AuthProfile, type PacResult } from "./pac.js";
 import { log } from "./log.js";
 
 export interface ProfileSwitch {
@@ -23,6 +24,11 @@ export interface ProfileSwitch {
 }
 
 let queue: Promise<unknown> = Promise.resolve();
+const activeOperation = new AsyncLocalStorage<{ profile: string | undefined; active: boolean }>();
+
+export function hasPacProfileLock(): boolean {
+  return activeOperation.getStore()?.active === true;
+}
 
 /** Serialise access to the machine-wide active profile. */
 function serialize<T>(fn: () => Promise<T>): Promise<T> {
@@ -35,8 +41,11 @@ function serialize<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export async function listProfiles(): Promise<AuthProfile[]> {
-  const r = await runPac(["auth", "list"], { timeoutMs: 60_000 });
-  return r.ok ? parseAuthList(r.stdout) : [];
+  const { result } = await withPacProfile(undefined, async () => {
+    const r = await runPacRaw(["auth", "list"], { timeoutMs: 60_000 });
+    return r.ok ? parseAuthList(r.stdout) : [];
+  });
+  return result;
 }
 
 export function adminProfileDefault(): string | undefined {
@@ -59,7 +68,7 @@ function findProfile(profiles: AuthProfile[], wanted: string): AuthProfile | nul
 }
 
 async function select(profile: AuthProfile): Promise<void> {
-  const r = await runPac(["auth", "select", "--index", String(profile.index)], { timeoutMs: 60_000 });
+  const r = await runPacRaw(["auth", "select", "--index", String(profile.index)], { timeoutMs: 60_000 });
   if (!r.ok) throw new Error(`could not select pac auth profile '${profile.name}': ${(r.stderr || r.stdout).split(/\r?\n/).filter(Boolean).slice(-2).join(" ")}`);
 }
 
@@ -69,35 +78,43 @@ async function select(profile: AuthProfile): Promise<void> {
  * nothing is switched.
  */
 export async function withPacProfile<T>(profile: string | undefined, fn: () => Promise<T>): Promise<{ result: T; profile: ProfileSwitch | null }> {
-  if (!profile) return { result: await fn(), profile: null };
+  const enclosing = activeOperation.getStore();
+  if (enclosing?.active) {
+    if (profile && profile !== enclosing.profile) throw new Error("Cannot switch PAC profiles inside an active PAC operation.");
+    return { result: await fn(), profile: null };
+  }
   return serialize(async () => {
-    const profiles = await listProfiles();
-    if (!profiles.length) throw new Error("No pac auth profiles on this machine. Create one in a terminal: pac auth create --environment <id> (and one for the admin account, with --name).");
-    const target = findProfile(profiles, profile);
-    if (!target) throw new Error(`No pac auth profile matches '${profile}'. Available: ${profiles.map((p) => `${p.name}${p.user ? ` (${p.user})` : ""}`).join(", ")}. cs_init lists them.`);
-    const previous = profiles.find((p) => p.active) ?? null;
-    const switched = !target.active;
-    if (switched) {
-      log(`pac auth: switching to profile '${target.name}'${previous ? ` (was '${previous.name}')` : ""}`);
-      await select(target);
-    }
-    try {
-      const result = await fn();
-      return { result, profile: { requested: profile, previous: previous?.name ?? null, switched } };
-    } finally {
-      if (switched && previous) {
-        try {
-          await select(previous);
-        } catch (err) {
-          log(`could not restore pac auth profile '${previous.name}': ${(err as Error).message}`);
+    const operation = { profile, active: true };
+    try { return await activeOperation.run(operation, async () => {
+      if (!profile) return { result: await fn(), profile: null };
+      const profiles = await listProfiles();
+      if (!profiles.length) throw new Error("No pac auth profiles on this machine. Create one in a terminal: pac auth create --environment <id> (and one for the admin account, with --name).");
+      const target = findProfile(profiles, profile);
+      if (!target) throw new Error(`No pac auth profile matches '${profile}'. Available: ${profiles.map((p) => `${p.name}${p.user ? ` (${p.user})` : ""}`).join(", ")}. cs_init lists them.`);
+      const previous = profiles.find((p) => p.active) ?? null;
+      const switched = !target.active;
+      if (switched) {
+        log(`pac auth: switching to profile '${target.name}'${previous ? ` (was '${previous.name}')` : ""}`);
+        await select(target);
+      }
+      try {
+        const result = await fn();
+        return { result, profile: { requested: profile, previous: previous?.name ?? null, switched } };
+      } finally {
+        if (switched && previous) {
+          try {
+            await select(previous);
+          } catch (err) {
+            throw new Error(`Could not restore pac auth profile '${previous.name}': ${(err as Error).message}. Check the active profile before continuing.`);
+          }
         }
       }
-    }
+    }); } finally { operation.active = false; }
   });
 }
 
 /** `withPacProfile` around a single pac call. */
-export async function runPacAs(profile: string | undefined, args: string[], options: Parameters<typeof runPac>[1] = {}): Promise<PacResult> {
-  const { result } = await withPacProfile(profile, () => runPac(args, options));
+export async function runPacAs(profile: string | undefined, args: string[], options: Parameters<typeof runPacRaw>[1] = {}): Promise<PacResult> {
+  const { result } = await withPacProfile(profile, () => runPacRaw(args, options));
   return result;
 }

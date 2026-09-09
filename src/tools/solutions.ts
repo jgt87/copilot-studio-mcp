@@ -5,6 +5,7 @@
  * index.ts imports this module for its side effect, in tool-list order.
  */
 import fs from "node:fs";
+import { withPacProfile, makerProfileDefault, hasPacProfileLock } from "../pacProfile.js";
 import path from "node:path";
 import { z } from "zod";
 
@@ -201,6 +202,7 @@ async function pullSolution(
   { name, targetDir, environment, packagetype, cloneAgents }: { name: string; targetDir: string; environment?: string; packagetype?: PackageType; cloneAgents?: boolean },
   progress: Progress,
 ): Promise<Record<string, unknown>> {
+  if (!hasPacProfileLock()) return (await withPacProfile(makerProfileDefault(), () => pullSolution({ name, targetDir, environment, packagetype, cloneAgents }, progress))).result;
   const pt: PackageType = packagetype ?? "Both";
   const dir = path.resolve(targetDir);
   fs.mkdirSync(path.join(dir, "export"), { recursive: true });
@@ -345,26 +347,29 @@ server.registerTool(
         return { ...text({ blocked: true, reason: "Deployment settings still have unmapped entries; map them with cs_create_deployment_settings (ids from cs_list_connections on the target) or pass allowUnmapped: true", unmapped }), isError: true as const };
       }
       if (!a.confirm) return dryRun(`import ${zip} into ${a.targetEnvironment}${settingsFile ? ` with ${settingsFile}` : " without a settings file"}, then publish agents: ${agentSchemas.join(", ") || "(none known)"}`, { unmapped });
-      const imp = await importSolution({ zipPath: zip, environment: a.targetEnvironment, settingsFile: settingsFile ?? undefined, forceOverwrite: a.forceOverwrite, skipLowerVersion: a.skipLowerVersion, stageAndUpgrade: a.stageAndUpgrade, maxAsyncWaitMinutes: a.maxAsyncWaitMinutes });
-      const published: Record<string, unknown>[] = [];
-      if (a.publishAgents !== false) {
-        for (const schema of agentSchemas) {
-          const r = await runPac(["copilot", "publish", "--bot", schema, "--environment", a.targetEnvironment], { timeoutMs: 15 * 60_000 });
-          published.push({ agent: schema, ok: r.ok, ...(r.ok ? {} : { error: explainFailure(r) }) });
+      return (await withPacProfile(makerProfileDefault(), async () => {
+        const imp = await importSolution({ zipPath: zip, environment: a.targetEnvironment, settingsFile: settingsFile ?? undefined, forceOverwrite: a.forceOverwrite, skipLowerVersion: a.skipLowerVersion, stageAndUpgrade: a.stageAndUpgrade, maxAsyncWaitMinutes: a.maxAsyncWaitMinutes });
+        const published: Record<string, unknown>[] = [];
+        if (a.publishAgents !== false) {
+          for (const schema of agentSchemas) {
+            const r = await runPac(["copilot", "publish", "--bot", schema, "--environment", a.targetEnvironment], { timeoutMs: 15 * 60_000 });
+            published.push({ agent: schema, ok: r.ok, ...(r.ok ? {} : { error: explainFailure(r) }) });
+          }
         }
-      }
-      return text({
-        import: pacSummary(imp),
-        published,
-        unmapped,
-        postDeploymentSteps: [
-          ...(unmapped?.copilotAgentsWithoutGroup.length ? [`Agents without a security group in the settings file (${unmapped.copilotAgentsWithoutGroup.join(", ")}): set who can use them in the target portal or map copilotAgents in cs_create_deployment_settings.`] : []),
-          "Open each agent in the target environment and check Tools: connections bound through the settings file should show as connected; any others need a one-time authorisation.",
-          "Knowledge that lives outside the solution (uploaded files, Dataverse tables, SharePoint permissions) must exist and be accessible in the target.",
-          "Channels (Teams, web, M365 Copilot) are configured per environment; publish to channels in the target portal.",
-          "Cloud flows are imported off unless their connection references resolve; turn them on after binding connections.",
-        ],
-      });
+        return text({
+          import: pacSummary(imp),
+          ok: imp.ok && published.every((p) => p.ok === true),
+          published,
+          unmapped,
+          postDeploymentSteps: [
+            ...(unmapped?.copilotAgentsWithoutGroup.length ? [`Agents without a security group in the settings file (${unmapped.copilotAgentsWithoutGroup.join(", ")}): set who can use them in the target portal or map copilotAgents in cs_create_deployment_settings.`] : []),
+            "Open each agent in the target environment and check Tools: connections bound through the settings file should show as connected; any others need a one-time authorisation.",
+            "Knowledge that lives outside the solution (uploaded files, Dataverse tables, SharePoint permissions) must exist and be accessible in the target.",
+            "Channels (Teams, web, M365 Copilot) are configured per environment; publish to channels in the target portal.",
+            "Cloud flows are imported off unless their connection references resolve; turn them on after binding connections.",
+          ],
+        });
+      })).result;
     } catch (err) {
       return fail(errorMessage(err));
     }

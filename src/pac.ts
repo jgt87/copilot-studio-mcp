@@ -3,11 +3,12 @@
  * passes an argv array, and returns stdout/stderr/exit code. Output parsing for
  * the handful of list commands the server exposes lives here too.
  */
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { log } from "./log.js";
+import { adminProfileDefault, makerProfileDefault, hasPacProfileLock, runPacAs } from "./pacProfile.js";
 
 export interface PacResult {
   ok: boolean;
@@ -107,6 +108,14 @@ function spawnSpec(exe: string, args: string[]): { exe: string; args: string[]; 
  * when pac is missing or the process cannot be spawned at all.
  */
 export function runPac(args: string[], options: PacRunOptions = {}): Promise<PacResult> {
+  if (hasPacProfileLock()) return runPacRaw(args, options);
+  const profile = args[0] === "auth" || !args.length || args[0]?.startsWith("-") || args[0] === "help"
+    ? undefined : args[0] === "admin" ? adminProfileDefault() : makerProfileDefault();
+  return runPacAs(profile, args, options);
+}
+
+/** Internal process runner. Account-dependent callers must use runPac/runPacAs. */
+export function runPacRaw(args: string[], options: PacRunOptions = {}): Promise<PacResult> {
   const exe = findPac();
   if (!exe) return Promise.reject(new Error(installHint()));
   const started = Date.now();
@@ -126,10 +135,29 @@ export function runPac(args: string[], options: PacRunOptions = {}): Promise<Pac
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let settled = false;
+    let terminating = false;
+    let terminationNote = "";
     const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      terminating = true;
+      const terminated = (confirmed: boolean) => {
+        terminationNote = confirmed ? "Process termination completed; remote changes already submitted may still complete."
+          : "Process termination could not be confirmed; the operation may still be running. Check its status before retrying.";
+        terminating = false;
+        child.stdout.destroy();
+        child.stderr.destroy();
+        child.unref();
+        finish(null);
+      };
+      if (IS_WIN && child.pid) {
+        // Kill the tree before the wrapper: killing cmd first loses its descendants.
+        execFile(path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"), ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, timeout: 2000 }, (err) => terminated(!err));
+      } else {
+        const killed = child.kill("SIGKILL");
+        terminated(killed);
+      }
     }, timeoutMs);
     child.stdout.on("data", (d: Buffer) => {
       stdout += d.toString("utf8");
@@ -139,15 +167,20 @@ export function runPac(args: string[], options: PacRunOptions = {}): Promise<Pac
     });
     child.on("error", (err) => {
       clearTimeout(timer);
+      if (settled) return;
+      settled = true;
       reject(err);
     });
-    child.on("close", (code) => {
+    const finish = (code: number | null) => {
+      if (settled || terminating) return;
+      settled = true;
       clearTimeout(timer);
-      if (timedOut) stderr += `\n[copilot-studio-mcp] pac timed out after ${timeoutMs} ms`;
+      if (timedOut) stderr += `\n[copilot-studio-mcp] pac timed out after ${timeoutMs} ms. ${terminationNote}`;
       const out = stdout.replace(ANSI, "");
       let err = stderr.replace(ANSI, "");
-      // pac can report a failure and still exit 0; only the commands that opt in are checked.
-      const reportedFailure = code === 0 ? (options.failOnOutput ?? []).find((re) => re.test(out) || re.test(err)) : undefined;
+      // Publish always checks its known zero-exit failure; other commands opt in.
+      const patterns = [...(options.failOnOutput ?? []), ...(args[0] === "copilot" && args[1] === "publish" ? [PUBLISH_FAILED] : [])];
+      const reportedFailure = code === 0 ? patterns.find((re) => re.test(out) || re.test(err)) : undefined;
       if (reportedFailure) err += `\n[copilot-studio-mcp] pac exited 0 but its output reports failure (matched ${String(reportedFailure)})`;
       resolve({
         ok: !timedOut && code === 0 && !reportedFailure,
@@ -157,7 +190,8 @@ export function runPac(args: string[], options: PacRunOptions = {}): Promise<Pac
         command,
         durationMs: Date.now() - started,
       });
-    });
+    };
+    child.on("close", finish);
   });
 }
 

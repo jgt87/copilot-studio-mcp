@@ -18,7 +18,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { compareWorkspaces, workspaceFingerprints } from "./compare.js";
 import { explainFailure, runPac } from "./pac.js";
-import { findWorkspaceRoot, type ComponentInfo, type WorkspaceInfo } from "./workspace.js";
+import { findWorkspaceRoot, readWorkspace, type ComponentInfo, type WorkspaceInfo } from "./workspace.js";
 import type { BotComponentRow, BotDetails } from "./cloud/dataverse.js";
 import { fileStem } from "./authoring/util.js";
 
@@ -29,6 +29,7 @@ export interface RemoteComponentStamp {
   name: string;
   type: string | null;
   modifiedOn: string | null;
+  file?: string | null;
 }
 
 export interface RemoteState {
@@ -71,6 +72,8 @@ export function readStamp(root: string): SyncStamp | null {
 }
 
 export function writeStamp(root: string, o: { operation: SyncOperation; botId?: string | null; environmentId?: string | null; remote?: RemoteState | null; now?: Date }): SyncStamp {
+  const ws = readWorkspace(root);
+  const remote = o.remote ? { ...o.remote, components: Object.fromEntries(Object.entries(o.remote.components).map(([key, c]) => [key, { ...c, file: componentFileFor(ws, key) }])) } : null;
   const stamp: SyncStamp = {
     version: 1,
     operation: o.operation,
@@ -78,7 +81,7 @@ export function writeStamp(root: string, o: { operation: SyncOperation; botId?: 
     botId: o.botId ?? null,
     environmentId: o.environmentId ?? null,
     files: workspaceFingerprints(root),
-    remote: o.remote ?? null,
+    remote,
   };
   fs.mkdirSync(path.dirname(stampPath(root)), { recursive: true });
   fs.writeFileSync(stampPath(root), JSON.stringify(stamp, null, 2) + "\n");
@@ -308,12 +311,18 @@ function describeQuick(stamp: SyncStamp | null, components: ComponentDrift[], co
  * longer has. Each is matched to its workspace file, and a file that also
  * changed locally makes the entry a conflict.
  */
-function driftedComponents(o: { ws: WorkspaceInfo; stamp: SyncStamp | null; components: BotComponentRow[] }, baseline: Baseline, changedLocally: string[]): ComponentDrift[] {
+function driftedComponents(o: { ws: WorkspaceInfo; stamp: SyncStamp | null; components: BotComponentRow[] }, baseline: Baseline, changedLocally: string[], local: Record<string, string>): ComponentDrift[] {
   const { ws, stamp } = o;
   const entry = (key: string, name: string, type: string | null, status: ComponentDrift["status"], modifiedOn: string | null, modifiedBy: string | null): ComponentDrift => {
-    const file = componentFileFor(ws, key.includes(".") ? key : null);
+    // Keep deleted/renamed paths visible. Older stamps have only fingerprints.
+    const baselineFile = stamp?.remote?.components[key]?.file;
+    const stem = key.split(".").at(-1)?.toLowerCase();
+    const folders: Record<string, string[]> = { topic: ["topics"], action: ["actions", "tools"], tool: ["actions", "tools"], knowledge: ["knowledge"], trigger: ["trigger", "triggers"], variable: ["variables"], globalvariable: ["variables"] };
+    const kind = key.split(".").at(-2)?.toLowerCase() ?? "";
+    const candidates = Object.keys(stamp?.files ?? {}).filter((p) => (!folders[kind] || folders[kind].includes(p.split("/")[0])) && fileStem(p).toLowerCase() === stem);
+    const file = baselineFile ?? componentFileFor(ws, key.includes(".") ? key : null) ?? (candidates.length === 1 ? candidates[0] : null);
     const localModified = file ? changedLocally.includes(file) : false;
-    return { key, name, type, status, modifiedOn, modifiedBy, file, localModified, conflict: localModified };
+    return { key, name, type, status, modifiedOn, modifiedBy, file, localModified, conflict: localModified && !(status === "removed" && file && local[file] === undefined) };
   };
 
   const components: ComponentDrift[] = [];
@@ -337,11 +346,16 @@ export function quickDrift(o: { ws: WorkspaceInfo; stamp: SyncStamp | null; bot:
   const local = o.localFingerprints ?? workspaceFingerprints(ws.root);
   const changedLocally = localChanges(stamp, local);
   const baseline: Baseline = stamp?.remote ? "components" : stamp ? "syncedAt" : "none";
-  const components = driftedComponents(o, baseline, changedLocally);
+  const components = driftedComponents(o, baseline, changedLocally, local);
   const botModifiedOn = o.bot?.modifiedOn ?? null;
   const settingsChanged = settingsChangedSince(baseline, stamp, botModifiedOn);
   const unpublishedChanges = unpublishedSince(o.bot, o.components);
   const conflicts = components.filter((c) => c.conflict);
+  if (settingsChanged) {
+    for (const file of changedLocally.filter((p) => p === "agent.mcs.yml" || p === "settings.mcs.yml")) {
+      conflicts.push({ key: `bot:${file}`, name: `Agent settings (${file})`, type: "Bot", status: "modified", modifiedOn: botModifiedOn, modifiedBy: o.bot?.modifiedBy ?? null, file, localModified: true, conflict: true });
+    }
+  }
   return {
     baseline,
     syncedAt: stamp?.syncedAt ?? null,
@@ -361,6 +375,7 @@ export function briefQuick(r: QuickDriftReport): Record<string, unknown> {
     baseline: r.baseline,
     summary: r.summary,
     settingsChanged: r.bot.settingsChanged,
+    conflicts: r.conflicts,
     unpublishedChanges: r.bot.unpublishedChanges,
     changes: r.components.map((c) => ({ status: c.status, name: c.name, type: c.type, modifiedOn: c.modifiedOn, modifiedBy: c.modifiedBy, file: c.file, conflict: c.conflict })),
     localChanges: r.localChanges.length,

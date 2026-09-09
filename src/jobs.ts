@@ -114,8 +114,13 @@ export function startJob(o: StartOptions, body: (progress: Progress) => Promise<
     log(`job ${job.id} (${o.tool}) ${state} after ${job.durationMs} ms`);
   };
 
-  body(progress).then(
-    (result) => finish("succeeded", { result }),
+  Promise.resolve().then(() => body(progress)).then(
+    (result) => {
+      const outcome = result as { ok?: boolean; isError?: boolean; error?: string; explanation?: string } | null;
+      if (outcome?.ok === false || outcome?.isError === true) {
+        finish("failed", { result, error: outcome.error ?? outcome.explanation ?? "Operation reported failure; see result for diagnostics." });
+      } else finish("succeeded", { result });
+    },
     (err) => finish("failed", { error: err instanceof Error ? err.message : String(err) }),
   );
 
@@ -134,7 +139,7 @@ export function publicView(job: Job): Record<string, unknown> {
     finishedAt: job.finishedAt,
     durationMs: job.durationMs,
     steps: job.steps,
-    ...(job.state === "succeeded" ? { result: job.result } : {}),
+    ...(job.state === "succeeded" || job.result !== null ? { result: job.result } : {}),
     ...(job.state === "failed" ? { error: job.error } : {}),
     ...(job.recordFile ? { recordFile: job.recordFile } : {}),
   };
