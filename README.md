@@ -200,6 +200,8 @@ Permissions for your own app registration (Entra ID > App registrations > API pe
 | `cs_list_environments`, automatic Dataverse URL lookup, `cs_list_connectors`, `cs_describe_connector` | **PowerApps Service** (app id `475226c6-020e-4fb2-8a90-7a972cbfc1d4`) | `User` ("Access the Power Apps Service API") | Delegated. | Calls the BAP environments API (`api.bap.microsoft.com`) and the connector registry (`api.powerapps.com`). |
 | `cs_list_agents` (via `dataverse`), `cs_publish` (via `dataverse`), authentication-mode detection in `cs_chat`, `cs_check_drift` (quick mode), the drift preflight in `cs_push`, the component stamps recorded by `cs_clone_agent` / `cs_pull` / `cs_push`, the flow tools (`cs_list_flows`, `cs_get_flow`, `cs_create_flow`, `cs_update_flow`, `cs_set_flow_state`) and the transcript tools (`cs_list_transcripts`, `cs_get_transcript`, `cs_summarize_transcripts`, `cs_test_set_from_transcripts`) | **Dynamics CRM** (Dataverse, app id `00000007-0000-0000-c000-000000000000`) | `user_impersonation` | Delegated. There is no application permission; server-to-server access to Dataverse means an **application user** with a security role in each environment. | The user still needs a Dataverse security role that can read and publish bots (System Customizer or a Copilot Studio maker role). The drift checks only read the `bot` and `botcomponent` tables, which every maker role can read; they never write to Dataverse. The transcript tools read `conversationtranscript`, which holds **what users actually said to the agent**: a more sensitive table than the rest, so the signed-in user needs a role that grants read on it, and results should be treated as customer data. When a workspace has no Dataverse URL in its sync metadata the URL is looked up through the PowerApps Service permission above. |
 | `cs_list_flow_runs`, `cs_get_flow_run`, `cs_run_flow` | **Microsoft Flow** (Power Automate service, app id `7df0a125-d3be-4c96-aa54-591f83ff541c`) | `User` (token scope `https://service.flow.microsoft.com/.default`, override with `CPS_FLOW_SCOPE`) | Delegated. | A separate resource from Dataverse and the Power Platform API, so it needs its own consent: sign in with `cs_login scope='flow'`. The signed-in user must be an owner or co-owner of the flow. Endpoints and scope are taken from the service the Power Automate portal calls and are unverified against a tenant. |
+| `cs_list_org_agents`, `cs_get_org_agent` | **Microsoft Graph** (app id `00000003-0000-0000-c000-000000000000`) | `CopilotPackages.Read.All` (override the scope with `CPS_GRAPH_SCOPE`) | Delegated is what this server uses; an application permission of the same name exists for reads. | The Microsoft 365 agent catalogue, a different resource again: sign in with `cs_login scope='graph'`. **Requires a Microsoft Agent 365 licence** and is global-cloud only (no GCC, DoD or 21Vianet). Reads `/v1.0/copilot/admin/catalog/packages`. Unverified against a live tenant. |
+| `cs_block_org_agent`, `cs_reassign_org_agent` | **Microsoft Graph** | `CopilotPackages.ReadWrite.All` (override with `CPS_GRAPH_WRITE_SCOPE`) | Delegated only. Microsoft offers **no application permission** for these two actions. | Same licence and cloud limits as above; sign in with `cs_login scope='graph_write'`. These exist only on `/beta`, so they are pinned there whatever version a read used. Blocking is tenant-wide and takes effect for every user at once. Unverified against a live tenant. |
 | `cs_chat` for no-auth or manual-auth agents (DirectLine) | none | none | not applicable | The DirectLine token endpoint of a published agent is anonymous. |
 | `pac` interactive sign-in | none | none | not applicable | Microsoft's own app; `pac auth create --environment <id>`. |
 
@@ -338,6 +340,21 @@ Remaining pac commands (declarative wrappers over `pac <group> <command>`; flags
 | `cs_create_connection`, `cs_update_connection`, `cs_delete_connection` | service-principal Dataverse connections, the only kind pac can create (`confirm`) |
 | `cs_create_auth_profile`, `cs_select_auth_profile`, `cs_auth_who`, `cs_delete_auth_profile` | pac auth profiles, including service-principal, certificate, managed-identity and federated profiles for pipelines |
 | `cs_env_list`, `cs_env_who`, `cs_env_fetch`, `cs_env_select` | environments through pac (no MSAL sign-in needed), including FetchXML queries |
+
+The Microsoft 365 agent catalogue (Microsoft Graph; a separate sign-in, `cs_login scope='graph'`)
+
+| Tool | Purpose |
+| --- | --- |
+| `cs_list_org_agents` | every agent in the organisation's Microsoft 365 catalogue, across environments, filtered by platform (Copilot Studio by default), host, element type or last-modified date; reports who each agent is available to, where it is deployed and whether it is blocked |
+| `cs_get_org_agent` | one catalogue entry in full, with the raw body alongside the mapped fields |
+| `cs_block_org_agent` | block an agent for everyone in the tenant, or lift the block (`confirm`) |
+| `cs_reassign_org_agent` | hand a catalogue agent to a new owner, for when the old one leaves (`confirm`) |
+
+This is the one view Power Platform cannot give you. `cs_list_agents` reads the `bots` table of a
+single environment and stops at the Power Platform boundary; the catalogue is tenant-wide and adds
+the question that follows `cs_publish`: **did the agent actually reach anyone?** `availableTo`,
+`deployedTo` and `isBlocked` answer it. It needs a **Microsoft Agent 365** licence, is global-cloud
+only, and is unverified against a live tenant; block and reassign exist only on Graph `beta`.
 
 Every other pac group (application, canvas, catalog, code, data, managed-identity, model,
 modelbuilder, package, pages, pcf, plugin, power-fx, telemetry, test, tool) is outside Copilot

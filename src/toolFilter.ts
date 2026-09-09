@@ -79,7 +79,7 @@ export const TOOL_PRESETS: Record<string, string[]> = {
   ],
 
   /** Tenant administration, for a session running as the admin account. */
-  admin: ["cs_init", "cs_guide", "cs_set_tool_preset", "cs_admin_*", "cs_backup_tenant", "cs_list_auth_profiles", "cs_list_environments", "cs_job_status", "cs_pac"],
+  admin: ["cs_init", "cs_guide", "cs_set_tool_preset", "cs_admin_*", "cs_backup_tenant", "cs_list_auth_profiles", "cs_list_environments", "cs_login", "cs_login_status", "cs_*_org_agent*", "cs_job_status", "cs_pac"],
 
   /** Everything about moving solutions between environments. */
   solutions: ["cs_init", "cs_guide", "cs_set_tool_preset", "cs_list_solutions", "cs_describe_solution", "cs_*_solution", "cs_list_connections", "cs_snapshot_environment", "cs_compare_*", "cs_job_status", "cs_pac"],

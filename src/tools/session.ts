@@ -21,6 +21,7 @@ import { activePreset, parsePatterns, presetOptions } from "../toolFilter.js";
 import { acquireSilent, BAP_SCOPE, COPILOT_INVOKE_SCOPE, effectiveClientId, listAccounts, pendingLoginStatus, PPAPI_SCOPE, resolveTenantId, signOut, startDeviceCodeLogin, startInteractiveLogin, waitForPendingLogin, type AuthConfig } from "../auth.js";
 import { dataverseScope } from "../cloud/dataverse.js";
 import { FLOW_SCOPE } from "../cloud/flowruns.js";
+import { GRAPH_PACKAGES_SCOPE, GRAPH_PACKAGES_WRITE_SCOPE } from "../cloud/graphPackages.js";
 import { VERSION, applyToolPreset, clientArg, disabledToolCount, execFileAsync, fail, registeredTools, server, tenantArg, text, tryWorkspace, withheldTools, workspaceArg } from "./shared.js";
 
 /** The preset chosen with cs_set_tool_preset during this session, if any. */
@@ -129,6 +130,7 @@ async function probeTokenScopes(ws: WorkspaceInfo | null, hasAccount: boolean): 
     { key: "powerPlatformApi", scope: PPAPI_SCOPE, unlocks: "evaluations (cs_list_test_sets, cs_run_evaluation, cs_get_evaluation_run)" },
     { key: "powerAppsService", scope: BAP_SCOPE, unlocks: "cs_list_environments, the Dataverse URL lookup, cs_list_connectors, cs_describe_connector" },
     { key: "powerAutomate", scope: FLOW_SCOPE, unlocks: "cs_list_flow_runs, cs_get_flow_run, cs_run_flow" },
+    { key: "microsoftGraph", scope: GRAPH_PACKAGES_SCOPE, unlocks: "cs_list_org_agents, cs_get_org_agent (needs a Microsoft Agent 365 licence)" },
     ...(dataverseUrl ? [{ key: "dataverse", scope: dataverseScope(dataverseUrl), unlocks: "cs_check_drift quick mode, cs_list_agents via dataverse, the transcript tools, cs_publish via dataverse" }] : []),
   ];
   const results: { key: string; unlocks: string; ok: boolean; error?: string }[] = await Promise.all(
@@ -160,7 +162,7 @@ server.registerTool(
       mode: z.enum(["interactive", "device_code"]).optional().describe("Default interactive"),
       tenantId: tenantArg,
       clientId: clientArg,
-      scope: z.enum(["powerplatform", "bap", "dataverse", "copilot_invoke", "flow"]).optional().describe("Which resource to pre-authorise. Default powerplatform (evaluations); 'flow' is the Power Automate service used by the flow-run tools. Others are acquired silently later when possible."),
+      scope: z.enum(["powerplatform", "bap", "dataverse", "copilot_invoke", "flow", "graph", "graph_write"]).optional().describe("Which resource to pre-authorise. Default powerplatform (evaluations); 'flow' is the Power Automate service used by the flow-run tools; 'graph' reads the Microsoft 365 agent catalogue and 'graph_write' also blocks and reassigns. Others are acquired silently later when possible."),
       dataverseUrl: z.string().optional().describe("Required when scope is dataverse, e.g. https://org.crm.dynamics.com"),
       workspace: workspaceArg,
       openBrowser: z.boolean().optional().describe("interactive: try to open the browser from the server (default true). Set false when the server runs where no browser can appear."),
@@ -172,7 +174,7 @@ server.registerTool(
       const ws = tryWorkspace(workspace);
       const cfg: AuthConfig = { tenantId: resolveTenantId(tenantId ?? ws?.sync.tenantId ?? undefined), clientId };
       const scopes =
-        scope === "bap" ? [BAP_SCOPE] : scope === "flow" ? [FLOW_SCOPE] : scope === "dataverse" ? [dataverseScope(dataverseUrl ?? ws?.sync.dataverseUrl ?? (() => { throw new Error("dataverseUrl required"); })())] : scope === "copilot_invoke" ? [COPILOT_INVOKE_SCOPE] : [PPAPI_SCOPE];
+        scope === "bap" ? [BAP_SCOPE] : scope === "flow" ? [FLOW_SCOPE] : scope === "dataverse" ? [dataverseScope(dataverseUrl ?? ws?.sync.dataverseUrl ?? (() => { throw new Error("dataverseUrl required"); })())] : scope === "copilot_invoke" ? [COPILOT_INVOKE_SCOPE] : scope === "graph" ? [GRAPH_PACKAGES_SCOPE] : scope === "graph_write" ? [GRAPH_PACKAGES_WRITE_SCOPE] : [PPAPI_SCOPE];
       if (mode === "device_code") {
         const info = await startDeviceCodeLogin(cfg, scopes);
         return text({ status: "device_code", ...info, next: "Tell the user to open verificationUri and enter userCode. Then call cs_login_status or any cloud tool." });

@@ -28,6 +28,7 @@ import "./tools/environments.js";
 import "./tools/sync.js";
 import "./tools/flows.js";
 import "./tools/tenant.js";
+import "./tools/m365.js";
 import "./tools/guidance.js";
 import "./tools/pacWrappers.js";
 import "./tools/authoring.js";

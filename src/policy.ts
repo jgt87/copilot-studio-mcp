@@ -32,6 +32,8 @@ const BESPOKE_ALWAYS_WRITES = [
   "cs_update_flow", // definition on the workflow row
   "cs_create_flow", // new workflow row
   "cs_run_flow", // the flow's actions run for real
+  "cs_block_org_agent", // blocks the agent for every user in the tenant
+  "cs_reassign_org_agent", // changes package ownership in the M365 catalogue
 ] as const;
 
 // Tenant administration writes (pac admin ...) are classified from PAC_COMMANDS below,
