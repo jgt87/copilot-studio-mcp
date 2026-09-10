@@ -66,9 +66,74 @@ interface DirectLineSession {
   domain: string;
   token: string;
   watermark?: string;
+  /**
+   * When the token stops being accepted. Absent when the session runs on a
+   * DirectLine secret, which does not expire and cannot be refreshed.
+   */
+  expiresAt?: number;
+  lastUsed: number;
 }
 
 const sessions = new Map<string, DirectLineSession>();
+
+/**
+ * How long an idle conversation is kept. DirectLine abandons a conversation
+ * after about the same window, so a session older than this is already dead on
+ * the service side; keeping it only leaks the token and the domain.
+ */
+export const SESSION_IDLE_MS = 30 * 60_000;
+/** A hard ceiling, so a burst of conversations cannot grow the map without bound. */
+export const SESSION_MAX = 100;
+/** Refresh this far ahead of expiry, so a slow poll cannot outlive the token. */
+const REFRESH_MARGIN_MS = 5 * 60_000;
+/** DirectLine's own default when a response omits expires_in. */
+const DEFAULT_TOKEN_TTL_S = 1800;
+
+/** Drop idle sessions, then the least recently used ones over the cap. */
+function pruneSessions(now = Date.now()): void {
+  for (const [id, s] of sessions) {
+    if (now - s.lastUsed > SESSION_IDLE_MS) sessions.delete(id);
+  }
+  if (sessions.size > SESSION_MAX) {
+    const oldestFirst = [...sessions.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    for (const [id] of oldestFirst.slice(0, sessions.size - SESSION_MAX)) sessions.delete(id);
+  }
+}
+
+/** Forget one conversation. The next call with that id starts a new one. */
+export function endDirectLineSession(conversationId: string): boolean {
+  return sessions.delete(conversationId);
+}
+
+/** Live session count, for tests and diagnostics. */
+export function directLineSessionCount(): number {
+  return sessions.size;
+}
+
+/**
+ * Trade a conversation token that is near expiry for a fresh one. DirectLine
+ * tokens last about 30 minutes, and this server used to mint one per
+ * conversation and keep it forever, so continuing a conversation past that
+ * window failed with an authorisation error the caller could not act on.
+ *
+ * A session running on a raw secret has no expiry and is left alone. When the
+ * refresh itself fails the session is dropped, because its token can no longer
+ * be repaired and the caller needs to know the thread is gone rather than
+ * receive a 403 from the next unrelated request.
+ */
+async function refreshIfNearExpiry(session: DirectLineSession, conversationId: string, fetchImpl?: FetchLike): Promise<void> {
+  if (session.expiresAt === undefined) return;
+  if (Date.now() < session.expiresAt - REFRESH_MARGIN_MS) return;
+  try {
+    const r = await requestJson<{ token?: string; expires_in?: number }>(`${session.domain}/v3/directline/tokens/refresh`, { method: "POST", token: session.token, fetchImpl });
+    if (!r?.token) throw new Error("the refresh endpoint returned no token");
+    session.token = r.token;
+    session.expiresAt = Date.now() + (r.expires_in ?? DEFAULT_TOKEN_TTL_S) * 1000;
+  } catch (err) {
+    sessions.delete(conversationId);
+    throw new Error(`The DirectLine token for conversation ${conversationId} expired and could not be refreshed (${err instanceof Error ? err.message : String(err)}). Call again without conversationId to start a new conversation; the previous thread's context is gone.`);
+  }
+}
 
 async function regionalDomain(tokenEndpoint: string, fetchImpl?: FetchLike): Promise<string> {
   try {
@@ -128,8 +193,10 @@ export async function chatDirectLine(utterance: string, opts: DirectLineChatOpti
   // by default and let a caller who is waiting on purpose raise it.
   const maxMs = opts.maxMs ?? 25_000;
 
+  pruneSessions();
   let conversationId = opts.conversationId;
   let session = conversationId ? sessions.get(conversationId) : undefined;
+  if (session && conversationId) await refreshIfNearExpiry(session, conversationId, fetchImpl);
   const startActivities: Activity[] = [];
 
   if (!session) {
@@ -146,10 +213,11 @@ export async function chatDirectLine(utterance: string, opts: DirectLineChatOpti
     } else {
       throw new Error("Need tokenEndpoint or secret to start a DirectLine conversation");
     }
-    const conv = await requestJson<{ conversationId?: string; token?: string }>(`${domain}/v3/directline/conversations`, { method: "POST", token, body: {}, fetchImpl });
+    const conv = await requestJson<{ conversationId?: string; token?: string; expires_in?: number }>(`${domain}/v3/directline/conversations`, { method: "POST", token, body: {}, fetchImpl });
     if (!conv?.conversationId) throw new Error("DirectLine did not return a conversationId");
     conversationId = conv.conversationId;
-    session = { domain, token: conv.token ?? token };
+    // Only a conversation-scoped token expires; falling back to the secret does not.
+    session = { domain, token: conv.token ?? token, lastUsed: Date.now(), ...(conv.token ? { expiresAt: Date.now() + (conv.expires_in ?? DEFAULT_TOKEN_TTL_S) * 1000 } : {}) };
     sessions.set(conversationId, session);
     await requestJson(`${domain}/v3/directline/conversations/${conversationId}/activities`, {
       method: "POST",
@@ -169,6 +237,10 @@ export async function chatDirectLine(utterance: string, opts: DirectLineChatOpti
   });
   const replies = await pollActivities(session, cid, { idleMs, maxMs, fetchImpl, sleep });
   const all = [...startActivities, ...replies];
+  session.lastUsed = Date.now();
+  // The bot closed the thread: the session cannot be continued, so do not hold
+  // its token until the idle sweep. A later call with this id starts a new one.
+  if (all.some((a) => a.type === "endOfConversation")) sessions.delete(cid);
   return {
     protocol: "directline",
     conversationId: cid,
