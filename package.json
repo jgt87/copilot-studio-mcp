@@ -1,6 +1,6 @@
 {
   "name": "copilot-studio-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "MCP server for Microsoft Copilot Studio agent development: workspace sync via pac, YAML authoring (topics, knowledge, tools, flows), evaluations and chat-testing",
   "type": "module",
   "bin": {
