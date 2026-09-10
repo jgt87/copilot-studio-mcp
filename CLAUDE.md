@@ -48,7 +48,12 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   overwrite unless asked).
 - **Cloud** (`src/auth.ts`, `src/cloud/*`): MSAL public client (first-party VS Code client id by
   default, `CPS_CLIENT_ID` overrides); every HTTP client takes an injectable `fetchImpl` so it can
-  be tested with recorded responses. All permissions are delegated (no client-credential flow);
+  be tested with recorded responses. `http.requestJson` retries only what is safe to repeat: a GET,
+  or a non-GET that passes `idempotent: true`, and only on a transport failure or 408/429/500/502/
+  503/504. A write is never retried, because a publish or an import that timed out may already have
+  been applied. Backoff is exponential with jitter, honours `Retry-After` up to a 5s cap (the client
+  cuts the call off at ~60s), and takes an injectable `sleep`. All permissions are delegated (no
+  client-credential flow);
   the README section "Authentication and app registration" is the source of truth for which API
   and permission each tool needs. Keep it in sync when adding a cloud call. `ppapi.ts` is the evaluation API (list/run/get only; no
   create), `dataverse.ts` lists bots and publishes via the `PvaPublish` bound action polled on
