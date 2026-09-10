@@ -86,6 +86,16 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   `authoring/util.ts`.
 - **Review** (`src/review.ts`): rules-based `reviewWorkspace` with a 10-point score; each finding
   names a rule and a fix. Add rules as functions in the `rules` array; keep them conservative.
+- **Attribution** (`src/attribution.ts`): which topic, tool and knowledge source an activity is
+  attributed to, read from `channelData`. One module because the same activities arrive two ways -
+  live from DirectLine (`cs_chat`) and stored in Dataverse (`conversationtranscripts`) - and both
+  readers must agree. The key names are from documentation, not a live capture, so every accessor
+  takes each casing and nesting the docs show; `docs/test-verification.md` phase 1 is what settles
+  them, and `test/attribution.test.js` is the written record of which shapes are claimed. Add a key
+  to both together. `evals.Expectation` builds `usedTool` / `notUsedTool` / `usedTopic` /
+  `notUsedTopic` / `citedKnowledge` on it, so a conversation test can tell a real tool call from an
+  answer that merely reads correctly. An expectation that cannot be judged says so rather than
+  failing the agent.
 - **Comparison** (`src/compare.ts`): DTAP snapshots and diffs. A snapshot is `snapshot.json` plus
   `agents/<Agent>/` clones; `compareSnapshots` normalises YAML (drops `DEFAULT_IGNORED_KEYS`, skips
   `.mcs/`, icons, sync markers), diffs with the `diff` package, and separates drift from expected
@@ -307,7 +317,10 @@ properties at the document root are warnings (the published schema lags the prod
 ## Live verification checklist (needs a Power Platform environment)
 
 Phases A to F were exercised against a tenant on 2026-09-08. `docs/verify.md` is the current
-follow-up list; the checklist below describes the original acceptance workflow. The code-review
+follow-up list; the checklist below describes the original acceptance workflow.
+`docs/test-verification.md` is the runbook for the feedback loop (static checks, behavioural tests,
+transcripts, closing the loop); its phase 1 settles whether live DirectLine activities carry the
+topic/tool/citation attribution that `src/attribution.ts` assumes, which nothing has yet confirmed. The code-review
 fixes recorded in `docs/CODE_REVIEW.md` were verified offline, not through new live writes.
 
 1. `pac auth create --environment <id>` in a terminal; `cs_init` shows the profile.
