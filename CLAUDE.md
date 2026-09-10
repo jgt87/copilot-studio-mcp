@@ -237,6 +237,58 @@ stdout is the MCP transport. All diagnostics go through `log()` to stderr.
   `ContentModerationLevel`. The README table "Agent settings this server can write" is the
   user-facing map; keep it in step when adding a field.
 
+## Releasing
+
+Version, tag, GitHub release and npm are one step, not four. A bump that stops at
+`package.json` leaves the release page describing an older build, which is how `v0.1.2`
+came to be tagged with nothing behind it.
+
+```sh
+npm version 0.1.4 --no-git-tag-version   # package.json + package-lock.json together
+npm run build                            # VERSION is read from package.json, so rebuild
+npm test && node scripts/smoke.mjs       # prepublishOnly runs the tests again; fail here, not at the registry
+git commit -m "0.1.4"                    # bare version number: matches v0.1.0 .. v0.1.3
+git tag -a v0.1.4 -m "v0.1.4"
+git push origin main --follow-tags
+gh release create v0.1.4 --title "v0.1.4 - <one word>" --notes-file <file>
+npm publish                              # needs npm login; the registry is the only place users get it
+```
+
+- `src/tools/shared.ts` reads `VERSION` from `package.json`, so never write a version anywhere
+  else. `docs/CODE_REVIEW.md` names 0.1.1 on purpose: it is a dated record, not a live reference.
+- Write the notes from `git log <previous tag>..<tag>`. House style, set by `v0.1.1`: a lede
+  saying what kind of release it is and who should upgrade, then `## Fixed` / `## Added` /
+  `## Changed` with each bullet leading on the user-visible symptom in bold rather than the
+  commit subject, and a closing line with the test count and what was *not* verified live.
+- npm serves the readme from the published tarball, so a README change reaches the package page
+  only through a release. That is the whole reason `v0.1.1` exists.
+- `npm publish` failing with `E404` on the PUT means the credentials expired, not that the name
+  is taken. `npm whoami` returns 401 in that state; `npm login` fixes it. A failed publish
+  consumes nothing, so retry the same version rather than bumping again.
+
+## Keeping the docs in step
+
+Several files describe the code and go stale silently. When a change touches one of these,
+update it in the same commit:
+
+- **Tool list**: `test/guide.test.js` fails when a guide in `src/guide.ts` names a tool the server
+  does not register, and `test/presets.test.js` checks each preset's advertised count. The README
+  tool table and the tool count in "Running on a smaller model" have no test - check them by hand.
+- **Agent settings**: the README table "Agent settings this server can write" is the user-facing
+  map of what `cs_update_agent` writes.
+- **Permissions**: the README section "Authentication and app registration" is the source of truth
+  for which API and permission each cloud tool needs.
+- **Architecture**: the module bullets above. A new module, a moved symbol or a changed
+  cross-cutting rule (the write policy, the confirm contract, the retry policy) belongs here.
+- **Status**: `docs/STATUS.md` is a historical build log and `docs/verify.md` the live follow-up
+  list; later dated entries supersede earlier "untested" notes rather than replacing them in place.
+- **Decisions**: a churn hotspot with no governing decision is a finding in its own right. Record
+  the reasoning with `repowise decision add` rather than in a comment, and confirm it - a
+  `proposed` decision does not count as governing. `get_why` before diverging from one.
+- **After `repowise update`**: it rewrites `.vscode/mcp.json`, swapping `${workspaceFolder}` for an
+  absolute path and re-adding a `description` key VS Code's schema rejects. `git checkout
+  .vscode/mcp.json` before staging anything.
+
 ## Validation policy
 
 `cs_validate` blocks `cs_push` on errors, so false positives cost more than misses. Unknown
