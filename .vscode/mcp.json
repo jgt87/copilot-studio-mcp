@@ -18,8 +18,7 @@
         "${workspaceFolder}",
         "--transport",
         "stdio"
-      ],
-      "description": "repowise: codebase intelligence — docs, graph, git signals, dead code, decisions"
+      ]
     }
   },
   "inputs": []
