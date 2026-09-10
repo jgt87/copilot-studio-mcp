@@ -4,6 +4,8 @@
  * local conversation-test format run through cs_chat.
  */
 import * as yaml from "js-yaml";
+
+import { invokedCitations, invokedTools, invokedTopics, missingNames, presentNames, type ActivityAttribution, type AttributableActivity } from "./attribution.js";
 import type { WorkspaceInfo } from "./workspace.js";
 
 export interface TestCase {
@@ -103,6 +105,22 @@ export interface Expectation {
   regex?: string;
   minLength?: number;
   noSignIn?: boolean;
+  /**
+   * What the agent had to *do*, not just say. Wording assertions pass whether
+   * the agent called its tool or invented the answer, which is the failure
+   * these catch. Names match loosely: see `attribution.nameMatches`.
+   *
+   * Attribution is read from the activities the transport returned, and no
+   * transport is obliged to carry it. A test naming a tool against a transport
+   * that reports none fails with "no tool attribution in the activities",
+   * which says the test cannot be judged rather than that the agent misbehaved.
+   */
+  usedTool?: string[];
+  notUsedTool?: string[];
+  usedTopic?: string[];
+  notUsedTopic?: string[];
+  /** true: the answer must cite a knowledge source. false: it must not. */
+  citedKnowledge?: boolean;
 }
 
 export interface ConversationTest {
@@ -138,8 +156,43 @@ function regexFailure(pattern: string, joined: string): string | null {
   }
 }
 
+/** True when the expectation asks about anything beyond the reply text. */
+function assertsBehaviour(e: Expectation): boolean {
+  return Boolean(e.usedTool?.length || e.notUsedTool?.length || e.usedTopic?.length || e.notUsedTopic?.length || e.citedKnowledge !== undefined);
+}
+
+/**
+ * What the agent did, as far as the activities say. An expectation about tools
+ * or topics can only be judged when the transport attributed something; when it
+ * attributed nothing at all, say so instead of reporting every name as missing,
+ * because those are different problems with different fixes.
+ */
+function collectBehaviourFailures(activities: AttributableActivity[], expect: Expectation): string[] {
+  if (!assertsBehaviour(expect)) return [];
+  const failures: string[] = [];
+  const tools = invokedTools(activities);
+  const topics = invokedTopics(activities);
+  const citations = invokedCitations(activities);
+  const blind = tools.length === 0 && topics.length === 0 && citations.length === 0;
+
+  if (blind) {
+    return [
+      activities.length === 0
+        ? "no activities were returned, so what the agent did cannot be judged"
+        : `no tool, topic or citation attribution in the ${activities.length} activities returned; see docs/test-verification.md`,
+    ];
+  }
+  for (const name of missingNames(tools, expect.usedTool ?? [])) failures.push(`tool "${name}" was not used (used: ${tools.join(", ") || "none"})`);
+  for (const name of presentNames(tools, expect.notUsedTool ?? [])) failures.push(`tool "${name}" was used and should not have been`);
+  for (const name of missingNames(topics, expect.usedTopic ?? [])) failures.push(`topic "${name}" was not reached (reached: ${topics.join(", ") || "none"})`);
+  for (const name of presentNames(topics, expect.notUsedTopic ?? [])) failures.push(`topic "${name}" was reached and should not have been`);
+  if (expect.citedKnowledge === true && citations.length === 0) failures.push("the answer cited no knowledge source");
+  if (expect.citedKnowledge === false && citations.length > 0) failures.push(`the answer cited ${citations.join(", ")} and should have cited nothing`);
+  return failures;
+}
+
 /** Everything the reply failed to satisfy, in the order the expectations are declared. */
-function collectFailures(replies: string[], expect: Expectation, signInUrl: string | null): string[] {
+function collectFailures(replies: string[], expect: Expectation, signInUrl: string | null, activities: AttributableActivity[]): string[] {
   const failures: string[] = [];
   const joined = replies.join("\n");
   const lower = joined.toLowerCase();
@@ -153,12 +206,22 @@ function collectFailures(replies: string[], expect: Expectation, signInUrl: stri
   }
   if (expect.minLength !== undefined && joined.length < expect.minLength) failures.push(`reply shorter than ${expect.minLength} characters`);
   if (expect.noSignIn !== false && signInUrl) failures.push("agent asked for sign-in");
+  failures.push(...collectBehaviourFailures(activities, expect));
   return failures;
 }
 
-export function evaluateReplies(replies: string[], expect: Expectation, signInUrl: string | null): { pass: boolean; failures: string[] } {
-  const failures = collectFailures(replies, expect, signInUrl);
-  return { pass: failures.length === 0, failures };
+/**
+ * `activities` is optional so an existing caller keeps working; without it an
+ * expectation about tools or topics reports that it could not be judged.
+ */
+export function evaluateReplies(replies: string[], expect: Expectation, signInUrl: string | null, activities: AttributableActivity[] = []): { pass: boolean; failures: string[]; observed: ActivityAttribution } {
+  const failures = collectFailures(replies, expect, signInUrl, activities);
+  return {
+    pass: failures.length === 0,
+    failures,
+    // Reported whether or not the test asked, so a run shows what the agent did.
+    observed: { topic: invokedTopics(activities).join(", ") || null, tool: invokedTools(activities).join(", ") || null, citations: invokedCitations(activities) },
+  };
 }
 
 export const CONVERSATION_TESTS_EXAMPLE = `# Local conversation tests for cs_run_conversation_tests
@@ -177,4 +240,15 @@ tests:
     continueConversation: true
     expect:
       minLength: 20
+  # Behaviour, not wording: these fail when the agent improvises an answer that
+  # reads correctly without calling the tool or grounding in knowledge.
+  - name: order lookup really calls the tool
+    utterance: Look up order 12345
+    expect:
+      usedTool: [OrderLookup]
+      notUsedTopic: [Fallback]
+  - name: policy questions are grounded, not invented
+    utterance: What is the returns policy?
+    expect:
+      citedKnowledge: true
 `;

@@ -15,6 +15,7 @@
  * user got what they wanted.
  */
 import { HttpError, requestJson, type FetchLike } from "./http.js";
+import { channelDataOf, toolOf, topicOf } from "../attribution.js";
 import { ODATA_HEADERS, api } from "./dataverseApi.js";
 
 export interface TranscriptTurn {
@@ -82,20 +83,14 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v : null;
 }
 
-/** The channel data Copilot Studio attaches: topic and tool names live here. */
-function channelData(a: Record<string, unknown>): Record<string, unknown> {
-  const cd = a.channelData ?? a.ChannelData;
-  return cd && typeof cd === "object" ? (cd as Record<string, unknown>) : {};
-}
-
 function turnOf(a: Record<string, unknown>): TranscriptTurn | null {
   const type = str(a.type) ?? str(a.Type) ?? "";
   const from = (a.from ?? a.From) as { role?: string; id?: string; name?: string } | undefined;
   const role = str(from?.role)?.toLowerCase();
   const text = str(a.text) ?? str(a.Text) ?? "";
-  const cd = channelData(a);
-  const topic = str(cd.topicName) ?? str(cd.TopicName) ?? str((cd.enclosingScope as Record<string, unknown> | undefined)?.topicName) ?? null;
-  const tool = str(cd.actionName) ?? str(cd.ActionName) ?? str(cd.toolName) ?? null;
+  const cd = channelDataOf(a);
+  const topic = topicOf(a);
+  const tool = toolOf(a);
   const timestamp = str(a.timestamp) ?? str(a.Timestamp) ?? null;
   if (type && type.toLowerCase() !== "message") {
     // Events carry the outcome markers even though they have no text.

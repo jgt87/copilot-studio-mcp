@@ -13,6 +13,7 @@ import { errorMessage, log } from "../log.js";
 import { COPILOT_INVOKE_SCOPE, getToken } from "../auth.js";
 import { dataverseScope, getBot } from "../cloud/dataverse.js";
 import { chatDirectLine, chatSdk, directLineTokenEndpoint, type ChatResult } from "../cloud/chat.js";
+import { attributionOf, invokedCitations, invokedTools, invokedTopics } from "../attribution.js";
 import { CONVERSATION_TESTS_EXAMPLE, evaluateReplies, parseConversationTests, type ConversationTest } from "../evals.js";
 import { CloudContext, backgroundArg, botArg, clientArg, cloudContext, envArg, fail, maybeBackground, server, tenantArg, text, workspaceArg } from "./shared.js";
 
@@ -88,7 +89,10 @@ server.registerTool("cs_chat", { title: "Chat with the published agent", descrip
         replies: r.replies,
         signInUrl: r.signInUrl,
         activityCount: r.activities.length,
-        activities: r.activities.map((x) => ({ type: x.type, text: x.text, name: x.name, attachments: x.attachments?.map((at) => at.contentType), value: x.value })),
+        // What the agent did, not just what it said. Empty means this transport
+        // attributed nothing, not that no tool ran: docs/test-verification.md.
+        observed: { topics: invokedTopics(r.activities), tools: invokedTools(r.activities), citations: invokedCitations(r.activities) },
+        activities: r.activities.map((x) => ({ type: x.type, text: x.text, name: x.name, attachments: x.attachments?.map((at) => at.contentType), value: x.value, ...attributionOf(x) })),
         // A silent agent and a broken route look identical without this.
         ...(r.replies.length === 0
           ? { note: `No reply within the poll budget over '${r.protocol}'. The agent may be slow, unpublished, or not reachable on this route: raise maxMs, or pass background: true and poll cs_job_status. For a DirectLine agent, passing directLineSecret bypasses the derived token endpoint and tells you which of the two is at fault.` }
@@ -104,7 +108,7 @@ server.registerTool(
   "cs_run_conversation_tests",
   {
     title: "Run local conversation tests",
-    description: "Run a YAML test file (tests: name, utterance, expect {contains, containsAny, notContains, regex, minLength}, continueConversation) against the published agent through cs_chat and report pass/fail. The CLI-native complement to portal evaluations. Pass writeExample to create a starter file.",
+    description: "Run a YAML test file (tests: name, utterance, expect, continueConversation) against the published agent through cs_chat and report pass/fail. expect asserts on wording (contains, containsAny, notContains, regex, minLength, noSignIn) and on what the agent did (usedTool, notUsedTool, usedTopic, notUsedTopic, citedKnowledge), so a test can tell a real tool call from an answer that merely sounds right. Every result reports the observed topic, tool and citations whether or not it asserted on them. The CLI-native complement to portal evaluations. Pass writeExample to create a starter file.",
     inputSchema: { file: z.string().optional(), tests: z.array(z.object({ name: z.string().optional(), utterance: z.string(), expect: z.record(z.unknown()).optional(), continueConversation: z.boolean().optional() })).optional(), writeExample: z.string().optional().describe("Path to write an example test file, then return"), stopOnFail: z.boolean().optional(), ...chatArgs },
   },
   async (a) => {
@@ -125,9 +129,9 @@ server.registerTool(
         try {
           const r = await runChat(t.utterance, { ...a, conversationId: t.continueConversation ? conversationId : undefined });
           conversationId = r.conversationId;
-          const ev = evaluateReplies(r.replies, t.expect ?? {}, r.signInUrl);
+          const ev = evaluateReplies(r.replies, t.expect ?? {}, r.signInUrl, r.activities);
           if (ev.pass) passed++;
-          results.push({ name: t.name, utterance: t.utterance, pass: ev.pass, failures: ev.failures, replies: r.replies, durationMs: Date.now() - started });
+          results.push({ name: t.name, utterance: t.utterance, pass: ev.pass, failures: ev.failures, replies: r.replies, observed: ev.observed, durationMs: Date.now() - started });
           if (!ev.pass && a.stopOnFail) break;
         } catch (err) {
           results.push({ name: t.name, utterance: t.utterance, pass: false, failures: [errorMessage(err)], durationMs: Date.now() - started });
