@@ -1,0 +1,55 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.jgt87/copilot-studio-mcp",
+  "title": "Copilot Studio MCP",
+  "description": "Build, test, ship and maintain Microsoft Copilot Studio agents from the editor",
+  "repository": {
+    "url": "https://github.com/jgt87/copilot-studio-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/jgt87/copilot-studio-mcp#readme",
+  "version": "0.1.5",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "copilot-studio-mcp",
+      "version": "0.1.5",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "CPS_WORKSPACE",
+          "description": "Agent workspace folder to start in (VS Code: ${workspaceFolder})",
+          "isRequired": false,
+          "format": "filepath"
+        },
+        {
+          "name": "CPS_TENANT_ID",
+          "description": "Entra tenant id for cs_login; defaults to organizations",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "CPS_CLIENT_ID",
+          "description": "Your own app registration for cs_login; defaults to the first-party VS Code client id",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "CPS_READ_ONLY",
+          "description": "Set to 1 to withhold every tool that can change an environment",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "CPS_TOOLS",
+          "description": "Tool preset or glob list: core, authoring, admin, solutions, full",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

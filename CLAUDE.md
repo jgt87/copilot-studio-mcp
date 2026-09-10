@@ -254,7 +254,7 @@ Version, tag, GitHub release and npm are one step, not four. A bump that stops a
 came to be tagged with nothing behind it.
 
 ```sh
-npm version 0.1.4 --no-git-tag-version   # package.json + package-lock.json together
+npm version 0.1.4 --no-git-tag-version   # package.json + package-lock.json together; then server.json by hand (twice)
 npm run build                            # VERSION is read from package.json, so rebuild
 npm test && node scripts/smoke.mjs       # prepublishOnly runs the tests again; fail here, not at the registry
 git commit -m "0.1.4"                    # bare version number: matches v0.1.0 .. v0.1.3
@@ -262,6 +262,8 @@ git tag -a v0.1.4 -m "v0.1.4"
 git push origin main --follow-tags
 gh release create v0.1.4 --title "v0.1.4 - <one word>" --notes-file <file>
 npm publish                              # needs npm login; the registry is the only place users get it
+mcp-publisher validate                   # server.json against the schema (binary: github.com/modelcontextprotocol/registry releases)
+mcp-publisher publish                    # MCP Registry entry io.github.jgt87/copilot-studio-mcp; after npm publish, needs `mcp-publisher login github` once
 ```
 
 - `src/tools/shared.ts` reads `VERSION` from `package.json`, so never write a version anywhere
@@ -275,6 +277,10 @@ npm publish                              # needs npm login; the registry is the 
 - `npm publish` failing with `E404` on the PUT means the credentials expired, not that the name
   is taken. `npm whoami` returns 401 in that state; `npm login` fixes it. A failed publish
   consumes nothing, so retry the same version rather than bumping again.
+- `server.json` names the version twice (server and package entry) and `test/registry.test.js`
+  fails when either differs from `package.json`. The MCP Registry checks `mcpName` in the npm
+  tarball, so `npm publish` must precede `mcp-publisher publish`. The registry entry is what
+  the GitHub MCP Registry and VS Code's MCP gallery pick up.
 
 ## Keeping the docs in step
 
@@ -287,6 +293,7 @@ update it in the same commit:
   have no test - check them by hand (`CPS_TOOLS=<preset> node scripts/smoke.mjs` prints the count).
 - **Agent settings**: the README table "Agent settings this server can write" is the user-facing
   map of what `cs_update_agent` writes.
+- **Registry**: `server.json` mirrors `package.json` (`test/registry.test.js` guards it).
 - **Permissions**: the README section "Authentication and app registration" is the source of truth
   for which API and permission each cloud tool needs.
 - **Architecture**: the module bullets above. A new module, a moved symbol or a changed

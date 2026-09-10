@@ -70,22 +70,24 @@ the dry run before confirming anything that writes.
 
 ### Install and register
 
-```sh
-git clone https://github.com/jgt87/copilot-studio-mcp.git
-cd copilot-studio-mcp
-npm install
-npm run build
-```
+The server is on npm as `copilot-studio-mcp`, so the usual install is no install: point your MCP
+client at `npx`, and the first start fetches the package.
 
-VS Code (`.vscode/mcp.json` in your workspace, or the user-level `mcp.json`):
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Copilot_Studio_MCP-0098FF?logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%7B%22name%22%3A%22copilot-studio%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22copilot-studio-mcp%22%5D%7D)
+
+VS Code, from a terminal or by hand in `.vscode/mcp.json` (workspace) or the user-level `mcp.json`:
+
+```sh
+code --add-mcp '{"name":"copilot-studio","command":"npx","args":["-y","copilot-studio-mcp"]}'
+```
 
 ```json
 {
   "servers": {
     "copilot-studio": {
       "type": "stdio",
-      "command": "node",
-      "args": ["<path-to-this-repo>/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "copilot-studio-mcp"],
       "env": { "CPS_WORKSPACE": "${workspaceFolder}" }
     }
   }
@@ -95,8 +97,13 @@ VS Code (`.vscode/mcp.json` in your workspace, or the user-level `mcp.json`):
 Claude Code (user scope):
 
 ```sh
-claude mcp add-json copilot-studio '{"type":"stdio","command":"node","args":["<path-to-this-repo>/dist/index.js"]}' --scope user
+claude mcp add-json copilot-studio '{"type":"stdio","command":"npx","args":["-y","copilot-studio-mcp"]}' --scope user
 ```
+
+`npm install -g copilot-studio-mcp` with `"command": "copilot-studio-mcp"` avoids the npx start-up
+cost. The server is published to the MCP Registry as `io.github.jgt87/copilot-studio-mcp`, which is
+what VS Code's MCP gallery (Extensions view, search `@mcp`) draws from through the GitHub MCP
+Registry. To run from a clone instead, see [Development](#development).
 
 Environment variables are optional and listed under [Configuration](#configuration).
 
@@ -862,6 +869,10 @@ tests read.
 ## Development
 
 ```sh
+git clone https://github.com/jgt87/copilot-studio-mcp.git
+cd copilot-studio-mcp
+npm install
+npm run build                 # dist/index.js is the server: register it as "command": "node", "args": ["<repo>/dist/index.js"]
 npm test                      # build + unit tests (fixtures, no network)
 node scripts/smoke.mjs        # drive the built server over stdio
 node scripts/oracle-pack.mjs  # pac copilot init + authoring tools + pac copilot pack
