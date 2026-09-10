@@ -1,6 +1,6 @@
 # Flows: building Copilot Studio agents through this MCP
 
-Diagrams are Mermaid; GitHub renders them inline. Tool names are the MCP tools from the README.
+Diagrams are Mermaid; GitHub renders them inline. Tool names are the MCP tools listed in [tools.md](tools.md); the README describes the workflows.
 Steps marked **confirm** only run when called with `confirm: true`; otherwise they return a dry run.
 
 ## Architecture

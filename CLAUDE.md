@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `copilot-studio-mcp` is a stdio MCP server for Microsoft Copilot Studio agent development. It wraps
 the Power Platform CLI (`pac copilot`) for sync, writes the YAML workspace the Copilot Studio VS Code
 extension uses, and calls Power Platform / Dataverse / BAP / DirectLine APIs for what the CLI does
-not cover (evaluations, publish, chat). README.md has the tool table and the feasibility limits;
+not cover (evaluations, publish, chat). README.md describes the workflows and the feasibility limits, docs/tools.md has the tool table;
 docs/flows.md has the diagrams; docs/STATUS.md tracks what is verified.
 
 ## Commands
@@ -272,8 +272,9 @@ Several files describe the code and go stale silently. When a change touches one
 update it in the same commit:
 
 - **Tool list**: `test/guide.test.js` fails when a guide in `src/guide.ts` names a tool the server
-  does not register, and `test/presets.test.js` checks each preset's advertised count. The README
-  tool table and the tool count in "Running on a smaller model" have no test - check them by hand.
+  does not register, and `test/presets.test.js` checks each preset's advertised count. The
+  tool tables in `docs/tools.md` and the preset counts in the README ("Running on a smaller model")
+  have no test - check them by hand (`CPS_TOOLS=<preset> node scripts/smoke.mjs` prints the count).
 - **Agent settings**: the README table "Agent settings this server can write" is the user-facing
   map of what `cs_update_agent` writes.
 - **Permissions**: the README section "Authentication and app registration" is the source of truth
