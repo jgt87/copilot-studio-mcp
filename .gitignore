@@ -24,3 +24,6 @@ tmp/
 !/.repowise/
 /.repowise/*
 !/.repowise/decisions.yaml
+
+# Personal triage runbooks and case folders (clones of other people's agents, fix notes).
+runbooks/
