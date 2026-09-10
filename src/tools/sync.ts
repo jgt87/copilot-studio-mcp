@@ -41,6 +41,55 @@ function createAgentPlan(a: { name: string; environment?: string; solutionName?:
   return `create agent '${a.name}' in environment ${a.environment}${solution}`;
 }
 
+export interface CreateAgentInput {
+  name: string;
+  publisherPrefix: string;
+  projectDir: string;
+  authoringMode?: "classic" | "cli-copilot";
+  template?: "default" | "minimal";
+  instructions?: string;
+  schemaName?: string;
+  environment?: string;
+  solutionName?: string;
+  createSolution?: boolean;
+  confirm?: boolean;
+}
+
+/** What cs_create_agent does with an input, before anything runs. */
+export type CreateAgentGate =
+  | { action: "refuse"; reason: string }
+  | { action: "dryRun"; plan: string }
+  | { action: "bootstrapSolution" }
+  | { action: "init" };
+
+/**
+ * Decide which of cs_create_agent's paths an input takes. Only `environment`
+ * makes the tool touch a live environment, and the tool used to test it in four
+ * separate conditions interleaved with the work, so the order of the write
+ * gates was hard to read off. They are one ladder here, in the order that
+ * matters: read-only refusal, then the confirm contract, then the two ways to
+ * create an agent. `readOnly` is a parameter so this stays pure and testable.
+ */
+export function createAgentGate(a: CreateAgentInput, readOnly: boolean): CreateAgentGate {
+  if (a.environment) {
+    if (readOnly) return { action: "refuse", reason: readOnlyRefusal(`create agent '${a.name}' in environment ${a.environment}`) };
+    if (!a.confirm) return { action: "dryRun", plan: createAgentPlan(a) };
+    if (a.solutionName) return { action: "bootstrapSolution" };
+  } else if (a.solutionName) {
+    return { action: "refuse", reason: "solutionName needs environment" };
+  }
+  return { action: "init" };
+}
+
+/** `pac copilot init`, then describe the workspace it produced and stamp a connected one. */
+async function initAgentLocally(a: CreateAgentInput) {
+  const r = await runPac(initArgs(a), { timeoutMs: 15 * 60_000 });
+  const root = fs.existsSync(a.projectDir) ? findWorkspaceRoot(a.projectDir) : null;
+  const workspace = root ? describeWorkspace(readWorkspace(root)) : null;
+  const stamped = root && r.ok && a.environment ? { syncStamp: await stampAfterSync(root, "init") } : {};
+  return text({ ...pacSummary(r), workspace, ...stamped });
+}
+
 server.registerTool(
   "cs_create_agent",
   {
@@ -63,18 +112,14 @@ server.registerTool(
   },
   async (a) => {
     try {
-      if (a.environment && readOnlyMode()) return fail(readOnlyRefusal(`create agent '${a.name}' in environment ${a.environment}`));
-      if (a.environment && !a.confirm) return dryRun(createAgentPlan(a));
-      if (a.environment && a.solutionName) {
-        const r = await initAgentInSolution({ name: a.name, publisherPrefix: a.publisherPrefix, projectDir: a.projectDir, solutionName: a.solutionName, environment: a.environment, createSolution: a.createSolution, instructions: a.instructions, schemaName: a.schemaName, template: a.template, authoringMode: a.authoringMode });
+      const gate = createAgentGate(a, readOnlyMode());
+      if (gate.action === "refuse") return fail(gate.reason);
+      if (gate.action === "dryRun") return dryRun(gate.plan);
+      if (gate.action === "bootstrapSolution") {
+        const r = await initAgentInSolution({ name: a.name, publisherPrefix: a.publisherPrefix, projectDir: a.projectDir, solutionName: a.solutionName as string, environment: a.environment as string, createSolution: a.createSolution, instructions: a.instructions, schemaName: a.schemaName, template: a.template, authoringMode: a.authoringMode });
         return text({ ...r, workspaceInfo: describeWorkspace(readWorkspace(r.workspace)), syncStamp: await stampAfterSync(r.workspace, "init") });
       }
-      if (a.solutionName && !a.environment) return fail("solutionName needs environment");
-      const r = await runPac(initArgs(a), { timeoutMs: 15 * 60_000 });
-      const root = fs.existsSync(a.projectDir) ? findWorkspaceRoot(a.projectDir) : null;
-      const workspace = root ? describeWorkspace(readWorkspace(root)) : null;
-      const stamped = root && r.ok && a.environment ? { syncStamp: await stampAfterSync(root, "init") } : {};
-      return text({ ...pacSummary(r), workspace, ...stamped });
+      return await initAgentLocally(a);
     } catch (err) {
       return fail(errorMessage(err));
     }
