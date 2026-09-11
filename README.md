@@ -25,8 +25,9 @@ open the tool asks a question instead of failing.
 | Prove the stages match | snapshot each environment, compare, gate a pipeline on drift | [Compare environments across DTAP](#compare-environments-across-dtap) |
 | Run the tenant | environments, security roles, DLP, tenant settings, backups to files, onboarding a team, the Microsoft 365 agent catalogue | [Administer the tenant](#administer-the-tenant) |
 
-The complete tool list is in [docs/tools.md](docs/tools.md) and the diagrams in
-[docs/flows.md](docs/flows.md). The reference sections at the end of this page cover the
+The complete tool list is in [docs/tools.md](https://cdn.jsdelivr.net/npm/copilot-studio-mcp/docs/tools.md) and the diagrams in
+[docs/flows.md](https://cdn.jsdelivr.net/npm/copilot-studio-mcp/docs/flows.md); both ship
+inside the npm package under `docs/`. The reference sections at the end of this page cover the
 [agent settings the server can write](#agent-settings-this-server-can-write),
 [authentication and permissions](#authentication-and-app-registration),
 [configuration](#configuration), the [hard limits](#what-is-and-is-not-possible) and
@@ -595,7 +596,7 @@ says what will be lost.
   groups, security roles, service principals and registered applications, managed-environment
   governance, administration mode and backup retention, and the environment lifecycle: create,
   copy, back up, restore, reset, delete. Each is one `cs_admin_*` tool
-  ([list](docs/tools.md#tenant-administration-power-platform-admin-centre-run-as-the-admin-profile)).
+  ([list](https://cdn.jsdelivr.net/npm/copilot-studio-mcp/docs/tools.md#tenant-administration-power-platform-admin-centre-run-as-the-admin-profile)).
 - **Onboard a team into a new environment.** `cs_admin_create_environment` (slow; pair it with
   `background: true` and `cs_job_status`), then `cs_admin_assign_users` with a CSV:
 

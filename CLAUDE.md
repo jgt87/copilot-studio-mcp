@@ -294,6 +294,10 @@ update it in the same commit:
 - **Agent settings**: the README table "Agent settings this server can write" is the user-facing
   map of what `cs_update_agent` writes.
 - **Registry**: `server.json` mirrors `package.json` (`test/registry.test.js` guards it).
+- **Docs ship in the tarball**: `docs/` is in the package `files`, and the README links to
+  `docs/tools.md` and `docs/flows.md` through `cdn.jsdelivr.net/npm/copilot-studio-mcp/...`, which
+  mirrors npm, so the package page does not depend on the GitHub repo being public. A docs change
+  reaches readers of the package page only through a release, like the README.
 - **Permissions**: the README section "Authentication and app registration" is the source of truth
   for which API and permission each cloud tool needs.
 - **Architecture**: the module bullets above. A new module, a moved symbol or a changed
