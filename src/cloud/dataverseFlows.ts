@@ -198,3 +198,111 @@ export async function updateFlow(
   await requestJson(`${api(envUrl)}/workflows(${workflowId})`, { method: "PATCH", token, fetchImpl, headers: ODATA_HEADERS, body, hints: { 400: "Dataverse refused the update; check the definition against the Power Automate schema and that the flow is unmanaged" } });
   return { workflowId, name: changes.name ?? before.name, changed };
 }
+
+/**
+ * Delete a cloud flow. Dataverse refuses while the flow is switched on, and
+ * refuses outright for a managed one, so both are reported before the attempt
+ * rather than as a raw 400. Deleting a flow an agent calls leaves that tool
+ * pointing at nothing, which is why the caller is told what refers to it.
+ */
+export async function deleteFlow(envUrl: string, token: string, workflowId: string, fetchImpl?: FetchLike): Promise<{ workflowId: string; name: string; deleted: true }> {
+  const before = await getFlow(envUrl, token, workflowId, fetchImpl);
+  if (before.isManaged) throw new Error(`Flow '${before.name}' is managed: it arrived in a managed solution and can only be removed by uninstalling that solution.`);
+  await requestJson(`${api(envUrl)}/workflows(${workflowId})`, {
+    method: "DELETE",
+    token,
+    fetchImpl,
+    headers: ODATA_HEADERS,
+    hints: { 400: "Dataverse refused the delete; turn the flow off first (cs_set_flow_state state='off') and check nothing still depends on it" },
+  });
+  return { workflowId, name: before.name, deleted: true };
+}
+
+// ---------------------------------------------------------------------------
+// Connection references inside clientdata
+// ---------------------------------------------------------------------------
+
+/**
+ * A flow names its connections in one of two ways, and which one it uses
+ * decides where the binding has to be written.
+ *
+ *  - `invoker`: the entry carries `connectionName` directly, so binding is an
+ *    edit to the flow's own `clientdata`.
+ *  - `solution`: the entry points at a `connectionreference` row by logical
+ *    name, so binding is a write to that row and the flow is not touched at
+ *    all. This is the shape a solution import produces, and the reason an
+ *    imported flow lands switched off.
+ */
+export type ConnectionRefShape = "invoker" | "solution" | "unknown";
+
+function record(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+export function connectionReferenceShape(entry: unknown): ConnectionRefShape {
+  const e = record(entry);
+  if (!e) return "unknown";
+  if (typeof record(e.connection)?.connectionReferenceLogicalName === "string") return "solution";
+  if ("connectionName" in e || typeof e.id === "string") return "invoker";
+  return "unknown";
+}
+
+/** The `connectionreference` row a solution-aware entry points at. */
+export function connectionReferenceLogicalName(entry: unknown): string | null {
+  const name = record(record(entry)?.connection)?.connectionReferenceLogicalName;
+  return typeof name === "string" ? name : null;
+}
+
+/**
+ * Which connector an entry is for. The key is usually the connector id, but a
+ * flow with two connections to the same connector suffixes them (`_1`, `_2`),
+ * so the entry's own `api.name` or resource id wins where it exists.
+ */
+export function connectorOfReference(key: string, entry: unknown): string {
+  const e = record(entry);
+  const apiName = record(e?.api)?.name;
+  if (typeof apiName === "string" && apiName) return apiName;
+  const fromId = /\/apis\/([^/?]+)/.exec(typeof e?.id === "string" ? e.id : "");
+  if (fromId) return fromId[1];
+  return key.replace(/_\d+$/, "");
+}
+
+export interface FlowConnectionReference {
+  /** The key inside `properties.connectionReferences`. */
+  key: string;
+  connectorId: string;
+  shape: ConnectionRefShape;
+  /** The connection currently bound, for an `invoker` entry. */
+  connectionName: string | null;
+  /** The `connectionreference` row, for a `solution` entry. */
+  logicalName: string | null;
+}
+
+export function flowConnectionReferences(clientData: Record<string, unknown> | null): FlowConnectionReference[] {
+  const refs = record((clientData?.properties as Record<string, unknown> | undefined)?.connectionReferences) ?? {};
+  return Object.entries(refs).map(([key, entry]) => {
+    const e = record(entry);
+    const connectionName = typeof e?.connectionName === "string" ? e.connectionName : null;
+    return { key, connectorId: connectorOfReference(key, entry), shape: connectionReferenceShape(entry), connectionName, logicalName: connectionReferenceLogicalName(entry) };
+  });
+}
+
+/**
+ * Point one `invoker` entry at a connection, leaving everything else in the
+ * document untouched. Returns the whole `connectionReferences` map so it can
+ * go straight to `updateFlow`.
+ */
+export function bindConnectionInClientData(clientData: Record<string, unknown> | null, key: string, connectionName: string, connectorId?: string): Record<string, unknown> {
+  const refs = record((clientData?.properties as Record<string, unknown> | undefined)?.connectionReferences) ?? {};
+  const entry = record(refs[key]) ?? {};
+  const connector = connectorId ?? connectorOfReference(key, entry);
+  return {
+    ...refs,
+    [key]: {
+      ...entry,
+      connectionName,
+      id: typeof entry.id === "string" ? entry.id : `/providers/Microsoft.PowerApps/apis/${connector}`,
+      source: typeof entry.source === "string" ? entry.source : "Invoker",
+    },
+  };
+}

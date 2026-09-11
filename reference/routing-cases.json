@@ -1,0 +1,76 @@
+{
+  "about": "Routing corpus for scripts/routing-eval.mjs. Each case is what a user actually says, not what the tool is called; 'expect' is the tool that should be reached for first, 'alsoFine' names calls that are a reasonable first step towards it (usually a listing tool that finds the id the expected tool needs). Anything else is a misroute. Cases tagged 'probe' exist to separate a pair the name-similarity analysis flagged as confusable; keep them when editing descriptions, because they are what proves the edit worked.",
+  "cases": [
+    { "utterance": "I want to build a new agent that answers HR questions. Where do I start?", "expect": "cs_init", "alsoFine": ["cs_guide"], "area": "entry" },
+    { "utterance": "What can you actually do with Copilot Studio?", "expect": "cs_guide", "alsoFine": ["cs_init"], "area": "entry" },
+    { "utterance": "There are too many tools, trim it down to just what I need for building one agent", "expect": "cs_set_tool_preset", "area": "entry" },
+    { "utterance": "What's in my workspace right now?", "expect": "cs_describe_workspace", "area": "entry" },
+
+    { "utterance": "Why did my flow fail last night?", "expect": "cs_explain_flow_run", "alsoFine": ["cs_list_flow_runs"], "area": "flows", "probe": "explain vs get_flow_run vs list_flow_runs" },
+    { "utterance": "Show me the last ten runs of the invoice flow", "expect": "cs_list_flow_runs", "area": "flows", "probe": "explain vs get_flow_run vs list_flow_runs" },
+    { "utterance": "That run 08585 - just tell me if it succeeded and how long it took", "expect": "cs_get_flow_run", "area": "flows", "probe": "explain vs get_flow_run vs list_flow_runs" },
+    { "utterance": "Kick off the order-processing flow right now", "expect": "cs_run_flow", "area": "flows", "probe": "run_flow vs get_flow_run" },
+    { "utterance": "This flow worked fine yesterday and today it doesn't. What changed?", "expect": "cs_compare_flow_runs", "alsoFine": ["cs_list_flow_runs"], "area": "flows" },
+    { "utterance": "The approval flow fails maybe one time in five. Is it us or the connector?", "expect": "cs_analyze_flow_health", "alsoFine": ["cs_list_flow_runs"], "area": "flows" },
+    { "utterance": "My flow won't turn on, it says the connection isn't set", "expect": "cs_bind_flow_connection", "alsoFine": ["cs_get_flow", "cs_list_connections"], "area": "flows" },
+    { "utterance": "What does the invoice flow actually do, step by step?", "expect": "cs_get_flow", "area": "flows" },
+    { "utterance": "What flows are in this environment?", "expect": "cs_list_flows", "area": "flows" },
+    { "utterance": "Get rid of that test flow I made, I don't need it", "expect": "cs_delete_flow", "alsoFine": ["cs_list_flows"], "area": "flows" },
+    { "utterance": "Turn the nightly sync flow off for now", "expect": "cs_set_flow_state", "alsoFine": ["cs_list_flows"], "area": "flows" },
+    { "utterance": "Write me a flow that reads a SharePoint list and emails a summary", "expect": "cs_build_flow_definition", "alsoFine": ["cs_list_connectors", "cs_create_flow"], "area": "flows" },
+
+    { "utterance": "Am I signed in?", "expect": "cs_login_status", "alsoFine": ["cs_auth_who"], "area": "session", "probe": "status trio", "note": "genuinely ambiguous: pac has its own sign-in separate from MSAL" },
+    { "utterance": "Is that long-running pull finished yet?", "expect": "cs_job_status", "area": "session", "probe": "status trio" },
+    { "utterance": "Is everything set up - pac, sign-in, all of it?", "expect": "cs_init", "alsoFine": ["cs_status"], "area": "session", "probe": "status trio" },
+    { "utterance": "Sign me in", "expect": "cs_login", "area": "session" },
+    { "utterance": "Which account am I connected as?", "expect": "cs_auth_who", "alsoFine": ["cs_login_status", "cs_env_who"], "area": "session" },
+
+    { "utterance": "Bring down the latest version of my agent from the portal", "expect": "cs_pull", "area": "sync", "probe": "pull vs pull_solution" },
+    { "utterance": "Export the whole HR solution so I can move it to test", "expect": "cs_pull_solution", "area": "sync", "probe": "pull vs pull_solution" },
+    { "utterance": "Send my local changes up to Copilot Studio", "expect": "cs_push", "area": "sync", "probe": "push vs publish" },
+    { "utterance": "Make my changes live so real users see them", "expect": "cs_publish", "area": "sync", "probe": "push vs publish" },
+    { "utterance": "Has anyone been editing this agent in the portal behind my back?", "expect": "cs_check_drift", "area": "sync" },
+    { "utterance": "Grab an existing agent from the tenant so I can work on it locally", "expect": "cs_clone_agent", "alsoFine": ["cs_list_agents"], "area": "sync" },
+    { "utterance": "Zip my workspace up into a package file", "expect": "cs_pack", "area": "sync", "probe": "pack vs pack_solution" },
+
+    { "utterance": "Check my agent for mistakes before I send it up", "expect": "cs_validate", "alsoFine": ["cs_review_agent"], "area": "quality" },
+    { "utterance": "Is this agent any good? Score it and tell me what to improve", "expect": "cs_review_agent", "alsoFine": ["cs_validate"], "area": "quality" },
+    { "utterance": "Try talking to the published agent and see if it answers properly", "expect": "cs_chat", "area": "quality" },
+    { "utterance": "Run my test questions against the agent and tell me which ones it got wrong", "expect": "cs_run_conversation_tests", "alsoFine": ["cs_run_evaluation"], "area": "quality" },
+    { "utterance": "What did real users actually ask this agent last week?", "expect": "cs_list_transcripts", "alsoFine": ["cs_summarize_transcripts"], "area": "quality" },
+
+    { "utterance": "Make the agent able to look things up in ServiceNow", "expect": "cs_add_tool", "alsoFine": ["cs_list_connectors"], "area": "authoring" },
+    { "utterance": "Point the agent at our public support site so it can answer from it", "expect": "cs_add_knowledge_source", "area": "authoring" },
+    { "utterance": "I want a fixed script for when someone asks to reset their password", "expect": "cs_add_topic", "area": "authoring" },
+    { "utterance": "Write the agent's instructions for me, it's for internal IT support", "expect": "cs_generate_instructions", "alsoFine": ["cs_update_agent"], "area": "authoring" },
+    { "utterance": "Change the agent's name and description", "expect": "cs_update_agent", "alsoFine": ["cs_update_settings"], "area": "authoring" },
+    { "utterance": "The password-reset topic says the wrong phone number, fix it", "expect": "cs_edit_topic", "area": "authoring" },
+    { "utterance": "Delete the greeting topic, we don't want it", "expect": "cs_remove_component", "area": "authoring" },
+    { "utterance": "What connectors can I use in this environment?", "expect": "cs_list_connectors", "area": "authoring" },
+    { "utterance": "What parameters does the SharePoint create-item operation take?", "expect": "cs_describe_connector", "area": "authoring" },
+
+    { "utterance": "Move the HR solution from dev to test", "expect": "cs_deploy_solution", "alsoFine": ["cs_pull_solution"], "area": "solutions" },
+    { "utterance": "What's inside the HR solution?", "expect": "cs_describe_solution", "alsoFine": ["cs_list_solutions"], "area": "solutions" },
+    { "utterance": "What's different between our dev and prod environments?", "expect": "cs_compare_environments", "alsoFine": ["cs_snapshot_environment"], "area": "solutions" },
+    { "utterance": "Which connections exist in the test environment?", "expect": "cs_list_connections", "area": "solutions" },
+    { "utterance": "Bump the solution version to 1.2.0", "expect": "cs_set_solution_version", "area": "solutions" },
+
+    { "utterance": "Wipe the dev environment back to empty", "expect": "cs_admin_reset_environment", "area": "admin", "probe": "admin environment cluster" },
+    { "utterance": "Make me a copy of production to test an upgrade against", "expect": "cs_admin_copy_environment", "area": "admin", "probe": "admin environment cluster" },
+    { "utterance": "Take a backup of the prod environment before we deploy", "expect": "cs_admin_backup_environment", "area": "admin", "probe": "admin environment cluster" },
+    { "utterance": "Spin up a brand new sandbox environment", "expect": "cs_admin_create_environment", "area": "admin", "probe": "admin environment cluster" },
+    { "utterance": "Get rid of the old POC environment entirely", "expect": "cs_admin_delete_environment", "area": "admin", "probe": "admin environment cluster" },
+    { "utterance": "Put that environment back to how it was on Friday", "expect": "cs_admin_restore_environment", "alsoFine": ["cs_admin_list_backups"], "area": "admin", "probe": "admin environment cluster" },
+    { "utterance": "Give Priya maker access to the dev environment", "expect": "cs_admin_assign_user", "area": "admin" },
+    { "utterance": "What DLP policies are in force in this tenant?", "expect": "cs_admin_list_dlp_policies", "area": "admin" },
+    { "utterance": "Save the whole tenant configuration to files so we have a record", "expect": "cs_backup_tenant", "area": "admin" },
+    { "utterance": "What environments do we have?", "expect": "cs_list_environments", "alsoFine": ["cs_admin_list_environments"], "area": "admin" },
+
+    { "utterance": "What agents exist in this environment?", "expect": "cs_list_agents", "area": "agents", "probe": "list_agents vs list_org_agents" },
+    { "utterance": "Which agents has anyone published across the whole company in Microsoft 365?", "expect": "cs_list_org_agents", "area": "agents", "probe": "list_agents vs list_org_agents" },
+    { "utterance": "That agent is leaking data - stop everyone in the tenant from using it", "expect": "cs_block_org_agent", "alsoFine": ["cs_quarantine_agent"], "area": "agents" },
+
+    { "utterance": "Run a pac command I can't find a tool for", "expect": "cs_pac", "area": "escape" },
+    { "utterance": "What does the AdaptiveCard node look like in the schema?", "expect": "cs_lookup_schema", "area": "escape" }
+  ]
+}

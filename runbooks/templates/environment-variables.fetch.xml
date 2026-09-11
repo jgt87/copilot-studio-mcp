@@ -1,0 +1,18 @@
+<!--
+  Every environment variable definition in the environment, with its id and default.
+  Use it to find the id of a variable the agent's flows or tools reference, then check
+  its solution membership with solution-membership.fetch.xml.
+
+    cs_env_fetch environment=<environment id> xmlFile=runbooks/templates/environment-variables.fetch.xml
+-->
+<fetch>
+  <entity name="environmentvariabledefinition">
+    <attribute name="environmentvariabledefinitionid" />
+    <attribute name="schemaname" />
+    <attribute name="displayname" />
+    <attribute name="type" />
+    <attribute name="defaultvalue" />
+    <attribute name="ismanaged" />
+    <order attribute="schemaname" />
+  </entity>
+</fetch>

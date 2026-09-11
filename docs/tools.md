@@ -1,9 +1,9 @@
 # Tool reference
 
 Every tool the server registers, grouped by area. The README describes the workflows these tools
-serve; this page is the lookup table. Tool names are exact. Counts: 137 tools in total; the
+serve; this page is the lookup table. Tool names are exact. Counts: 142 tools in total; the
 `core`, `authoring`, `admin` and `solutions` presets (README, "Running on a smaller model") offer
-34, 25, 44 and 21 of them.
+34, 25, 44 and 25 of them.
 
 Every tool that can change a live environment returns a dry run and does nothing else until it is
 called again with `confirm: true` (README, "Approval before anything changes"). Tools marked
@@ -148,8 +148,12 @@ ones a session does not need.
 | `cs_add_flow` | experimental cloud-flow scaffold (`workflows/<Name>/metadata.yaml` + `workflow.json`) |
 | `cs_list_flows`, `cs_get_flow` | cloud flows in the environment: state, owner, connection references, and the full Power Automate definition |
 | `cs_build_flow_definition` | compose a flow definition from steps (connector operations, HTTP, conditions, loops, variables, response) without touching an environment; returns the definition and the connection references it needs |
-| `cs_set_flow_state`, `cs_update_flow`, `cs_create_flow` | turn a flow on or off, rebuild or replace the definition of an unmanaged flow, or create a new flow from steps or a definition, in an environment or a solution (`confirm`) |
+| `cs_set_flow_state`, `cs_update_flow`, `cs_create_flow`, `cs_delete_flow` | turn a flow on or off, rebuild or replace the definition of an unmanaged flow, create a new flow from steps or a definition in an environment or a solution, or delete one for good (`confirm`) |
+| `cs_bind_flow_connection` | point a flow's connection reference at a real connection, the step that lets a flow be switched on; handles both a flow that names a connection directly and one whose `connectionreference` row a solution import left unbound, and can activate the flow in the same call (`confirm`) |
 | `cs_list_flow_runs`, `cs_get_flow_run`, `cs_run_flow` | run history of a flow, one run in detail, and starting a manual run (`confirm`); these use the Power Automate service, a separate sign-in (`cs_login scope='flow'`) |
+| `cs_explain_flow_run` | why one run failed: the real error of each failed action (a failed connector action carries none of its own, so it is read from the action's outputs), whether the fault is the connector, an expression or a timeout, the inputs the action was called with, and the outputs of the actions just before it |
+| `cs_compare_flow_runs` | diff a failed run against a successful one: where the two part company, which actions changed status, which exist in only one of them (the definition changed), and optionally which trigger-payload keys differ (key names only) |
+| `cs_analyze_flow_health` | reliability across recent runs: failure rate, duration median and 90th percentile, and which actions the failures concentrate on |
 | `cs_add_trigger`, `cs_add_variable` | event trigger for a flow; global variable |
 | `cs_update_agent`, `cs_update_settings` | the agent's own settings (instructions, response instructions and mode, history, capabilities, moderation, model, starters) and anything else in `settings.mcs.yml` by dot path; see "Agent settings this server can write" |
 | `cs_edit_topic`, `cs_edit_tool`, `cs_edit_knowledge` | change existing components in place: trigger phrases, nodes, descriptions, inputs, sites |

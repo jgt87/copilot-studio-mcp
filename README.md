@@ -20,7 +20,8 @@ open the tool asks a question instead of failing.
 | Know whether it works | chat with the published agent, repeatable conversation tests, evaluation runs with per-case results | [Publish and test](#publish-and-test) |
 | Learn from real users | transcripts, session outcomes, escalation rate, a regression test set built from real questions | [Learn from production conversations](#learn-from-production-conversations) |
 | Not overwrite what a colleague did in the portal | see portal changes since your last sync, block a push that would collide, merge | [Keep the workspace and the portal in sync](#keep-the-workspace-and-the-portal-in-sync) |
-| Write a Power Automate flow without hand-writing Logic Apps JSON | compose a definition from steps, create the flow, switch it on, read its run history | [Build cloud flows](#build-cloud-flows) |
+| Write a Power Automate flow without hand-writing Logic Apps JSON | compose a definition from steps, create the flow, bind its connections, switch it on, read its run history | [Build cloud flows](#build-cloud-flows) |
+| Find out why a flow keeps failing | resolve the real error behind a failed connector action, diff the run against one that worked, and see where the failures concentrate | [Build cloud flows](#build-cloud-flows) |
 | Move to test and production | pull the whole solution, map connections and variables, deploy 1:1, publish; or use a pipeline | [Ship a solution to another environment](#ship-a-solution-to-another-environment) |
 | Prove the stages match | snapshot each environment, compare, gate a pipeline on drift | [Compare environments across DTAP](#compare-environments-across-dtap) |
 | Run the tenant | environments, security roles, DLP, tenant settings, backups to files, onboarding a team, the Microsoft 365 agent catalogue | [Administer the tenant](#administer-the-tenant) |
@@ -446,16 +447,35 @@ across steps. Expressions are Logic Apps expressions, not Power Fx: `@{triggerBo
 step.
 
 Around the builder: `cs_list_flows` shows the flows in the environment with state, owner and
-connection references; `cs_get_flow` returns one with its full definition; `cs_set_flow_state`
-turns a flow on or off; `cs_list_flow_runs`, `cs_get_flow_run` and `cs_run_flow` read the run
-history and start a manual run through the Power Automate service (a separate sign-in,
-`cs_login scope='flow'`; the signed-in user must own or co-own the flow).
+connection references; `cs_get_flow` returns one with its full definition; `cs_delete_flow` removes
+one for good; `cs_list_flow_runs`, `cs_get_flow_run` and `cs_run_flow` read the run history and
+start a manual run through the Power Automate service (a separate sign-in, `cs_login scope='flow'`;
+the signed-in user must own or co-own the flow).
+
+**Bind the connections.** A connection reference names a connector; a connection is one person's
+authorised account for it, and until the two are joined the flow cannot run. `cs_bind_flow_connection`
+joins them: with one reference and one usable connection it needs nothing but the flow id, and it
+asks which when there is a choice. It writes whichever of the two shapes the flow uses - a flow
+built outside a solution names its connection directly, while one that arrived in a solution points
+at a `connectionreference` row - and `activate: true` turns the flow on in the same call.
+`cs_set_flow_state` turns one on by itself once it is bound.
+
+**Work out why a run failed.** The run list says a run failed and nothing more.
+
+| Tool | Answers |
+| --- | --- |
+| `cs_explain_flow_run` | *Why did this run fail?* A failed connector action carries no error message of its own - the message is in the action's outputs, behind a link that expires after a few days - so this fetches it, says whether the fault is the connector, an expression or a timeout, and shows the inputs the action was called with next to the outputs of the actions that ran just before it. |
+| `cs_compare_flow_runs` | *It worked yesterday.* Diffs the failed run against the most recent successful one and names the action where they part company. With `compareTriggerData: true` it reports which keys of the trigger payload differ (key names only, never the values), which is what separates a bad input from a broken flow. Actions present in one run but not the other mean the definition itself changed. |
+| `cs_analyze_flow_health` | *It fails sometimes.* Failure rate, duration median and 90th percentile, and which actions the failures land on. One action responsible for most of them is a broken step; failures spread across many point at the connection, throttling or the system being called. |
+
+A trigger that failed means the flow never ran at all, so the fault is in the trigger's connection
+or its parameters rather than the logic. Run detail ages out: inputs and outputs are kept for a
+limited time, so diagnose a failure while it is recent.
 
 Two things the builder cannot do for you. The connections themselves must exist in the target
-environment and be bound to the generated connection references, so a new flow is created switched
-off and `cs_set_flow_state` turns it on afterwards. And the definitions follow the Logic Apps
-schema and exported solutions rather than a verified round trip, so import one and open it in Power
-Automate before trusting the shape.
+environment before anything can be bound to them, which is why a new flow is created switched off.
+And the definitions follow the Logic Apps schema and exported solutions rather than a verified
+round trip, so import one and open it in Power Automate before trusting the shape.
 
 ## Ship a solution to another environment
 
@@ -697,9 +717,9 @@ Permissions for your own app registration (Entra ID > App registrations > API pe
 | --- | --- | --- | --- | --- |
 | `cs_chat` (transport `sdk`, Entra-SSO agents) | **Power Platform API** (app id `8578e004-a5c6-46e7-913e-12f58912df43`) | `CopilotStudio.Copilots.Invoke` | Delegated is what this server uses. An application permission of the same name exists for confidential clients (Microsoft 365 Agents SDK); not used here. | Admin consent is normally required. Redirect URI `http://localhost` (Mobile and desktop applications). |
 | `cs_list_test_sets`, `cs_run_evaluation`, `cs_get_evaluation_run`, `cs_list_evaluation_runs` | **Power Platform API** | Token scope `https://api.powerplatform.com/.default`. The evaluation endpoints declare only `.default`; the permission reference has no finer-grained evaluation permission. | Delegated only. Power Platform API has no application permissions; service principals get access through RBAC roles instead. | Verified with the first-party id by Microsoft's own tooling. Not yet verified with a custom registration; if calls return 403, the signed-in user needs maker access to the agent. |
-| `cs_list_environments`, automatic Dataverse URL lookup, `cs_list_connectors`, `cs_describe_connector` | **PowerApps Service** (app id `475226c6-020e-4fb2-8a90-7a972cbfc1d4`) | `User` ("Access the Power Apps Service API") | Delegated. | Calls the BAP environments API (`api.bap.microsoft.com`) and the connector registry (`api.powerapps.com`). |
-| `cs_list_agents` (via `dataverse`), `cs_publish` (via `dataverse`), authentication-mode detection in `cs_chat`, `cs_check_drift` (quick mode), the drift preflight in `cs_push`, the component stamps recorded by `cs_clone_agent` / `cs_pull` / `cs_push`, the flow tools (`cs_list_flows`, `cs_get_flow`, `cs_create_flow`, `cs_update_flow`, `cs_set_flow_state`) and the transcript tools (`cs_list_transcripts`, `cs_get_transcript`, `cs_summarize_transcripts`, `cs_test_set_from_transcripts`) | **Dynamics CRM** (Dataverse, app id `00000007-0000-0000-c000-000000000000`) | `user_impersonation` | Delegated. There is no application permission; server-to-server access to Dataverse means an **application user** with a security role in each environment. | The user still needs a Dataverse security role that can read and publish bots (System Customizer or a Copilot Studio maker role). The drift checks only read the `bot` and `botcomponent` tables, which every maker role can read; they never write to Dataverse. The transcript tools read `conversationtranscript`, which holds **what users actually said to the agent**: a more sensitive table than the rest, so the signed-in user needs a role that grants read on it, and results should be treated as customer data. When a workspace has no Dataverse URL in its sync metadata the URL is looked up through the PowerApps Service permission above. |
-| `cs_list_flow_runs`, `cs_get_flow_run`, `cs_run_flow` | **Microsoft Flow** (Power Automate service, app id `7df0a125-d3be-4c96-aa54-591f83ff541c`) | `User` (token scope `https://service.flow.microsoft.com/.default`, override with `CPS_FLOW_SCOPE`) | Delegated. | A separate resource from Dataverse and the Power Platform API, so it needs its own consent: sign in with `cs_login scope='flow'`. The signed-in user must be an owner or co-owner of the flow. Endpoints and scope are taken from the service the Power Automate portal calls and are unverified against a tenant. |
+| `cs_list_environments`, automatic Dataverse URL lookup, `cs_list_connectors`, `cs_describe_connector`, the connection lookup in `cs_bind_flow_connection` | **PowerApps Service** (app id `475226c6-020e-4fb2-8a90-7a972cbfc1d4`) | `User` ("Access the Power Apps Service API") | Delegated. | Calls the BAP environments API (`api.bap.microsoft.com`), the connector registry and the connections list (`api.powerapps.com`). Listing connections shows every one in the environment the signed-in user can see, including other people's; binding one makes the flow run as that connection's owner. |
+| `cs_list_agents` (via `dataverse`), `cs_publish` (via `dataverse`), authentication-mode detection in `cs_chat`, `cs_check_drift` (quick mode), the drift preflight in `cs_push`, the component stamps recorded by `cs_clone_agent` / `cs_pull` / `cs_push`, the flow tools (`cs_list_flows`, `cs_get_flow`, `cs_create_flow`, `cs_update_flow`, `cs_set_flow_state`, `cs_delete_flow`, and the Dataverse half of `cs_bind_flow_connection`) and the transcript tools (`cs_list_transcripts`, `cs_get_transcript`, `cs_summarize_transcripts`, `cs_test_set_from_transcripts`) | **Dynamics CRM** (Dataverse, app id `00000007-0000-0000-c000-000000000000`) | `user_impersonation` | Delegated. There is no application permission; server-to-server access to Dataverse means an **application user** with a security role in each environment. | The user still needs a Dataverse security role that can read and publish bots (System Customizer or a Copilot Studio maker role). The drift checks only read the `bot` and `botcomponent` tables, which every maker role can read; they never write to Dataverse. The transcript tools read `conversationtranscript`, which holds **what users actually said to the agent**: a more sensitive table than the rest, so the signed-in user needs a role that grants read on it, and results should be treated as customer data. When a workspace has no Dataverse URL in its sync metadata the URL is looked up through the PowerApps Service permission above. |
+| `cs_list_flow_runs`, `cs_get_flow_run`, `cs_run_flow`, `cs_explain_flow_run`, `cs_compare_flow_runs`, `cs_analyze_flow_health` | **Microsoft Flow** (Power Automate service, app id `7df0a125-d3be-4c96-aa54-591f83ff541c`) | `User` (token scope `https://service.flow.microsoft.com/.default`, override with `CPS_FLOW_SCOPE`) | Delegated. | A separate resource from Dataverse and the Power Platform API, so it needs its own consent: sign in with `cs_login scope='flow'`. The signed-in user must be an owner or co-owner of the flow. Endpoints and scope are taken from the service the Power Automate portal calls and are unverified against a tenant. The diagnostic tools also follow the SAS-signed content links the service returns for an action's inputs and outputs; those are fetched **without** the bearer token, because they carry their own signature, and they expire after a few days. |
 | `cs_list_org_agents`, `cs_get_org_agent` | **Microsoft Graph** (app id `00000003-0000-0000-c000-000000000000`) | `CopilotPackages.Read.All` (override the scope with `CPS_GRAPH_SCOPE`) | Delegated is what this server uses; an application permission of the same name exists for reads. | The Microsoft 365 agent catalogue, a different resource again: sign in with `cs_login scope='graph'`. **Requires a Microsoft Agent 365 licence** and is global-cloud only (no GCC, DoD or 21Vianet). Reads `/v1.0/copilot/admin/catalog/packages`. Unverified against a live tenant. |
 | `cs_block_org_agent`, `cs_reassign_org_agent` | **Microsoft Graph** | `CopilotPackages.ReadWrite.All` (override with `CPS_GRAPH_WRITE_SCOPE`) | Delegated only. Microsoft offers **no application permission** for these two actions. | Same licence and cloud limits as above; sign in with `cs_login scope='graph_write'`. These exist only on `/beta`, so they are pinned there whatever version a read used. Blocking is tenant-wide and takes effect for every user at once. Unverified against a live tenant. |
 | `cs_chat` for no-auth or manual-auth agents (DirectLine) | none | none | not applicable | The DirectLine token endpoint of a published agent is anonymous. |
@@ -736,7 +756,7 @@ All environment variables are optional:
 
 ### Running on a smaller model
 
-The full tool list is 137 tools, about **50k tokens of schema** before any work starts. A frontier
+The full tool list is 142 tools, about **50k tokens of schema** before any work starts. A frontier
 model copes; a smaller one spends most of its context on the menu and chooses worse from it. Set
 `CPS_TOOLS` to a preset in the server's environment, or let the user choose during the session:
 `cs_init` returns a `toolPresets` block with the question, the option table and a live count per
@@ -744,11 +764,11 @@ preset, and `cs_set_tool_preset` applies the answer.
 
 | Preset | Tools | When to use it |
 | --- | --- | --- |
-| `full` (the default) | 137 | everything; a large model, or you do not know yet what the task needs |
+| `full` (the default) | 142 | everything; a large model, or you do not know yet what the task needs |
 | `core` | 34 | build or change one agent and get it live: the usual choice |
 | `authoring` | 25 | write and check files only; no sign-in, nothing reaches an environment |
 | `admin` | 44 | tenant administration as the admin account, plus `cs_backup_tenant` |
-| `solutions` | 21 | pull, deploy and compare solutions |
+| `solutions` | 25 | pull, deploy and compare solutions, and bind the flows an import left switched off |
 
 Nothing is removed: a preset only changes which tools are *offered*, and `cs_init`, `cs_guide`,
 `cs_set_tool_preset` and `cs_job_status` survive every preset so a session can always change its
@@ -760,6 +780,32 @@ with each other and with globs: `CPS_TOOLS=core,cs_admin_*`, or
 at once; one that caches the list needs a restart. Runtime switching can only narrow what was
 registered at startup, so leave `CPS_TOOLS` unset if you want every preset available to choose
 from.
+
+### Checking that your model picks the right tool
+
+A tool list this long is a routing problem: the descriptions decide whether "why did my flow fail
+last night?" reaches `cs_explain_flow_run` or something that answers a different question. The
+package ships the check, so you can measure it against your own preset, your own model and your
+own phrasings rather than trusting the numbers here:
+
+```sh
+npx copilot-studio-mcp-routing-eval --dry-run                       # free: shows the corpus and the cost
+npx copilot-studio-mcp-routing-eval --preset core --repeat 3 --yes
+npx copilot-studio-mcp-routing-eval --cases ./my-questions.json --yes
+```
+
+It puts the tool list in front of a model exactly as your client sees it, one utterance at a time,
+and scores the first tool named. `--cases` takes your own file in the shape of the bundled
+`reference/routing-cases.json`, which is rather the point: the questions your users actually ask
+are better evidence than the ones shipped here. With `ANTHROPIC_API_KEY` set it calls the Messages
+API with the tool list as a cached prefix and a run costs cents; without one it falls back to the
+`claude` CLI and the sign-in that machine already has. Either way a run calls a model once per
+case and spends real money, so nothing happens without `--yes`.
+
+**Read it with `--repeat 3`, never a single run.** Measured on Haiku 4.5, the score moves by two
+cases between runs of an identical build, and a third of the cases answer differently each time.
+One run will happily tell you a change helped when it did not. The report separates the cases that
+are *always* misrouted, which are worth acting on, from the ones that flap, which prove nothing.
 
 The handshake instructions are written for a smaller model: one rule per line, an explicit trigger
 before each instruction, and a section naming the failures seen in the first live run (a call cut
@@ -776,8 +822,10 @@ failing for want of a sign-in, pac reporting failure while exiting 0) with the a
 | Run evaluations, read results | Power Platform API `makerevaluation` endpoints | official, GA, standard harness |
 | Chat with the published agent | DirectLine v3 (no-auth / manual-auth agents) or Copilot Studio client SDK (Entra SSO) | official |
 | Publish | `pac copilot publish` or Dataverse `PvaPublish` | official |
-| Read, create and change cloud flows | Dataverse `workflow` rows (definition in `clientdata`) | official API, shapes unverified live |
+| Read, create, change and delete cloud flows | Dataverse `workflow` rows (definition in `clientdata`) | official API, shapes unverified live |
+| Bind a flow's connections | `clientdata` connection references, or the `connectionreference` row for a flow that came in a solution | official API, shapes unverified live |
 | Flow run history, start a run | Power Automate Process Simple API | the service the portal calls, unverified live |
+| Explain a failed run, diff it against one that worked, score a flow's reliability | the same API's per-run actions route, plus the SAS-signed content links it returns | this server, unverified live |
 | Portal drift since the last sync | `bot` and `botcomponent` rows against a local sync stamp | this server |
 | Tenant configuration to files | `pac admin` read commands into a folder | this server |
 

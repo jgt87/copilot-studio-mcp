@@ -1,17 +1,19 @@
 {
   "name": "copilot-studio-mcp",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "mcpName": "io.github.jgt87/copilot-studio-mcp",
   "description": "MCP server for Microsoft Copilot Studio agent development: workspace sync via pac, YAML authoring (topics, knowledge, tools, flows), evaluations and chat-testing",
   "type": "module",
   "bin": {
-    "copilot-studio-mcp": "dist/index.js"
+    "copilot-studio-mcp": "dist/index.js",
+    "copilot-studio-mcp-routing-eval": "scripts/routing-eval.mjs"
   },
   "main": "dist/index.js",
   "files": [
     "dist",
     "reference",
     "docs",
+    "scripts/routing-eval.mjs",
     "!dist/**/*.map"
   ],
   "scripts": {
@@ -20,7 +22,8 @@
     "watch": "tsc --watch",
     "test": "npm run build && node --test test/*.test.js",
     "start": "node dist/index.js",
-    "prepublishOnly": "npm test"
+    "prepublishOnly": "npm test",
+    "routing-eval": "node scripts/routing-eval.mjs"
   },
   "keywords": [
     "mcp",

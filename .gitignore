@@ -25,5 +25,9 @@ tmp/
 /.repowise/*
 !/.repowise/decisions.yaml
 
-# Personal triage runbooks and case folders (clones of other people's agents, fix notes).
-runbooks/
+# The triage runbooks themselves are published. Their working folders are not: cases/ and
+# samples/ hold clones of other people's agents, which must never reach this public repo.
+runbooks/cases/*
+!runbooks/cases/.gitkeep
+runbooks/samples/*
+!runbooks/samples/.gitkeep

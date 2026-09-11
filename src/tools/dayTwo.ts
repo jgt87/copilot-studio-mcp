@@ -136,7 +136,7 @@ server.registerTool(
   "cs_review_agent",
   {
     title: "Review the agent for common mistakes",
-    description: "Rules-based review of the workspace before push or publish: instructions present and sized, escalation and fallback topics, trigger phrase count and overlap, tool descriptions and name collisions, unbound connections, authentication versus private knowledge, web browsing with internal sources, orchestration off with tools, duplicate names, credentials in YAML, pack-only workspace. Returns a score, findings with fixes, and optional Markdown.",
+    description: "Judge whether the agent is any good and say what to improve, as a score out of 10 with a fix for each finding: instructions present and sized, escalation and fallback topics, trigger phrase count and overlap, tool descriptions and name collisions, unbound connections, authentication versus private knowledge, web browsing with internal sources, orchestration off with tools, duplicate names, credentials in YAML, pack-only workspace. Returns a score, findings with fixes, and optional Markdown.",
     inputSchema: { workspace: workspaceArg, markdown: z.boolean().optional(), reportPath: z.string().optional().describe("Write the Markdown report here") },
   },
   async ({ workspace, markdown, reportPath }) => {

@@ -5,8 +5,10 @@ guesswork is now settled — the connector registry endpoint, the connection-lis
 clone layout, a portal-made agent validating clean, drift detection, the push conflict refusal, and
 the whole evaluation path including the CSV import format and the metric status strings.
 
-Five things are still open. Four of them are read-only and take about fifteen minutes together.
-This file is the short list; `docs/live-verification.md` is the full runbook if you want the context.
+Six things are still open. The first four are read-only and take about fifteen minutes together;
+item 6 was added on 2026-09-11 with the flow diagnostics and connection binding, and is the only
+part of the server whose HTTP shapes have never been seen live at all. This file is the short list;
+`docs/live-verification.md` is the full runbook if you want the context.
 
 ## Before you start
 
@@ -82,6 +84,52 @@ Blocked on the first run because the whole pull ran inside one MCP call. Fixed s
 - Then G2 to G6 from `docs/live-verification.md`.
 
 Use a **development** environment for this one.
+
+## 6. Flow diagnostics and connection binding (mostly read-only) — added 2026-09-11
+
+Nothing in the Power Automate service client has ever run against a tenant, and the three
+diagnostic tools add a route and a fetch that no test can settle offline. Needs a flow with at
+least one failed run and at least one successful one; a connector flow, not an HTTP-only one,
+because the whole point is the error a connector hides.
+
+**Read-only, do these first.**
+
+1. `cs_list_flows`, pick a flow, `cs_list_flow_runs` on it. Confirm the run ids, statuses and
+   durations look right against the Power Automate portal.
+2. `cs_explain_flow_run` on a failed run. The things to check, in order of how likely they are to
+   be wrong:
+   - Does `GET /runs/{id}/actions` return what `listRunActions` expects (`value[].properties` with
+     `status`, `code`, `inputsLink`, `outputsLink`, `retryHistory`)?
+   - Does `readContentLink` succeed **without** an Authorization header? If Azure Blob answers 400
+     or 403 on a link that is not expired, the no-token rule is wrong and the header handling in
+     `readContentLink` has to change.
+   - Did `errorFromOutputs` find the message? Record the raw outputs shape of any connector whose
+     message it missed and add that shape to the candidate list and to
+     `test/flow-diagnostics.test.js` together.
+   - Is `classifyFailure` right about connector vs expression? The `EXPRESSION_CODES` regex is a
+     guess at the service's code vocabulary.
+3. `cs_compare_flow_runs` with `compareTriggerData: true`. Confirm the trigger's `outputsLink` is
+   actually on `properties.trigger` of a run (this is the one shape taken purely from
+   documentation), and that no value from the payload leaks into the result — key names only.
+4. `cs_analyze_flow_health`. Sanity-check the failure rate and the action attribution against the
+   portal's own run history.
+5. Confirm how long content links live. The code says "a few days" and turns an expired link into a
+   note; find a run old enough to have lost its detail and check the message is the honest one.
+
+**Writes, in a development environment.**
+
+6. `cs_list_connections` (pac) against `listConnections` (Power Apps API) for the same connector:
+   the ids must agree, because binding uses the API's spelling.
+7. `cs_bind_flow_connection` on a flow built outside a solution (the `invoker` shape): dry run
+   first, then `confirm`. Check in the portal that the flow shows the connection, and that
+   `cs_get_flow` reports it bound. Then `cs_set_flow_state state='on'`.
+8. The same on a flow that arrived through a solution import (the `solution` shape), which writes
+   the `connectionreference` row instead. This is the path that matters for deployment, and the one
+   where writing to the wrong place fails silently: a binding in the flow's `clientdata` that
+   nothing reads would leave the flow refusing to start with no error to show for it.
+9. `cs_bind_flow_connection` with `activate: true` on a bound-but-off flow.
+10. `cs_delete_flow`: dry run, then confirm, on a throwaway flow. Check that Dataverse refuses while
+    the flow is switched on, which is what the 400 hint claims.
 
 ---
 

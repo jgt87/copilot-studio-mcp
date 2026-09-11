@@ -12,8 +12,26 @@
  */
 export { dataverseScope } from "./dataverseApi.js";
 export { getBot, listBotComponents, listBots, publishBot, whoAmI, type BotComponentRow, type BotDetails, type BotRow, type PublishResult } from "./dataverseBots.js";
-export { FLOW_STATES, createFlow, getFlow, listFlows, setFlowState, updateFlow, type FlowDetails, type FlowRow, type FlowState } from "./dataverseFlows.js";
-export { listConnectionReferences, listEnvironmentVariables, type ConnectionReferenceRow, type EnvironmentVariableRow } from "./dataverseEnvironment.js";
+export {
+  FLOW_STATES,
+  bindConnectionInClientData,
+  connectionReferenceLogicalName,
+  connectionReferenceShape,
+  connectorOfReference,
+  createFlow,
+  deleteFlow,
+  flowConnectionReferences,
+  getFlow,
+  listFlows,
+  setFlowState,
+  updateFlow,
+  type ConnectionRefShape,
+  type FlowConnectionReference,
+  type FlowDetails,
+  type FlowRow,
+  type FlowState,
+} from "./dataverseFlows.js";
+export { bindConnectionReference, listConnectionReferences, listEnvironmentVariables, type ConnectionReferenceRow, type EnvironmentVariableRow } from "./dataverseEnvironment.js";
 export {
   getTranscript,
   listTranscripts,

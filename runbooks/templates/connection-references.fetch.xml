@@ -1,0 +1,19 @@
+<!--
+  Every connection reference in the environment, with its connector and whether a
+  connection is bound. Use it to find the id of a reference the agent's
+  connectionreferences.mcs.yml names, then check its solution membership with
+  solution-membership.fetch.xml.
+
+    cs_env_fetch environment=<environment id> xmlFile=runbooks/templates/connection-references.fetch.xml
+-->
+<fetch>
+  <entity name="connectionreference">
+    <attribute name="connectionreferenceid" />
+    <attribute name="connectionreferencelogicalname" />
+    <attribute name="connectionreferencedisplayname" />
+    <attribute name="connectorid" />
+    <attribute name="connectionid" />
+    <attribute name="ismanaged" />
+    <order attribute="connectionreferencelogicalname" />
+  </entity>
+</fetch>

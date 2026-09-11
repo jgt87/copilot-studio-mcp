@@ -19,7 +19,7 @@ server.registerTool(
   "cs_guide",
   {
     title: "How to use this server",
-    description: `Walkthrough for one part of Copilot Studio agent development, written for this server's tools: ${GUIDE_TOPICS.map((t) => `'${t}' (${TOPIC_SUMMARY[t]})`).join(", ")}. Read the relevant topic before planning a sequence of calls; it names the tool for each step, the order that works, and the manual portal steps that cannot be automated. Also returns next steps for the workspace at hand.`,
+    description: `Explain how to do one part of Copilot Studio agent development with this server's tools: ${GUIDE_TOPICS.map((t) => `'${t}' (${TOPIC_SUMMARY[t]})`).join(", ")}. Read the relevant topic when you do not know which tools a job needs or what order they go in; it names the tool for each step and the manual portal steps that cannot be automated. It only explains - it changes nothing and does no work, so when the user asked for something to be built, written or run, call the tool that does it rather than this one. Also returns next steps for the workspace at hand.`,
     inputSchema: {
       topic: z.enum(GUIDE_TOPICS as [GuideTopic, ...GuideTopic[]]).optional().describe("Default getting-started"),
       workspace: workspaceArg,

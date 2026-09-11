@@ -31,7 +31,9 @@ const BESPOKE_ALWAYS_WRITES = [
   "cs_set_flow_state", // statecode on the workflow row
   "cs_update_flow", // definition on the workflow row
   "cs_create_flow", // new workflow row
+  "cs_delete_flow", // removes the workflow row
   "cs_run_flow", // the flow's actions run for real
+  "cs_bind_flow_connection", // points a flow at a connection, and can switch it on
   "cs_admin_assign_users", // a roster of security-role grants in one environment
   "cs_block_org_agent", // blocks the agent for every user in the tenant
   "cs_reassign_org_agent", // changes package ownership in the M365 catalogue

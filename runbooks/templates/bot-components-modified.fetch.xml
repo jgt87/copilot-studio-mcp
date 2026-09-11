@@ -1,0 +1,25 @@
+<!--
+  Every component of one agent (topics, knowledge sources, tools, triggers, variables) with
+  who last changed it and when, newest first. Replace BOT_ID with the agent id from intake.
+
+    cs_env_fetch environment=<environment id> xmlFile=runbooks/cases/<case>/outputs/modified.fetch.xml
+
+  Deleted components are not returned; use cs_check_drift mode=full for those. The agent row
+  itself (instructions, settings) is read with cs_list_agents via=dataverse.
+-->
+<fetch>
+  <entity name="botcomponent">
+    <attribute name="name" />
+    <attribute name="schemaname" />
+    <attribute name="componenttype" />
+    <attribute name="statecode" />
+    <attribute name="modifiedon" />
+    <attribute name="modifiedby" />
+    <attribute name="createdon" />
+    <attribute name="createdby" />
+    <filter>
+      <condition attribute="parentbotid" operator="eq" value="BOT_ID" />
+    </filter>
+    <order attribute="modifiedon" descending="true" />
+  </entity>
+</fetch>

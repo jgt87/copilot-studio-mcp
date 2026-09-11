@@ -19,7 +19,7 @@ export const SERVER_INSTRUCTIONS = `copilot-studio-mcp builds Microsoft Copilot 
 FIRST
 - Call cs_init before anything else. It reports pac, sign-in, the workspace, and the next steps.
 - cs_init returns toolPresets: show it to the user, then call cs_set_tool_preset with their choice.
-- Call cs_guide before inventing a sequence of calls. Topics: getting-started, instructions, knowledge, tools, topics, evaluations, publish-and-test, drift, transcripts, solutions, administration, troubleshooting.
+- Call cs_guide before inventing a sequence of calls: it names the tool for each step and the order that works. Its own description lists the topics.
 
 WHAT AN AGENT IS
 - A folder of YAML: agent.mcs.yml, settings.mcs.yml, topics/, knowledge/, actions/, trigger/, variables/, workflows/.
@@ -54,6 +54,7 @@ export type GuideTopic =
   | "knowledge"
   | "tools"
   | "topics"
+  | "flows"
   | "evaluations"
   | "publish-and-test"
   | "drift"
@@ -68,6 +69,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
   "knowledge",
   "tools",
   "topics",
+  "flows",
   "evaluations",
   "publish-and-test",
   "drift",
@@ -440,8 +442,9 @@ Unmapped connection references are the usual reason an import looks fine and not
 \`cs_deploy_solution\` with \`targetEnvironment\` and \`confirm: true\` after the user approves.
 
 ## After the import, check these
-- Cloud flows arrive switched OFF when their connections could not be resolved. Turn them on with
-  \`cs_set_flow_state\` once bound.
+- Cloud flows arrive switched OFF when their connections could not be resolved. \`cs_bind_flow_connection\`
+  points each one at a connection in the target and can turn the flow on in the same call; \`cs_set_flow_state\`
+  turns one on by itself. cs_guide topic 'flows'.
 - Agents may need publishing in the target.
 - Tools show as not connected until someone connects them in the target portal.
 
@@ -524,12 +527,81 @@ Too many tools for the client - the user sets \`CPS_TOOLS=core\` in the server e
 ## Where to look
 Diagnostics go to stderr; the client's MCP output pane shows them.
 Every pac-backed result carries the exact command, exit code and output tail.`;
+const FLOWS = `# Cloud flows: build, bind, run, diagnose
+
+A cloud flow is a Power Automate workflow in the same environment as the agent. An agent calls one
+through a tool (\`cs_add_tool\` type 'flow'); the flow itself lives in Dataverse, not in the agent's
+workspace, so these tools reach the environment directly rather than writing YAML.
+
+## Build one
+
+1. \`cs_list_connectors\` and \`cs_describe_connector\` give the connector id, the operation id and
+   the parameters an operation takes. Guessing an operation id produces a flow that saves and then
+   fails at runtime, so look it up.
+2. \`cs_build_flow_definition\` composes the definition from a trigger plus steps, without touching
+   the environment. Steps run in order; conditions, loops and scopes nest. Expressions are Logic
+   Apps expressions, not Power Fx.
+3. \`cs_create_flow\` creates it, optionally straight into a solution, with the same spec. It is
+   created switched OFF, because a flow can only run once its connections are bound.
+4. \`cs_update_flow\` replaces the definition of an existing unmanaged flow, keeping its connection
+   references.
+
+## Bind its connections
+
+A connection reference names a connector; a connection is one person's authorised account for it.
+Until they are joined the flow cannot be turned on.
+
+- \`cs_bind_flow_connection\` does the join. With one reference and one usable connection it needs
+  no arguments beyond the flow id; otherwise it asks which. \`activate: true\` turns the flow on in
+  the same call.
+- \`cs_list_connections\` shows what exists. \`cs_create_connection\` makes one for connectors that
+  do not require an interactive sign-in; the rest must be authorised in the portal.
+- A flow that arrived through a solution points at a \`connectionreference\` row instead of naming
+  a connection directly. \`cs_bind_flow_connection\` writes whichever of the two applies.
+- \`cs_set_flow_state\` turns a flow on or off once it is bound.
+
+## Run it
+
+\`cs_run_flow\` starts a manually triggered or agent-callable flow, with an optional payload
+(\`confirm\` required: the flow's actions happen for real). Scheduled and event-driven flows start
+themselves. \`cs_list_flow_runs\` is the history; \`cs_get_flow_run\` is one run's status and timing.
+
+## Diagnose a failure
+
+The run list says a run failed and nothing more. Three tools answer why.
+
+- \`cs_explain_flow_run\` is where to start. A failed connector action carries no error message of
+  its own - the message is in the action's outputs, behind a link that expires after a few days -
+  so this fetches it, says whether the fault is the connector, an expression or a timeout, and
+  shows the inputs the action was called with plus the outputs of the actions just before it.
+- \`cs_compare_flow_runs\` answers "it worked yesterday". It diffs the failed run against the most
+  recent successful one and names the action where they part company. With
+  \`compareTriggerData: true\` it also reports which keys of the trigger payload differ, which is
+  what separates a bad input from a broken flow. Actions present in one run but not the other mean
+  the definition itself changed.
+- \`cs_analyze_flow_health\` answers "it fails sometimes": failure rate, duration spread, and which
+  actions the failures land on. One action responsible for most of them is a broken step; failures
+  spread across many actions point at the connection, throttling or the system being called.
+
+A trigger that failed means the flow never ran at all: the fault is in the trigger's connection or
+its parameters, not in the logic. Actions marked Skipped are consequences of an earlier failure.
+
+## What to expect
+
+- The run tools use the Power Automate service, which is a separate sign-in from Dataverse:
+  \`cs_login\` with scope 'flow'. The signed-in user must own or co-own the flow.
+- Run detail ages out. Inputs and outputs are kept for a limited time, so diagnose a failure while
+  it is recent; afterwards only the status survives.
+- Managed flows cannot be edited in place. Change them in their source environment and redeploy the
+  solution.`;
+
 const GUIDES: Record<GuideTopic, string> = {
   "getting-started": GETTING_STARTED,
   instructions: INSTRUCTIONS,
   knowledge: KNOWLEDGE,
   tools: TOOLS,
   topics: TOPICS,
+  flows: FLOWS,
   evaluations: EVALUATIONS,
   "publish-and-test": PUBLISH_AND_TEST,
   drift: DRIFT,
@@ -549,6 +621,7 @@ export const TOPIC_SUMMARY: Record<GuideTopic, string> = {
   knowledge: "add public site, SharePoint, Graph connector or file knowledge",
   tools: "find a connector operation, add the tool, bind its connection",
   topics: "deterministic conversations: triggers and the node types",
+  flows: "build a cloud flow, bind its connections, run it, and work out why a run failed",
   evaluations: "test sets, runs and results, plus local conversation tests",
   "publish-and-test": "publish the agent and chat with it",
   drift: "changes made in the portal since the last sync, and how to merge them",

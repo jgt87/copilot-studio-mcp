@@ -66,7 +66,7 @@ server.registerTool(
   {
     title: "Generate agent instructions with an AI Builder prompt",
     description:
-      "Build a brief from purpose, audience, tone, capabilities, boundaries and examples, send it to an AI Builder prompt or model (pac copilot model predict; pick one with cs_list_prompts), and return the generated instructions. With apply: true the text is written into the agent's instructions (agent.mcs.yml, or settings.mcs.yml for cli-copilot). Pass currentInstructions/changeRequest (or refine: true to read the workspace) to revise existing instructions instead.",
+      "Write the agent's instructions for it - the system prompt that decides how it answers. Builds a brief from purpose, audience, tone, capabilities, boundaries and examples, send it to an AI Builder prompt or model (pac copilot model predict; pick one with cs_list_prompts), and return the generated instructions. With apply: true the text is written into the agent's instructions (agent.mcs.yml, or settings.mcs.yml for cli-copilot). Pass currentInstructions/changeRequest (or refine: true to read the workspace) to revise existing instructions instead.",
     inputSchema: {
       workspace: workspaceArg,
       purpose: z.string().optional().describe("What the agent is for; required unless refining"),

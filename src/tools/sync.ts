@@ -188,7 +188,7 @@ server.registerTool(
   "cs_push",
   {
     title: "Push local changes",
-    description: "pac copilot push: upload local workspace changes to the live agent (topics, knowledge files, flows, connection references). Validates YAML first and blocks on errors unless force. The dry run also reports components changed in Copilot Studio since the last sync (quick drift check, needs a cached cs_login); when one of those also changed locally the push is blocked unless force. Mutates the live agent: requires confirm: true.",
+    description: "Send local file changes up into the agent's draft in Copilot Studio - topics, knowledge files, flows, connection references - so the draft matches your workspace (pac copilot push). This is the tool for 'upload', 'send my changes up' and 'sync my edits'. It only moves files into the draft; cs_publish is the separate step afterwards. Validates YAML first and blocks on errors unless force. The dry run also reports components changed in Copilot Studio since the last sync (quick drift check, needs a cached cs_login); when one of those also changed locally the push is blocked unless force. Changes the agent in Copilot Studio: requires confirm: true.",
     inputSchema: { workspace: workspaceArg, force: z.boolean().optional().describe("Push even if validation reports errors or portal changes conflict with local edits"), confirm: confirmArg },
   },
   async ({ workspace, force, confirm }) => {
@@ -258,7 +258,7 @@ server.registerTool(
   "cs_publish",
   {
     title: "Publish the agent",
-    description: "Make the draft agent live for its channels. via 'pac' runs 'pac copilot publish'; via 'dataverse' calls the PvaPublish action with the MSAL token and polls until publishedon changes. Requires confirm: true.",
+    description: "Make the agent's current draft visible to real users on its channels - the tool for 'go live', 'release it' and 'make my changes live'. It publishes what is already in Copilot Studio, so send local edits up with cs_push first. via 'pac' runs 'pac copilot publish'; via 'dataverse' calls the PvaPublish action with the MSAL token and polls until publishedon changes. Requires confirm: true.",
     inputSchema: { workspace: workspaceArg, botId: botArg, environmentId: envArg, dataverseUrl: z.string().optional(), via: z.enum(["pac", "dataverse"]).optional(), tenantId: tenantArg, clientId: clientArg, timeoutSeconds: z.number().optional(), background: backgroundArg, confirm: confirmArg },
   },
   async (a) => {

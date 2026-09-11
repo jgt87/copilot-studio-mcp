@@ -115,8 +115,9 @@ test("publishBot gives up rather than hanging when the publish date never moves"
 });
 
 test("connection references and environment variables are read with their values", async () => {
-  const refs = mockFetch([[() => true, () => ({ value: [{ connectionreferencelogicalname: "orc_sp", connectionreferencedisplayname: "SharePoint", connectorid: "/providers/Microsoft.PowerApps/apis/shared_sharepointonline", connectionid: null }] })]]);
-  assert.deepEqual(await listConnectionReferences(ENV, "tok", refs), [{ logicalName: "orc_sp", displayName: "SharePoint", connectorId: "/providers/Microsoft.PowerApps/apis/shared_sharepointonline", connectionId: null }]);
+  const refs = mockFetch([[() => true, () => ({ value: [{ connectionreferenceid: "cr-1", connectionreferencelogicalname: "orc_sp", connectionreferencedisplayname: "SharePoint", connectorid: "/providers/Microsoft.PowerApps/apis/shared_sharepointonline", connectionid: null }] })]]);
+  // The row id comes back too: binding the reference to a connection is a PATCH by id.
+  assert.deepEqual(await listConnectionReferences(ENV, "tok", refs), [{ id: "cr-1", logicalName: "orc_sp", displayName: "SharePoint", connectorId: "/providers/Microsoft.PowerApps/apis/shared_sharepointonline", connectionId: null }]);
   assert.match(decodeURIComponent(refs.calls[0].url), /connectionreferences\?/);
 
   const vars = mockFetch([

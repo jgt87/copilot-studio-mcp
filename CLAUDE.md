@@ -20,6 +20,8 @@ node --test --test-name-pattern "addTopic" test/authoring.test.js   # one test b
 node scripts/smoke.mjs [workspace]              # drive dist/index.js over stdio: initialize, tools/list, read-only calls
 CPS_READ_ONLY=1 node scripts/smoke.mjs          # same, asserting the environment-changing tools are withheld
 node scripts/oracle-pack.mjs [scratchDir]       # pac copilot init + every authoring tool + pac copilot pack (needs pac)
+node scripts/routing-eval.mjs --dry-run         # free: does the tool list route natural language correctly?
+node scripts/routing-eval.mjs --probe --yes     # just the confusable pairs; --yes because a run spends money
 ```
 
 Tests run against the compiled `dist/`, never `src/`, so rebuild before testing after any change.
@@ -76,9 +78,38 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   Apps definition: triggers (agent/manual/http/recurrence/connector/raw), steps chained through
   `runAfter`, nested `condition`/`foreach`/`scope`, and one connection reference per connector
   collected by `ConnectionCollector`. `cs_build_flow_definition`, `cs_create_flow` and
-  `cs_update_flow` all take the same spec. Shapes come from the Logic Apps schema and exported
+  `cs_update_flow` all take the same spec. It emits the top-level `$connections` and
+  `$authentication` parameters every connector flow needs; without them the service answers 400 and
+  blames the trigger. Shapes come from the Logic Apps schema and exported
   solutions, never a live import, so keep the "unverified" note until one round-trips.
 
+- **Flow diagnostics** (`src/flowDiagnostics.ts`): why a run failed, read-only, over the same
+  Process Simple client. Three things it exists for: a failed *connector* action carries no `error`
+  property, so `explainRun` follows the action's `outputsLink` SAS URI and digs the message out with
+  `errorFromOutputs` (the connector shapes are tried in order and none is guaranteed); a failure is
+  usually about what an earlier action produced, so each one is paired with the outputs of the
+  successes before it; and `compareRuns` diffs a failure against the most recent success to separate
+  a data problem from a logic one. `analyzeFlowHealth` attributes sampled failures to actions.
+  `flowruns.ts` gained `listRunActions` and `readContentLink` for this. `readContentLink` sends no
+  Authorization header: the URI is already SAS-signed and Azure Blob answers 400 when both are
+  present. Content links expire after a few days, which is a note in the result, never an error.
+  The pure helpers (`errorFromOutputs`, `classifyFailure`, `divergence`, `durationStats`,
+  `healthVerdict`, `comparisonVerdict`) are what `test/flow-diagnostics.test.js` pins; the verdict
+  strings are user-facing advice, so change them and the test together.
+- **Connections** (`src/cloud/connections.ts`): the Power Apps connections API
+  (`api.powerapps.com`, BAP scope, same as the connector registry in `catalog.ts`). A connection is
+  one person's authorised instance of a connector; `isUsable` is the difference between a connection
+  that can be bound and one whose owner has to sign in again. The per-connector route is the
+  reliable one. `cs_list_connections` still goes through `pac connection list`; this exists because
+  binding needs the connector id as the service spells it.
+- **Connection binding** (`cs_bind_flow_connection`, helpers in `dataverseFlows.ts`): a flow names
+  its connections in one of two shapes and the shape decides where the binding is written.
+  `invoker` (the flow carries `connectionName` itself) is an edit to the flow's `clientdata`;
+  `solution` (the flow points at a `connectionreference` logical name) is a PATCH of that row's
+  `connectionid`, and the flow is not touched. `connectionReferenceShape` decides, and getting it
+  wrong writes a binding nothing reads. `connectionid` on the row holds the connection's short
+  name, not its resource id. This is the same write a deployment settings file performs at import
+  time, done after the fact for a flow that arrived unbound.
 - **Day-two authoring** (`src/authoring/edit.ts`): find a component by name, stem or path; edit
   topics (phrases, priority, nodes by position or id), tools (descriptions, inputs, connection),
   knowledge (site, trigger condition); remove components with connection-reference pruning and
@@ -120,6 +151,25 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   results. Add a command by adding a spec and a `buildPacArgs` assertion in
   `test/pac-commands.test.js`; flags come from `pac <group> <command> help`. Groups outside Copilot
   Studio work are deliberately left to `cs_pac`.
+- **Routing** (`scripts/routing-eval.mjs`, `reference/routing-cases.json`): every other check here is
+  structural - the tool exists, it declares `confirm`, the preset count is honest. None of them catch a
+  user saying "why did my flow fail" and the model calling `cs_get_flow_run`, which answers a different
+  question. The eval puts the tool list in front of a model exactly as a client sees it, one utterance at
+  a time, and scores the first tool it names: a hit, `acceptable` (a listed reasonable first step, usually
+  the listing tool that finds an id), or a misroute. Misroutes are grouped by `expected -> chosen`,
+  because that pair names the description that fails to say *when* to reach for the tool. Cases carrying
+  `probe` exist to separate a specific confusable pair; keep them when editing descriptions, since they
+  are what proves the edit worked. Two backends: the Messages API (the measurement - the tool list is a
+  cached prefix, so a run costs cents) and the `claude` CLI (needs no API key, but Claude Code's own
+  prompt shares the context, so it approximates). Not in `npm test`: it needs a model and a network and
+  it spends money, so nothing runs without `--yes`.
+- **Routing variance**: a single run proves nothing. Measured on Haiku 4.5 over three runs of an
+  identical build, the exact score moved 46-48 of 62 by itself and twenty of the sixty-two cases
+  answered differently between runs. So: quote the mean of `--repeat 3`, never one run; treat a
+  difference of two cases or fewer as noise; and act only on what the report calls "always
+  misrouted", because a case that flaps tells you nothing about the edit you just made. Two claims
+  in this repo were made from single runs and were wrong - an 81% score that was really 76%, and a
+  fix to `cs_publish` that had not worked at all.
 - **Guidance** (`src/guide.ts`): `SERVER_INSTRUCTIONS` goes out in the MCP handshake,
   `GUIDES` backs the `cs_guide` tool and the six MCP prompts, and `nextSteps(ws)` is appended to
   `cs_init` and `cs_describe_workspace`. `test/guide.test.js` fails when a guide names a tool
@@ -310,6 +360,36 @@ update it in the same commit:
 - **After `repowise update`**: it rewrites `.vscode/mcp.json`, swapping `${workspaceFolder}` for an
   absolute path and re-adding a `description` key VS Code's schema rejects. `git checkout
   .vscode/mcp.json` before staging anything.
+
+## Writing a tool description
+
+The description is the only thing a client's model reads when it decides which of 142 tools to
+call, so it is routing code, not documentation. `scripts/routing-eval.mjs` measures it; these
+rules came out of what that eval actually caught, and each one is worth a re-measure before it is
+changed.
+
+- **Lead with the job, not the mechanism.** "Answer 'which flows are there?'" routes; "Cloud flows
+  in the environment with their state, owner and last change" does not, because nothing in it
+  matches what a user says.
+- **Never put a funnel instruction in a description.** `cs_init` opened with "Run this first in a
+  new session" and became the answer to eleven unrelated questions, because every session is a new
+  one; `cs_guide` said "read this before planning a sequence of calls" and absorbed requests to
+  build things; `cs_validate` said "run before cs_push" and won "send my changes up". The funnel
+  belongs in `SERVER_INSTRUCTIONS`, where it is read once, not in a tool that then competes for
+  every utterance. Bound it instead: say what the tool does *not* answer and name the tool that does.
+- **A cross-reference must name the other tool without restating its trigger.** This is the one
+  that bites twice: a clause added to `cs_push` reading "making those changes visible to real users
+  afterwards is cs_publish" made `cs_push` win "make my changes live", and "when it last ran
+  (cs_list_flow_runs)" inside `cs_list_flows` made it win "show me the last ten runs". The words
+  that pull traffic to a tool pull it just as hard from inside a neighbour's description. Write
+  "cs_publish is the separate step afterwards", not "cs_publish makes it visible to real users".
+- **The echo rule bites more than once.** After the cross-reference fix, `cs_push` still won "make
+  my changes live", because its own first sentence said "up to the **live** agent" and its last said
+  "Mutates the **live** agent". A neighbour's trigger word anywhere in a description is enough; it
+  does not have to be in the clause that mentions the neighbour. Grep a description for the trigger
+  words of the tools it sits next to before calling an edit done.
+- **Keep the confirm sentence.** `test/policy.test.js` checks that every environment-write tool
+  says `confirm: true` in its description.
 
 ## Validation policy
 

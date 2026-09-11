@@ -37,7 +37,7 @@ server.registerTool("cs_describe_workspace", { title: "Describe the workspace", 
 
 server.registerTool(
   "cs_validate",
-  { title: "Validate workspace YAML", description: "Structural validation of every component file against the Copilot Studio authoring schema (kinds, unknown/missing properties, duplicate ids, placeholders, Power Fx prefixes, variable scopes) plus cross-file checks (connection references, topic redirects). Run before cs_push.", inputSchema: { workspace: workspaceArg, file: z.string().optional().describe("Validate a single file (relative to workspace)") } },
+  { title: "Validate workspace YAML", description: "Structural validation of every component file against the Copilot Studio authoring schema (kinds, unknown/missing properties, duplicate ids, placeholders, Power Fx prefixes, variable scopes) plus cross-file checks (connection references, topic redirects). Answers 'is anything broken in these files?'; it only reads them and sends nothing anywhere. cs_push runs it itself and blocks on errors.", inputSchema: { workspace: workspaceArg, file: z.string().optional().describe("Validate a single file (relative to workspace)") } },
   async ({ workspace, file }) => {
     try {
       const root = resolveRoot(workspace);

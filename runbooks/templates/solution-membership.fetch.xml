@@ -1,0 +1,26 @@
+<!--
+  Which solutions contain a given component?
+  Replace OBJECT_ID with the component's id (workflowid, connectionreferenceid,
+  environmentvariabledefinitionid, botid ...), then:
+
+    cs_env_fetch environment=<environment id> xmlFile=runbooks/templates/solution-membership.fetch.xml
+
+  Every component is also in "Active" (the unmanaged layer) and usually "Default"
+  (Common Data Services Default Solution). A component that appears ONLY in those two
+  is not in any maker solution.
+-->
+<fetch>
+  <entity name="solutioncomponent">
+    <attribute name="objectid" />
+    <attribute name="componenttype" />
+    <attribute name="rootcomponentbehavior" />
+    <link-entity name="solution" from="solutionid" to="solutionid" alias="sol">
+      <attribute name="uniquename" />
+      <attribute name="friendlyname" />
+      <attribute name="ismanaged" />
+    </link-entity>
+    <filter>
+      <condition attribute="objectid" operator="eq" value="OBJECT_ID" />
+    </filter>
+  </entity>
+</fetch>

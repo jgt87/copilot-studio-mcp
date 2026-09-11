@@ -34,7 +34,7 @@ server.registerTool(
   {
     title: "Start a session",
     description:
-      "Run this first in a new session. Reports the pac CLI and .NET, the pac auth profiles (and which is active), the MSAL sign-in, the environment variables, the write policy in force, and the agent workspace it found, then ends with the next steps for that workspace. Read-only. It does not create anything: cs_create_agent scaffolds or creates an agent, cs_guide explains a task.",
+      "Check whether this machine is ready to work: the pac CLI and .NET, which pac auth profile is active, which cloud resources have a usable token, the environment variables, the write policy in force, and the agent workspace it found, ending with the next steps for that workspace. Read-only. Call it once at the start of a session, and again when a tool fails and you need to know whether the CLI, the credentials or the workspace is the reason. It reports the state of the machine and nothing else: when the user asked for something specific - an agent, a flow, a solution, an environment, instructions - call the tool for that thing instead. cs_create_agent scaffolds or creates an agent; cs_guide explains a task.",
     inputSchema: { workspace: workspaceArg },
   },
   async ({ workspace }) => {
@@ -199,7 +199,7 @@ server.registerTool(
 
 server.registerTool(
   "cs_login_status",
-  { title: "Sign-in status", description: "Show cached MSAL accounts and whether a sign-in (browser or device code) is still pending, with its URL or code; optionally wait for it to complete.", inputSchema: { wait: z.boolean().optional().describe("Block until the pending sign-in completes (up to 10 minutes)"), tenantId: tenantArg, workspace: workspaceArg } },
+  { title: "Sign-in status", description: "Answer 'am I signed in?' for the cloud tools: the cached MSAL accounts, and whether a browser or device-code sign-in is still pending, with its URL or code; optionally wait for it to complete. For the separate pac sign-in, cs_auth_who.", inputSchema: { wait: z.boolean().optional().describe("Block until the pending sign-in completes (up to 10 minutes)"), tenantId: tenantArg, workspace: workspaceArg } },
   async ({ wait, tenantId, workspace }) => {
     try {
       const ws = tryWorkspace(workspace);
@@ -225,7 +225,7 @@ server.registerTool(
   {
     title: "Choose how many tools are offered",
     description:
-      "Narrow (or restore) the tool list for the rest of this session. The full list is 131 tools and about 50k tokens of schema, which crowds a smaller model's context and makes it choose worse. Presets: core (the loop that builds an agent and gets it live), authoring (local files only), admin (tenant administration), solutions (moving solutions between environments), full (everything). Read-only: it changes nothing in any environment and no tool is lost, only hidden. Ask the user before calling it.",
+      "Answer 'there are too many tools': narrow, or restore, the tool list for the rest of this session. The full list is 142 tools and about 50k tokens of schema, which crowds a smaller model's context and makes it choose worse. Presets: core (the loop that builds an agent and gets it live), authoring (local files only), admin (tenant administration), solutions (moving solutions between environments), full (everything). Read-only: it changes nothing in any environment and no tool is lost, only hidden. Ask the user before calling it.",
     inputSchema: {
       preset: z.enum(["core", "authoring", "admin", "solutions", "full"]).describe("Which set to offer for the rest of this session"),
       keep: z.array(z.string()).optional().describe("Extra tool names to keep on top of the preset"),

@@ -266,6 +266,42 @@ flowchart TD
 | git commit | none; the portal has no history of who changed what over time |
 | `cs_push` | Save; refused when a maker changed the same component since your last pull |
 
+## Flow 9: a cloud flow, from build to diagnosis
+
+```mermaid
+flowchart TD
+    A["cs_list_connectors / cs_describe_connector<br/>connector id, operation id, parameters"] --> B["cs_build_flow_definition<br/>trigger + steps, no environment touched"]
+    B --> C["cs_create_flow confirm<br/>created switched OFF"]
+    C --> D["cs_bind_flow_connection<br/>dry run: which reference, which connection"]
+    D --> E{"shape of the reference"}
+    E -- "names a connection itself" --> F["edit the flow's clientdata"]
+    E -- "points at a connectionreference row<br/>(arrived in a solution)" --> G["PATCH connectionid on that row"]
+    F --> H["cs_set_flow_state on<br/>(or bind with activate: true)"]
+    G --> H
+    H --> I["cs_run_flow confirm<br/>or the trigger fires on its own"]
+    I --> J["cs_list_flow_runs"]
+    J -- "a run failed" --> K["cs_explain_flow_run<br/>real error + inputs + upstream outputs"]
+    J -- "it worked before" --> L["cs_compare_flow_runs<br/>where this run left the happy path"]
+    J -- "it fails sometimes" --> M["cs_analyze_flow_health<br/>failure rate, duration spread, worst action"]
+    K --> N["cs_update_flow confirm<br/>fix the definition"]
+    L --> N
+    M --> N
+    N --> I
+```
+
+| Step (MCP tool) | The same action in Power Automate |
+| --- | --- |
+| `cs_build_flow_definition` | dragging the steps onto the designer canvas |
+| `cs_create_flow` | Save on a new flow |
+| `cs_bind_flow_connection` | the "Connections" panel, or the connection-reference prompts after a solution import |
+| `cs_set_flow_state` | Turn on / Turn off |
+| `cs_run_flow` | Run, or Test > Manually |
+| `cs_list_flow_runs` | the run history on the flow's page |
+| `cs_explain_flow_run` | opening the failed run and expanding each action to read its inputs and outputs |
+| `cs_compare_flow_runs` | opening a failed run and a successful one side by side |
+| `cs_analyze_flow_health` | the analytics tab, read across the whole run list |
+| `cs_delete_flow` | Delete on the flow's page |
+
 ## The confirm contract
 
 ```mermaid
