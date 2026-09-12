@@ -77,6 +77,12 @@ client at `npx`, and the first start fetches the package.
 
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Copilot_Studio_MCP-0098FF?logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%7B%22name%22%3A%22copilot-studio%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22copilot-studio-mcp%22%5D%7D)
 
+There is also a VS Code extension, `vscode-extension/`, which registers the server with VS Code's
+MCP host and exposes the environment variables below as settings. It carries the server and its
+dependencies inside the VSIX, so it needs no npm and no network on first start. Build it with
+`cd vscode-extension && npm install && npm run package`; install the resulting `.vsix` with
+`code --install-extension copilot-studio-mcp-<version>.vsix`.
+
 VS Code, from a terminal or by hand in `.vscode/mcp.json` (workspace) or the user-level `mcp.json`:
 
 ```sh

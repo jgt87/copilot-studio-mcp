@@ -1,0 +1,134 @@
+{
+  "name": "copilot-studio-mcp",
+  "displayName": "Copilot Studio MCP",
+  "description": "MCP server for Microsoft Copilot Studio agent development: workspace sync via pac, YAML authoring (topics, knowledge, tools, flows), evaluations and chat-testing.",
+  "version": "0.1.6",
+  "publisher": "GijsTromp",
+  "license": "MIT",
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.101.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Other"
+  ],
+  "keywords": [
+    "mcp",
+    "copilot studio",
+    "power platform",
+    "pac",
+    "agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jgt87/copilot-studio-mcp.git",
+    "directory": "vscode-extension"
+  },
+  "bugs": {
+    "url": "https://github.com/jgt87/copilot-studio-mcp/issues"
+  },
+  "homepage": "https://github.com/jgt87/copilot-studio-mcp#readme",
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "copilot-studio",
+        "label": "Copilot Studio"
+      }
+    ],
+    "commands": [
+      {
+        "command": "copilotStudioMcp.showServerInfo",
+        "title": "Show Server Info",
+        "category": "Copilot Studio MCP"
+      }
+    ],
+    "configuration": {
+      "title": "Copilot Studio MCP",
+      "properties": {
+        "copilotStudioMcp.nodePath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Node executable used to run the server. Empty means the first `node` on PATH (Node 20 or newer), falling back to the editor's own Node. The editor's Node cannot load the native token cache, so sign-ins are not remembered between sessions when it is used."
+        },
+        "copilotStudioMcp.serverPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Run a checkout of `copilot-studio-mcp` instead of the copy bundled with this extension. Either the repository root (must contain `dist/index.js`) or the path to `dist/index.js` itself."
+        },
+        "copilotStudioMcp.workspaceFolder": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Agent workspace the server starts from (`CPS_WORKSPACE`). Empty means the first folder open in VS Code. Supports `${workspaceFolder}` and `${userHome}`."
+        },
+        "copilotStudioMcp.readOnly": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Withhold every tool that can change a Copilot Studio environment (`CPS_READ_ONLY`). Local authoring, validation and read-only tools still work."
+        },
+        "copilotStudioMcp.tools": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Tool preset or allow-list (`CPS_TOOLS`), for example `core`, `authoring`, `admin`, `solutions`, `full`, or a comma-separated list of names and globs such as `cs_init,cs_add_*`. Empty registers all tools, which is a large tool list for a smaller model."
+        },
+        "copilotStudioMcp.toolsExclude": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Comma-separated names or globs to hide (`CPS_TOOLS_EXCLUDE`), applied after the preset."
+        },
+        "copilotStudioMcp.environmentId": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Default Power Platform environment id (`CPS_ENVIRONMENT_ID`), used when a tool call and the workspace do not name one."
+        },
+        "copilotStudioMcp.environmentUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Default Dataverse URL (`CPS_ENVIRONMENT_URL`), for example `https://contoso.crm4.dynamics.com`."
+        },
+        "copilotStudioMcp.tenantId": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Entra tenant id (`CPS_TENANT_ID`). Empty signs in against `organizations`."
+        },
+        "copilotStudioMcp.clientId": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Application (client) id used for sign-in (`CPS_CLIENT_ID`). Empty uses the first-party VS Code client id."
+        },
+        "copilotStudioMcp.pacProfile": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Name of the `pac` auth profile used for maker commands (`CPS_PAC_PROFILE`)."
+        },
+        "copilotStudioMcp.adminProfile": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Name of the `pac` auth profile used for admin commands (`CPS_ADMIN_PROFILE`)."
+        },
+        "copilotStudioMcp.pacPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Full path to the `pac` executable (`PAC_PATH`). Empty searches PATH and the usual install locations."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -p . --watch",
+    "bundle-server": "node build.mjs --skip-package",
+    "package": "node build.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.101.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -218,6 +218,21 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   instructions through `pac copilot model predict` (AI Builder). `cleanPredictOutput` strips pac's
   banner; the exact predict output format is unverified live.
 
+- **VS Code extension** (`vscode-extension/`): a thin wrapper that contributes one MCP server
+  definition (`contributes.mcpServerDefinitionProviders` plus
+  `vscode.lm.registerMcpServerDefinitionProvider`, VS Code 1.101+) so the editor starts this
+  server, with the `CPS_*` environment mapped onto settings. `build.mjs` assembles `server/` the
+  way npm would - `dist/` (so `dist/../reference` still resolves), `reference/`, and a
+  production-only `node_modules` installed from the repository's own lockfile - then runs `vsce`.
+  It never writes a version: it copies the one in the root `package.json`, so that stays the single
+  source of truth. Two things decided the shape: the server is bundled rather than fetched with
+  `npx`, so an install is offline and pinned; and the extension prefers `node` from PATH over the
+  editor's own Node, because the optional persistent token cache loads a native module
+  (`keytar`, `dpapi.node` - both N-API, so platform- and arch-specific but not Node-version-
+  specific) and the copies in the VSIX are built for this platform. Elsewhere the cache simply
+  fails into memory-only tokens, which `auth.getCachePlugin` already handles. `vsce` must not be
+  spawned through its `.cmd` shim - same argv-concatenation bug as pac, see the conventions below.
+
 Cross-cutting behaviour in `src/index.ts`:
 
 - **Write policy** (`src/policy.ts`): `ENVIRONMENT_WRITE_TOOLS` is the single list of tools that
@@ -316,6 +331,11 @@ mcp-publisher validate                   # server.json against the schema (binar
 mcp-publisher publish                    # MCP Registry entry io.github.jgt87/copilot-studio-mcp; after npm publish, needs `mcp-publisher login github` once
 ```
 
+- The VSIX is a separate artifact and does not follow from `npm publish`. After a version bump,
+  `cd vscode-extension && npm run package` picks the new version up from the root `package.json`;
+  publish it with `vsce publish --packagePath <file>.vsix` (needs an Azure DevOps PAT for the
+  `GijsTromp` publisher; the manifest's `publisher` must match it exactly or the upload is
+  rejected). A release that skips this leaves the Marketplace on the previous build.
 - `src/tools/shared.ts` reads `VERSION` from `package.json`, so never write a version anywhere
   else. `docs/CODE_REVIEW.md` names 0.1.1 on purpose: it is a dated record, not a live reference.
 - Write the notes from `git log <previous tag>..<tag>`. House style, set by `v0.1.1`: a lede
