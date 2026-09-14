@@ -14,7 +14,8 @@ import { errorMessage, log } from "../log.js";
 import { publicView, startJob, type Progress } from "../jobs.js";
 import { explainFailure, runPac } from "../pac.js";
 import { findWorkspaceRoot, readWorkspace } from "../workspace.js";
-import { updateAgent, updateCliCopilotInstructions } from "../authoring/agent.js";
+import { readCliCopilotInstructions, updateAgent, updateCliCopilotInstructions } from "../authoring/agent.js";
+import { singleFieldPreview } from "../instructions.js";
 
 import { buildInstructionsBrief, createSolution, generateWithAiBuilder } from "../bootstrap.js";
 import {
@@ -35,7 +36,7 @@ import {
   type PackageType,
   type PullManifest,
 } from "../solutions.js";
-import { confirmArg, dryRun, envOrProfile, fail, pacSummary, resolveRoot, server, text, tryWorkspace, workspaceArg } from "./shared.js";
+import { confirmArg, dryRun, envOrProfile, fail, pacSummary, previewConfirmArg, resolveRoot, server, text, tryWorkspace, workspaceArg } from "./shared.js";
 
 // ---- solutions (ALM: pull everything, redeploy 1:1) -----------------------
 
@@ -61,12 +62,17 @@ server.registerTool(
   },
 );
 
+/** The agent's instructions as they stand, from whichever file this harness keeps them in. */
+function currentInstructions(ws: ReturnType<typeof readWorkspace>): string {
+  return ws.harness === "github-copilot" ? readCliCopilotInstructions(ws.settings) : ws.agent?.instructions ?? "";
+}
+
 server.registerTool(
   "cs_generate_instructions",
   {
     title: "Generate agent instructions with an AI Builder prompt",
     description:
-      "Write the agent's instructions for it - the system prompt that decides how it answers. Builds a brief from purpose, audience, tone, capabilities, boundaries and examples, send it to an AI Builder prompt or model (pac copilot model predict; pick one with cs_list_prompts), and return the generated instructions. With apply: true the text is written into the agent's instructions (agent.mcs.yml, or settings.mcs.yml for cli-copilot). Pass currentInstructions/changeRequest (or refine: true to read the workspace) to revise existing instructions instead.",
+      "Write the agent's instructions for it - the system prompt that decides how it answers. Builds a brief from purpose, audience, tone, capabilities, boundaries and examples, send it to an AI Builder prompt or model (pac copilot model predict; pick one with cs_list_prompts), and return the generated instructions. With apply: true the text is written into the agent's instructions (agent.mcs.yml, or settings.mcs.yml for cli-copilot), and only with confirm: true as well - without it the generated text comes back with the change it would make and the character count, and nothing is written. Pass currentInstructions/changeRequest (or refine: true to read the workspace) to revise existing instructions instead.",
     inputSchema: {
       workspace: workspaceArg,
       purpose: z.string().optional().describe("What the agent is for; required unless refining"),
@@ -82,7 +88,8 @@ server.registerTool(
       modelName: z.string().optional().describe("Full or partial AI Builder model / prompt name"),
       inputMode: z.enum(["prompt", "text"]).optional(),
       environment: envOrProfile,
-      apply: z.boolean().optional().describe("Write the result into the agent instructions"),
+      apply: z.boolean().optional().describe("Write the result into the agent instructions (needs confirm: true as well)"),
+      confirm: previewConfirmArg,
     },
   },
   async (a) => {
@@ -98,11 +105,7 @@ server.registerTool(
         ];
       let brief: string;
       if (a.refine) {
-        let current = ws.agent?.instructions ?? "";
-        if (ws.harness === "github-copilot") {
-          const segments = (((ws.settings?.configuration as Record<string, unknown>)?.agentSettings as Record<string, unknown>)?.instructions as Record<string, unknown>)?.segments;
-          current = Array.isArray(segments) ? (segments as { value?: string }[]).map((s) => s.value ?? "").join("\n") : "";
-        }
+        const current = currentInstructions(ws);
         if (!current.trim()) return fail("No current instructions to refine; pass purpose instead");
         brief = buildInstructionsBrief({ purpose: "", currentInstructions: current, changeRequest: a.changeRequest });
       } else {
@@ -110,9 +113,16 @@ server.registerTool(
         brief = buildInstructionsBrief({ purpose: a.purpose, audience: a.audience, tone: a.tone, capabilities, boundaries: a.boundaries, examples: a.examples, language: a.language });
       }
       const gen = await generateWithAiBuilder({ modelId: a.modelId, modelName: a.modelName, brief, environment: a.environment, inputMode: a.inputMode });
+      const preview = singleFieldPreview({ file: ws.harness === "github-copilot" ? "settings.mcs.yml" : "agent.mcs.yml", field: "instructions", before: currentInstructions(ws), after: gen.text });
+      if (a.apply && preview.blocked) return fail(`${preview.blocked} The generated text is in this result; shorten it and write it with cs_update_agent.`);
       let applied: unknown = null;
-      if (a.apply) applied = ws.harness === "github-copilot" ? updateCliCopilotInstructions(root, gen.text) : updateAgent(root, { instructions: gen.text });
-      return text({ instructions: gen.text, applied, brief, model: a.modelId ?? a.modelName, next: a.apply ? "Review agent.mcs.yml, then cs_validate and cs_push." : "Review the text; call again with apply: true to write it, or edit and use cs_update_agent." });
+      if (a.apply && a.confirm) applied = ws.harness === "github-copilot" ? updateCliCopilotInstructions(root, gen.text) : updateAgent(root, { instructions: gen.text });
+      const next = applied
+        ? "Review agent.mcs.yml, then cs_validate and cs_push."
+        : a.apply
+          ? "Nothing was written. Show the user the change and the character count, then write this text with cs_update_agent instructions + confirm: true (it does not need generating again)."
+          : "Review the text; call again with apply: true and confirm: true to write it, or edit and use cs_update_agent.";
+      return text({ instructions: gen.text, change: preview, applied, brief, model: a.modelId ?? a.modelName, next });
     } catch (err) {
       return fail(errorMessage(err));
     }

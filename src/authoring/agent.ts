@@ -150,33 +150,67 @@ function applyAiSettings(doc: Record<string, unknown>, patch: AgentPatch, change
   }
 }
 
-export function updateAgent(root: string, patch: AgentPatch): { file: string; changed: string[] } {
+/**
+ * A planned edit: the document as it is, the document as it would be, and what
+ * changed. Splitting plan from write is what lets cs_update_agent show the
+ * change before making it (src/instructions.ts) without a second, divergent
+ * implementation of the patch.
+ */
+export interface AgentUpdatePlan {
+  file: string;
+  header: string;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  changed: string[];
+}
+
+export function planAgentUpdate(root: string, patch: AgentPatch): AgentUpdatePlan {
   const file = agentFile(root);
   const { header, doc } = loadWithHeader(file);
+  const before = structuredClone(doc) as Record<string, unknown>;
   const changed: string[] = [];
   applyText(doc, patch, changed);
   applyResponseBehaviour(doc, patch, changed);
   applyCapabilities(doc, patch, changed);
   applyAiSettings(doc, patch, changed);
   if (changed.length === 0) throw new Error("Nothing to change");
-  saveWithHeader(file, header, doc);
-  return { file, changed };
+  return { file, header, before, after: doc, changed };
+}
+
+export function commitAgentUpdate(plan: AgentUpdatePlan): { file: string; changed: string[] } {
+  saveWithHeader(plan.file, plan.header, plan.after);
+  return { file: plan.file, changed: plan.changed };
+}
+
+export function updateAgent(root: string, patch: AgentPatch): { file: string; changed: string[] } {
+  return commitAgentUpdate(planAgentUpdate(root, patch));
 }
 
 /**
  * GitHub Copilot harness (cli-copilot) agents keep instructions in
  * settings.mcs.yml under configuration.agentSettings.instructions.segments.
  */
-export function updateCliCopilotInstructions(root: string, instructions: string): { file: string } {
+export function readCliCopilotInstructions(settings: Record<string, unknown> | null | undefined): string {
+  const segments = (((settings?.configuration as Record<string, unknown>)?.agentSettings as Record<string, unknown>)?.instructions as Record<string, unknown>)?.segments;
+  return Array.isArray(segments) ? (segments as { value?: string }[]).map((s) => s.value ?? "").join("\n") : "";
+}
+
+export function planCliCopilotInstructions(root: string, instructions: string): AgentUpdatePlan {
   const file = settingsFile(root);
   const { header, doc } = loadWithHeader(file);
+  const before = structuredClone(doc) as Record<string, unknown>;
   const configuration = ((doc.configuration as Record<string, unknown>) ?? {}) as Record<string, unknown>;
   const agentSettings = ((configuration.agentSettings as Record<string, unknown>) ?? {}) as Record<string, unknown>;
   agentSettings.instructions = { segments: [{ kind: "StaticSegment", value: instructions }] };
   configuration.agentSettings = agentSettings;
   doc.configuration = configuration;
-  saveWithHeader(file, header, doc);
-  return { file };
+  return { file, header, before, after: doc, changed: ["instructions"] };
+}
+
+export function updateCliCopilotInstructions(root: string, instructions: string): { file: string } {
+  const plan = planCliCopilotInstructions(root, instructions);
+  saveWithHeader(plan.file, plan.header, plan.after);
+  return { file: plan.file };
 }
 
 /** Shallow-merge a patch into settings.mcs.yml (dot paths allowed: "configuration.settings.GenerativeActionsEnabled"). */

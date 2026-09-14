@@ -19,7 +19,9 @@ import { findWorkspaceRoot, readWorkspace, type WorkspaceInfo } from "../workspa
 import { validateWorkspace } from "../validate.js";
 import { toolEnabled } from "../toolFilter.js";
 import { SERVER_INSTRUCTIONS } from "../guide.js";
-import { ENVIRONMENT_WRITE_TOOLS, readOnlyMode } from "../policy.js";
+import { CAPTURED_PREVIEW_TOOLS, ENVIRONMENT_WRITE_TOOLS, readOnlyMode } from "../policy.js";
+import { withCapture } from "../authoring/capture.js";
+import { buildChangePreview } from "../changePreview.js";
 import { quickDrift, readStamp, remoteStateFrom, STAMP_REL, writeStamp, type QuickDriftReport, type SyncOperation } from "../drift.js";
 
 import { acquireSilent, BAP_SCOPE, effectiveClientId, getToken, resolveTenantId, type AuthConfig } from "../auth.js";
@@ -235,10 +237,50 @@ const toolHandles = new Map<string, { enabled: boolean; enable(): void; disable(
       return undefined;
     }
     registeredTools.push(name);
+    if (CAPTURED_PREVIEW_TOOLS.includes(name)) addPreviewGate(name, rest);
     const handle = original(name, ...rest) as { enabled: boolean; enable(): void; disable(): void } | undefined;
     if (handle && typeof handle.disable === "function") toolHandles.set(name, handle);
     return handle;
   }) as unknown as typeof server.registerTool;
+}
+
+/**
+ * Show the change, then make it.
+ *
+ * A tool listed in CAPTURED_PREVIEW_TOOLS gets a `confirm` input it did not
+ * declare and a wrapper around its handler: without `confirm: true` the call
+ * runs with its writes captured (src/authoring/capture.ts) and returns the
+ * diff instead of the files. Doing it here rather than in each handler is what
+ * keeps a new authoring tool from quietly skipping the preview - it is one
+ * entry in the policy list, not a pattern to remember - and it means the
+ * preview is built from what the tool really writes.
+ *
+ * The handler still runs on the first call, so anything it does besides
+ * writing files (reading the catalog, validating) happens twice. Authoring
+ * calls are local and cheap; a tool whose work is not repeatable does its own
+ * preview instead.
+ */
+/** The workspace root the paths are shown against, or nothing when there is none to find. */
+function workspaceRootOrNothing(args: Record<string, unknown> | undefined): string | undefined {
+  try {
+    return resolveRoot(typeof args?.workspace === "string" ? args.workspace : undefined);
+  } catch {
+    return undefined;
+  }
+}
+
+function addPreviewGate(name: string, rest: unknown[]): void {
+  const config = rest[0] as { description?: string; inputSchema?: Record<string, unknown> } | undefined;
+  const handler = rest[1] as ((...a: unknown[]) => Promise<unknown>) | undefined;
+  if (!config?.inputSchema || typeof handler !== "function" || "confirm" in config.inputSchema) return;
+  config.inputSchema = { ...config.inputSchema, confirm: previewConfirmArg };
+  config.description = `${config.description ?? ""} The first call changes nothing: it returns the files it would write, as a diff against what is there now, for the user to approve. Call it again with the same arguments plus confirm: true to write them.`.trim();
+  rest[1] = async (args: Record<string, unknown>, ...extra: unknown[]) => {
+    if (args?.confirm === true) return await handler(args, ...extra);
+    const { result, writes } = await withCapture(() => handler(args, ...extra));
+    if ((result as { isError?: boolean } | null)?.isError || writes.length === 0) return result;
+    return text(buildChangePreview(name, writes, workspaceRootOrNothing(args)));
+  };
 }
 
 export const workspaceArg = z.string().optional().describe("Path to (or inside) the agent workspace. Defaults to CPS_WORKSPACE or the current directory.");
@@ -247,7 +289,35 @@ export const clientArg = z.string().optional().describe("Entra app (client) id f
 export const envArg = z.string().optional().describe("Power Platform environment id (GUID). Defaults to workspace sync metadata or CPS_ENVIRONMENT_ID.");
 export const botArg = z.string().optional().describe("Agent (bot) id. Defaults to workspace sync metadata or CPS_AGENT_ID.");
 export const confirmArg = z.boolean().optional().describe("Required to actually perform a change in a live environment. Without it the tool returns a dry run.");
+export const previewConfirmArg = z
+  .boolean()
+  .optional()
+  .describe("Required to write the change to the file. Without it the tool returns a preview - the changed lines against the current ones, and the character count - and writes nothing.");
 export const envOrProfile = z.string().optional().describe("Environment id or URL. Defaults to the active pac auth profile.");
+
+/**
+ * Dataverse URL and token for an environment id or URL, without a workspace
+ * and without prompting. `silentDataverse` answers the same question for a
+ * workspace; this is the version for a tool that has only been told which
+ * environment to work in (cs_create_agent, before anything exists).
+ */
+export async function silentDataverseFor(environment: string, o: { tenantId?: string; clientId?: string } = {}): Promise<{ url: string; token: string } | null> {
+  try {
+    const authCfg: AuthConfig = { tenantId: resolveTenantId(o.tenantId), clientId: effectiveClientId(o.clientId) };
+    let url = /^https?:\/\//i.test(environment) ? environment : null;
+    if (!url) {
+      const bap = await acquireSilent(authCfg, [BAP_SCOPE]);
+      if (!bap) return null;
+      url = (await getEnvironment(bap.accessToken, environment)).dataverseUrl;
+    }
+    if (!url) return null;
+    const tok = await acquireSilent(authCfg, [dataverseScope(url)]);
+    return tok ? { url, token: tok.accessToken } : null;
+  } catch (err) {
+    log(`silent Dataverse access skipped: ${errorMessage(err)}`);
+    return null;
+  }
+}
 
 /**
  * Optional Dataverse reads (bots, flows, connection references, environment

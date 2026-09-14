@@ -9,18 +9,21 @@ import path from "node:path";
 import { z } from "zod";
 
 
-import { errorMessage } from "../log.js";
+import { errorMessage, log } from "../log.js";
+import { INSTRUCTIONS_LIMIT, limitRefusal } from "../instructions.js";
 import { explainFailure, parseCopilotList, runPac, PUBLISH_FAILED } from "../pac.js";
 import { describeWorkspace, findWorkspaceRoot, readWorkspace } from "../workspace.js";
 import { adminProfileDefault, makerProfileDefault, runPacAs } from "../pacProfile.js";
-import { needsInput } from "../needs.js";
+import { needsInput, type NeedSpec } from "../needs.js";
+import { createAgentNeeds, solutionGuidance, type CreateAgentFacts } from "../createAgentGuidance.js";
+import { listSolutions } from "../solutions.js";
 import { readOnlyMode, readOnlyRefusal } from "../policy.js";
 import { briefQuick, fullDrift, gitState, readStamp } from "../drift.js";
 
 import { getToken } from "../auth.js";
-import { dataverseScope, publishBot } from "../cloud/dataverse.js";
+import { dataverseScope, listPublishers, publishBot, solutionPublisherPrefix } from "../cloud/dataverse.js";
 import { createSolution, initAgentInSolution } from "../bootstrap.js";
-import { backgroundArg, botArg, clientArg, cloudContext, confirmArg, dryRun, envArg, fail, maybeBackground, pacSummary, quickDriftFor, resolveRoot, server, stampAfterSync, tenantArg, text, validateWorkspaceFiles, workspaceArg } from "./shared.js";
+import { backgroundArg, botArg, clientArg, cloudContext, confirmArg, dryRun, envArg, fail, maybeBackground, pacSummary, quickDriftFor, resolveRoot, server, silentDataverseFor, stampAfterSync, tenantArg, text, validateWorkspaceFiles, workspaceArg } from "./shared.js";
 
 // ---- sync (pac) -----------------------------------------------------------
 
@@ -36,15 +39,22 @@ function initArgs(a: { name: string; publisherPrefix: string; projectDir: string
 }
 
 /** The sentence cs_create_agent shows before it touches an environment. */
-function createAgentPlan(a: { name: string; environment?: string; solutionName?: string; createSolution?: boolean }): string {
-  const solution = a.solutionName ? ` inside solution ${a.solutionName}${a.createSolution ? " (created if missing)" : ""}` : " (in a solution named after the agent)";
-  return `create agent '${a.name}' in environment ${a.environment}${solution}`;
+function createAgentPlan(a: DecidedCreateAgent, facts: CreateAgentFacts): string {
+  const solution = a.solutionName ? ` inside solution ${a.solutionName}${a.createSolution ? " (created if missing)" : ""}` : "";
+  const instructions = a.instructions ? `, with ${a.instructions.length} characters of instructions (limit ${INSTRUCTIONS_LIMIT})` : "";
+  return [
+    `create agent '${a.name}' in environment ${a.environment}${solution}${instructions}`,
+    `Files: ${a.projectDir} (new folder on this machine; edit there, then cs_push).`,
+    `Publisher prefix: ${a.publisherPrefix} - every component of this agent will be named <${a.publisherPrefix}>_..., and that cannot be changed later.`,
+    solutionGuidance(a, facts),
+  ].join(" ");
 }
 
 export interface CreateAgentInput {
   name: string;
-  publisherPrefix: string;
-  projectDir: string;
+  /** Both are asked for when missing (createAgentNeeds), so a decided input always has them. */
+  publisherPrefix?: string;
+  projectDir?: string;
   authoringMode?: "classic" | "cli-copilot";
   template?: "default" | "minimal";
   instructions?: string;
@@ -52,12 +62,17 @@ export interface CreateAgentInput {
   environment?: string;
   solutionName?: string;
   createSolution?: boolean;
+  background?: boolean;
   confirm?: boolean;
 }
+
+/** An input the gate has let through: the user has answered both questions. */
+export type DecidedCreateAgent = CreateAgentInput & { publisherPrefix: string; projectDir: string };
 
 /** What cs_create_agent does with an input, before anything runs. */
 export type CreateAgentGate =
   | { action: "refuse"; reason: string }
+  | { action: "ask"; needs: NeedSpec[] }
   | { action: "dryRun"; plan: string }
   | { action: "bootstrapSolution" }
   | { action: "init" };
@@ -70,24 +85,59 @@ export type CreateAgentGate =
  * matters: read-only refusal, then the confirm contract, then the two ways to
  * create an agent. `readOnly` is a parameter so this stays pure and testable.
  */
-export function createAgentGate(a: CreateAgentInput, readOnly: boolean): CreateAgentGate {
+export function createAgentGate(a: CreateAgentInput, readOnly: boolean, facts: CreateAgentFacts = { cwd: process.cwd() }): CreateAgentGate {
+  if (a.instructions && a.instructions.length > INSTRUCTIONS_LIMIT) return { action: "refuse", reason: limitRefusal("instructions", a.instructions.length) };
+  if (a.environment && readOnly) return { action: "refuse", reason: readOnlyRefusal(`create agent '${a.name}' in environment ${a.environment}`) };
+  if (!a.environment && a.solutionName) return { action: "refuse", reason: "solutionName needs environment" };
+  // The two answers only the user has. Asked before the dry run, because a dry
+  // run that invents a folder and a prefix is not a plan anyone can approve.
+  const needs = createAgentNeeds(a, facts);
+  if (needs.length) return { action: "ask", needs };
   if (a.environment) {
-    if (readOnly) return { action: "refuse", reason: readOnlyRefusal(`create agent '${a.name}' in environment ${a.environment}`) };
-    if (!a.confirm) return { action: "dryRun", plan: createAgentPlan(a) };
+    if (!a.confirm) return { action: "dryRun", plan: createAgentPlan(a as DecidedCreateAgent, facts) };
     if (a.solutionName) return { action: "bootstrapSolution" };
-  } else if (a.solutionName) {
-    return { action: "refuse", reason: "solutionName needs environment" };
   }
   return { action: "init" };
 }
 
+/**
+ * What the environment can answer for the user: which solutions are there to
+ * put the agent in, and which publisher prefixes exist. Best effort and silent
+ * - no sign-in prompt, no pac call without an environment - because not
+ * knowing only costs the choices, not the questions.
+ */
+async function createAgentFacts(a: CreateAgentInput): Promise<CreateAgentFacts> {
+  const facts: CreateAgentFacts = { cwd: process.cwd() };
+  if (!a.environment) return facts;
+  if (a.publisherPrefix && a.projectDir) return facts;
+  try {
+    const listed = await listSolutions(a.environment);
+    facts.solutions = listed.solutions.filter((s) => !s.isManaged).map((s) => ({ uniqueName: s.uniqueName, friendlyName: s.friendlyName }));
+  } catch (err) {
+    log(`solution list for cs_create_agent guidance skipped: ${errorMessage(err)}`);
+  }
+  const dv = await silentDataverseFor(a.environment);
+  if (!dv) return facts;
+  try {
+    if (a.solutionName) {
+      const prefix = await solutionPublisherPrefix(dv.url, dv.token, a.solutionName);
+      if (prefix && facts.solutions) facts.solutions = facts.solutions.map((s) => (s.uniqueName.toLowerCase() === (a.solutionName as string).toLowerCase() ? { ...s, publisherPrefix: prefix } : s));
+    }
+    const publishers = await listPublishers(dv.url, dv.token);
+    facts.publishers = publishers.map((p) => ({ prefix: p.prefix, name: p.friendlyName, isDefault: p.isDefault }));
+  } catch (err) {
+    log(`publisher read for cs_create_agent guidance skipped: ${errorMessage(err)}`);
+  }
+  return facts;
+}
+
 /** `pac copilot init`, then describe the workspace it produced and stamp a connected one. */
-async function initAgentLocally(a: CreateAgentInput) {
+async function initAgentLocally(a: DecidedCreateAgent) {
   const r = await runPac(initArgs(a), { timeoutMs: 15 * 60_000 });
   const root = fs.existsSync(a.projectDir) ? findWorkspaceRoot(a.projectDir) : null;
   const workspace = root ? describeWorkspace(readWorkspace(root)) : null;
   const stamped = root && r.ok && a.environment ? { syncStamp: await stampAfterSync(root, "init") } : {};
-  return text({ ...pacSummary(r), workspace, ...stamped });
+  return { ...pacSummary(r), workspace, ...stamped };
 }
 
 server.registerTool(
@@ -98,8 +148,8 @@ server.registerTool(
       "pac copilot init: create a new agent workspace on disk. Without 'environment' it is a local scaffold (no sign-in). With 'environment' it also creates the live agent and connects the workspace (needs pac auth profile and confirm: true). With 'solutionName' the agent is created inside that solution (existing unmanaged solution, or a new one with createSolution: true) via init, pack, import and clone; without it, pac puts the agent in a solution named after the agent. authoringMode 'classic' is the standard harness (topics, evaluations); 'cli-copilot' is the GitHub Copilot harness.",
     inputSchema: {
       name: z.string().describe("Agent display name"),
-      publisherPrefix: z.string().describe("Solution publisher prefix, e.g. contoso; must match the publisher of an existing target solution"),
-      projectDir: z.string().describe("Target directory (must be empty or not exist)"),
+      publisherPrefix: z.string().optional().describe("Publisher prefix, 2-8 lowercase letters or digits: it becomes part of every component's schema name and must match the publisher of the solution the agent lands in. Omit it to be shown the publishers in the environment and what the choice decides."),
+      projectDir: z.string().optional().describe("Folder for the agent's files, new or empty. Omit it to be offered one named after the agent."),
       authoringMode: z.enum(["classic", "cli-copilot"]).optional(),
       template: z.enum(["default", "minimal"]).optional().describe("classic only"),
       instructions: z.string().optional(),
@@ -107,19 +157,26 @@ server.registerTool(
       environment: z.string().optional().describe("Environment id or URL to bootstrap into (creates a live agent)"),
       solutionName: z.string().optional().describe("Unique name of the solution to create the agent in (requires environment)"),
       createSolution: z.boolean().optional().describe("Create solutionName if it does not exist"),
+      background: backgroundArg,
       confirm: confirmArg,
     },
   },
   async (a) => {
     try {
-      const gate = createAgentGate(a, readOnlyMode());
+      const facts = await createAgentFacts(a);
+      const gate = createAgentGate(a, readOnlyMode(), facts);
       if (gate.action === "refuse") return fail(gate.reason);
+      if (gate.action === "ask") return text(needsInput("cs_create_agent", gate.needs));
       if (gate.action === "dryRun") return dryRun(gate.plan);
+      // Past the gate both questions are answered; the casts say what it proved.
+      const decided: DecidedCreateAgent = { ...a, publisherPrefix: a.publisherPrefix as string, projectDir: a.projectDir as string };
       if (gate.action === "bootstrapSolution") {
-        const r = await initAgentInSolution({ name: a.name, publisherPrefix: a.publisherPrefix, projectDir: a.projectDir, solutionName: a.solutionName as string, environment: a.environment as string, createSolution: a.createSolution, instructions: a.instructions, schemaName: a.schemaName, template: a.template, authoringMode: a.authoringMode });
-        return text({ ...r, workspaceInfo: describeWorkspace(readWorkspace(r.workspace)), syncStamp: await stampAfterSync(r.workspace, "init") });
+        return await maybeBackground({ tool: "cs_create_agent", label: `create agent '${a.name}' in solution ${a.solutionName} (${a.environment})`, background: a.background }, async () => {
+          const r = await initAgentInSolution({ name: decided.name, publisherPrefix: decided.publisherPrefix, projectDir: decided.projectDir, solutionName: a.solutionName as string, environment: a.environment as string, createSolution: a.createSolution, instructions: a.instructions, schemaName: a.schemaName, template: a.template, authoringMode: a.authoringMode });
+          return { ...r, workspaceInfo: describeWorkspace(readWorkspace(r.workspace)), syncStamp: await stampAfterSync(r.workspace, "init") };
+        });
       }
-      return await initAgentLocally(a);
+      return await maybeBackground({ tool: "cs_create_agent", label: `pac copilot init '${a.name}'${a.environment ? ` in environment ${a.environment}` : " (local scaffold)"}`, background: a.background }, () => initAgentLocally(decided));
     } catch (err) {
       return fail(errorMessage(err));
     }

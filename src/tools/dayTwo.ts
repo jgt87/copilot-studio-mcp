@@ -10,6 +10,8 @@ import { z } from "zod";
 
 
 import { errorMessage } from "../log.js";
+import { withCapture } from "../authoring/capture.js";
+import { buildChangePreview } from "../changePreview.js";
 import { runPac } from "../pac.js";
 import { readWorkspace } from "../workspace.js";
 import { editKnowledge, editTool, editTopic, removeComponent } from "../authoring/edit.js";
@@ -106,7 +108,12 @@ server.registerTool(
   async (a) => {
     try {
       const root = resolveRoot(a.workspace);
-      if (!a.confirm) return dryRun(`delete the ${a.kind} '${a.name}' from ${root} (files only; the live agent changes on the next cs_push)`);
+      if (!a.confirm) {
+        // Same contract as the rest of the authoring tools: run it captured, so
+        // the user sees the files that would go and the redirects left dangling.
+        const { result, writes } = await withCapture(() => removeComponent(root, a));
+        return text({ ...buildChangePreview("cs_remove_component", writes, root), wouldDo: `delete the ${a.kind} '${a.name}' from ${root} (files only; the live agent changes on the next cs_push)`, removal: result });
+      }
       return text(removeComponent(root, a));
     } catch (err) {
       return fail(errorMessage(err));

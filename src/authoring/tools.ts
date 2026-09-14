@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import * as yaml from "js-yaml";
 import { newId, pascal, readYamlFile, writeComponentFile, yamlDump } from "./util.js";
+import { captureWrite } from "./capture.js";
 
 /**
  * How each schema TaskAction kind is exposed. `typed` kinds have a dedicated
@@ -157,7 +158,8 @@ export function upsertConnectionReference(root: string, entry: ConnectionReferen
   if (idx >= 0) list[idx] = merged;
   else list.push(merged);
   doc.connectionReferences = list;
-  fs.writeFileSync(file, yamlDump(doc), "utf8");
+  const docText = yamlDump(doc);
+  if (!captureWrite(file, docText)) fs.writeFileSync(file, docText, "utf8");
   return file;
 }
 

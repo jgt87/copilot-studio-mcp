@@ -34,7 +34,7 @@ the MCP elicitation feature.
 | `cs_init` | start a session: pac / .NET, the pac auth profiles and which is active, MSAL sign-in, environment variables, the write policy in force, the workspace it found, and the next steps for it |
 | `cs_login`, `cs_login_status`, `cs_logout` | MSAL sign-in (interactive or device code) for the cloud tools |
 | `cs_list_environments`, `cs_list_agents` | environments (BAP) and agents (pac or Dataverse) |
-| `cs_create_agent` | `pac copilot init` (classic or cli-copilot): a local scaffold, or the live agent as well when given an environment, optionally inside a chosen or new solution |
+| `cs_create_agent` | `pac copilot init` (classic or cli-copilot): a local scaffold, or the live agent as well when given an environment, optionally inside a chosen or new solution. Asks for the publisher prefix and the folder when they are missing, offering the publishers and unmanaged solutions it can read from the environment |
 | `cs_create_solution` | create an unmanaged solution (and publisher) as the container for new agents |
 | `cs_generate_instructions` | draft or refine the agent instructions with an AI Builder prompt (`pac copilot model predict`) and write them into the workspace |
 | `cs_clone_agent`, `cs_pull`, `cs_push`, `cs_status` | sync a live agent with the workspace; clone, pull and push record a sync stamp |
@@ -136,6 +136,10 @@ ones a session does not need.
 
 ## Authoring (files, schema-validated)
 
+Every tool here that writes shows the change first: the first call returns the file it would create in
+full, or a diff of the lines it would change, and writes nothing. Repeat the call with `confirm: true`
+to write it. The tools that only read - describe, validate, look up, review - ask nothing.
+
 | Tool | Purpose |
 | --- | --- |
 | `cs_describe_workspace` | inventory of settings, topics, knowledge, tools, flows, triggers, variables |
@@ -155,7 +159,7 @@ ones a session does not need.
 | `cs_compare_flow_runs` | diff a failed run against a successful one: where the two part company, which actions changed status, which exist in only one of them (the definition changed), and optionally which trigger-payload keys differ (key names only) |
 | `cs_analyze_flow_health` | reliability across recent runs: failure rate, duration median and 90th percentile, and which actions the failures concentrate on |
 | `cs_add_trigger`, `cs_add_variable` | event trigger for a flow; global variable |
-| `cs_update_agent`, `cs_update_settings` | the agent's own settings (instructions, response instructions and mode, history, capabilities, moderation, model, starters) and anything else in `settings.mcs.yml` by dot path; see "Agent settings this server can write" |
+| `cs_update_agent`, `cs_update_settings` | the agent's own settings (instructions, response instructions and mode, history, capabilities, moderation, model, starters) and anything else in `settings.mcs.yml` by dot path; see "Agent settings this server can write". Previewed first: the changed lines, and for instructions the character count against the 8000 the product allows; `confirm: true` writes them |
 | `cs_edit_topic`, `cs_edit_tool`, `cs_edit_knowledge` | change existing components in place: trigger phrases, nodes, descriptions, inputs, sites |
 | `cs_remove_component`, `cs_delete_agent`, `cs_delete_solution` | remove a component from the workspace; delete an agent or a solution in the environment (`confirm`) |
 | `cs_review_agent` | rules-based review: instructions, escalation and fallback, phrase overlap, tool descriptions, connections, authentication versus private knowledge, secrets |

@@ -31,7 +31,7 @@ APPROVAL - NEVER SKIP
 - A tool that changes an environment returns a dry run and does nothing else.
 - Show the dry run to the user in your own words. Ask. Only then call again with confirm: true.
 - One approval covers one call. Never pass confirm on your own initiative. Never approve several steps at once.
-- Writing and editing local files needs no approval. Sending them to Copilot Studio does.
+- Changing the agent files works the same way: the first call shows the change and writes nothing; confirm: true on the next call writes it.
 - If CPS_READ_ONLY is set, the environment-changing tools are absent on purpose. Say so. Do not look for a way around it.
 
 WHEN A CALL DOES NOT DO WHAT YOU EXPECT
@@ -111,6 +111,22 @@ Leaving out \`environment\` makes a local scaffold only. A scaffold packs settin
 topics. Knowledge, tools and flows need a sync-connected workspace, so pass \`environment\` unless
 the user asked for a local scaffold.
 
+### The three answers only the user has
+Call \`cs_create_agent\` without \`publisherPrefix\` or \`projectDir\` and it asks, with the publishers
+and solutions it can read from the environment. Put the question to the user; do not invent values.
+
+- **projectDir** - the folder on this machine that holds the agent: its topics, knowledge, tools and
+  settings as YAML. Everything is edited there and reaches Copilot Studio only through \`cs_push\`.
+  It must be new or empty; pac refuses a folder with files in it.
+- **publisherPrefix** - 2-8 lowercase letters or digits, welded onto the schema name of every
+  component the agent will ever have (\`<prefix>_<agent>.topic.<Name>\`). It cannot be changed later
+  without recreating the components, and it has to match the publisher of the solution the agent
+  lands in, or the import is rejected. When the solution is known the server reads its publisher and
+  offers that one prefix - take it.
+- **solutionName** - the solution is the unit that gets exported and imported to move this agent to
+  test and production. Leave it out and pac makes a solution named after the agent, which is fine
+  for a throwaway and a nuisance for anything the team keeps. The dry run says which it will be.
+
 ## 2. Say what the agent is for
 \`cs_generate_instructions\` drafts them. Show the draft. Call again with \`apply: true\` to keep it.
 Or write them yourself with \`cs_update_agent\`.
@@ -153,11 +169,22 @@ harness it finds, so you do not need to choose.
 Option A - draft with AI Builder:
 1. \`cs_generate_instructions\` with \`purpose\`, and optionally \`audience\`, \`tone\`, \`capabilities\`, \`boundaries\`.
 2. Show the draft text to the user.
-3. Call again with \`apply: true\` to write it.
+3. Call again with \`apply: true\` and \`confirm: true\` to write it, or write the same text with
+   \`cs_update_agent\` - it does not need generating twice.
 
 Option B - write them yourself:
 \`cs_update_agent\` with \`instructions\`.
 \`cs_update_agent\` with \`appendResponseInstructions\` adds a line without rewriting what is there.
+
+## Nothing is written until the user says so
+The first \`cs_update_agent\` call returns the change and writes nothing:
+- what is there now against what is proposed, as a diff of the lines that change;
+- the whole proposed text when the agent had no instructions yet;
+- the character count, and what is left of the 8000 characters Copilot Studio allows.
+
+Show that to the user - the lines and the count, not a summary of your intent - and call again with
+the same arguments plus \`confirm: true\`. Over 8000 characters the call is refused outright: the
+push would be rejected anyway.
 
 ## What good instructions contain
 - Role and scope: what the agent is for, and what it is not for.
@@ -171,6 +198,11 @@ Write in the second person, as instructions to the agent. Keep each rule on its 
 \`cs_update_agent\` also writes: \`responseInstructions\` (formatting only), \`defaultResponseMode\`
 (Auto, ThinkDeeper, QuickResponse), \`historyType\`, \`capabilities\` (web browsing, code interpreter,
 file analysis), and content moderation.
+
+\`responseInstructions\` is the portal's Settings > Responses > "Response formatting" box, and it
+holds **500 characters**, not the 8000 the instructions get. It is for how answers look - length,
+tone, lists, tables - so put anything about what the agent does or knows in \`instructions\`, where
+there is room for it. The preview counts both and refuses an edit that would not fit.
 Enum values are checked before writing, so a wrong value fails fast with the allowed list.
 
 ## After writing

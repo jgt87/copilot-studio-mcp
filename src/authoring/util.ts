@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import * as yaml from "js-yaml";
+import { captureWrite } from "./capture.js";
 
 const ALNUM = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const DIACRITICS = /[̀-ͯ]/g;
@@ -61,10 +62,11 @@ export function writeComponentFile(file: string, headerLines: string[], doc: unk
   if (fs.existsSync(file) && !opts.overwrite) {
     throw new Error(`Refusing to overwrite existing file ${file} (pass overwrite: true)`);
   }
-  fs.mkdirSync(path.dirname(file), { recursive: true });
   const header = headerLines.filter((l) => l.trim().length > 0).map((l) => `# ${l.replace(/\r?\n/g, " ")}`);
-  const body = yamlDump(doc);
-  fs.writeFileSync(file, (header.length ? header.join("\n") + "\n" : "") + body, "utf8");
+  const text = (header.length ? header.join("\n") + "\n" : "") + yamlDump(doc);
+  if (captureWrite(file, text)) return file;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text, "utf8");
   return file;
 }
 
@@ -82,7 +84,9 @@ export function loadWithHeader<T = Record<string, unknown>>(file: string): { hea
 }
 
 export function saveWithHeader(file: string, header: string, doc: unknown): void {
-  fs.writeFileSync(file, `${header ? header + "\n" : ""}${yamlDump(doc)}`, "utf8");
+  const text = `${header ? header + "\n" : ""}${yamlDump(doc)}`;
+  if (captureWrite(file, text)) return;
+  fs.writeFileSync(file, text, "utf8");
 }
 
 /** Component name from `# Name:` header, else `mcs.metadata.componentName`, else file stem. */

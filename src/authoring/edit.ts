@@ -8,6 +8,7 @@ import { readWorkspace, type ComponentInfo, type WorkspaceInfo } from "../worksp
 import { buildActions, type ActionSpec } from "./topics.js";
 import { readConnectionReferences, upsertConnectionReference, type ToolInput } from "./tools.js";
 import { loadWithHeader, saveWithHeader, yamlDump, fileStem } from "./util.js";
+import { captureDelete, captureWrite } from "./capture.js";
 
 export type ComponentKind = "topic" | "knowledge" | "tool" | "trigger" | "variable" | "flow";
 
@@ -322,7 +323,8 @@ function pruneConnectionReference(root: string, ws: WorkspaceInfo, component: Co
   const reg = readConnectionReferences(root);
   if (!reg.file || !reg.entries.some((e) => e.connectionReferenceLogicalName === cr)) return [];
   const remaining = reg.entries.filter((e) => e.connectionReferenceLogicalName !== cr);
-  fs.writeFileSync(reg.file, yamlDump({ kind: "ConnectionReferencesSourceFile", connectionReferences: remaining }), "utf8");
+  const regText = yamlDump({ kind: "ConnectionReferencesSourceFile", connectionReferences: remaining });
+  if (!captureWrite(reg.file, regText)) fs.writeFileSync(reg.file, regText, "utf8");
   return [`removed connection reference ${cr} from ${path.basename(reg.file)}`];
 }
 
@@ -331,11 +333,11 @@ export function removeComponent(root: string, r: RemoveSpec): RemoveResult {
   const removed: string[] = [];
   const notes: string[] = [];
   if (r.kind === "flow") {
-    fs.rmSync(component.file, { recursive: true, force: true });
+    if (!captureDelete(component.file)) fs.rmSync(component.file, { recursive: true, force: true });
     removed.push(component.file);
   } else {
     if (r.kind === "tool" && r.pruneConnectionReference !== false) notes.push(...pruneConnectionReference(root, ws, component));
-    fs.rmSync(component.file, { force: true });
+    if (!captureDelete(component.file)) fs.rmSync(component.file, { force: true });
     removed.push(component.file);
   }
   const redirects = ws.topics.filter((t) => t.file !== component.file && fs.readFileSync(t.file, "utf8").includes(`.topic.${fileStem(component.file)}`));

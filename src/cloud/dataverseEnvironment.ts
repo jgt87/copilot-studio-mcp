@@ -26,6 +26,44 @@ export async function listConnectionReferences(envUrl: string, token: string, fe
   }));
 }
 
+export interface PublisherRow {
+  uniqueName: string;
+  friendlyName: string;
+  prefix: string;
+  isDefault: boolean;
+}
+
+/**
+ * Publishers a new solution can be created under. The prefix is the point: it
+ * goes into the schema name of every component, so `cs_create_agent` offers
+ * these rather than letting a caller invent one. Read-only (Microsoft's own)
+ * publishers are filtered out server-side.
+ */
+export async function listPublishers(envUrl: string, token: string, fetchImpl?: FetchLike): Promise<PublisherRow[]> {
+  const url = `${api(envUrl)}/publishers?$select=uniquename,friendlyname,customizationprefix,isreadonly&$filter=isreadonly eq false&$orderby=friendlyname`;
+  const data = await requestJson<{ value?: Record<string, unknown>[] }>(url, { token, fetchImpl, headers: ODATA_HEADERS });
+  return (data?.value ?? [])
+    .map((p) => ({
+      uniqueName: String(p.uniquename ?? ""),
+      friendlyName: String(p.friendlyname ?? p.uniquename ?? ""),
+      prefix: String(p.customizationprefix ?? ""),
+      // The out-of-the-box publisher every environment has; the portal uses it
+      // when the maker does not choose one.
+      isDefault: String(p.uniquename ?? "").toLowerCase().startsWith("defaultpublisher"),
+    }))
+    .filter((p) => p.prefix);
+}
+
+/** The customization prefix of the publisher a solution belongs to; null when it cannot be read. */
+export async function solutionPublisherPrefix(envUrl: string, token: string, uniqueName: string, fetchImpl?: FetchLike): Promise<string | null> {
+  const safe = uniqueName.replace(/'/g, "''");
+  const url = `${api(envUrl)}/solutions?$select=uniquename&$filter=uniquename eq '${safe}'&$expand=publisherid($select=customizationprefix)`;
+  const data = await requestJson<{ value?: Record<string, unknown>[] }>(url, { token, fetchImpl, headers: ODATA_HEADERS });
+  const row = data?.value?.[0];
+  const publisher = row?.publisherid as { customizationprefix?: string } | undefined;
+  return publisher?.customizationprefix ?? null;
+}
+
 export interface EnvironmentVariableRow {
   schemaName: string;
   displayName: string | null;

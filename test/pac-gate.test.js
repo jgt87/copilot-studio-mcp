@@ -119,16 +119,48 @@ test("an environment without confirm is a dry run naming what it would do", () =
   const gate = createAgentGate({ ...LOCAL, environment: "env-1" }, false);
   assert.equal(gate.action, "dryRun");
   assert.match(gate.plan, /create agent 'Agent' in environment env-1/);
-  assert.match(gate.plan, /in a solution named after the agent/);
+  assert.match(gate.plan, /pac creates one named after the agent/, "the dry run says where the agent lands when no solution was named");
+  assert.match(gate.plan, /Publisher prefix: cps/, "and what the prefix decides, since it cannot be changed later");
+  assert.match(gate.plan, /Files: /);
 });
 
 test("the dry run names the solution, and whether it would be created", () => {
   const named = createAgentGate({ ...LOCAL, environment: "env-1", solutionName: "Core" }, false);
   assert.equal(named.action, "dryRun");
-  assert.match(named.plan, /inside solution Core$/);
+  assert.match(named.plan, /inside solution Core/);
   const created = createAgentGate({ ...LOCAL, environment: "env-1", solutionName: "Core", createSolution: true }, false);
   assert.equal(created.action, "dryRun");
   assert.match(created.plan, /inside solution Core \(created if missing\)/);
+});
+
+test("the questions come before the dry run, because a plan needs both answers", () => {
+  const noPrefix = createAgentGate({ name: "Agent", projectDir: "C:/ws/agent", environment: "env-1" }, false, { cwd: "C:/ws" });
+  assert.equal(noPrefix.action, "ask");
+  assert.deepEqual(
+    noPrefix.needs.map((n) => n.argument),
+    ["publisherPrefix"],
+  );
+  assert.match(noPrefix.needs[0].why, /stamped onto every component/, "the question explains what the prefix decides");
+
+  const nothing = createAgentGate({ name: "Order Bot" }, false, { cwd: "C:/ws" });
+  assert.equal(nothing.action, "ask");
+  assert.deepEqual(
+    nothing.needs.map((n) => n.argument),
+    ["projectDir", "publisherPrefix"],
+  );
+  assert.match(nothing.needs[0].choices[0].value, /order-bot$/, "the folder suggestion is named after the agent");
+
+  const answered = createAgentGate({ ...LOCAL, environment: "env-1", confirm: true }, false);
+  assert.equal(answered.action, "init", "nothing is asked once both are given");
+});
+
+test("a read-only refusal and an over-long instruction come before the questions", () => {
+  const readOnly = createAgentGate({ name: "Agent", environment: "env-1" }, true, { cwd: "C:/ws" });
+  assert.equal(readOnly.action, "refuse");
+  assert.match(readOnly.reason, /CPS_READ_ONLY/);
+  const tooLong = createAgentGate({ name: "Agent", environment: "env-1", instructions: "x".repeat(8001) }, false, { cwd: "C:/ws" });
+  assert.equal(tooLong.action, "refuse");
+  assert.match(tooLong.reason, /8000/);
 });
 
 test("environment plus solutionName plus confirm takes the bootstrap path", () => {

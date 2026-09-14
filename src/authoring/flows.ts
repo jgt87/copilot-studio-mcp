@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { pascal, yamlDump } from "./util.js";
+import { captureWrite } from "./capture.js";
 
 export type FlowParamType = "string" | "number" | "boolean";
 
@@ -99,8 +100,10 @@ export function scaffoldFlow(root: string, spec: FlowSpec): FlowResult {
   const workflowId = randomUUID();
   const metadataFile = path.join(dir, "metadata.yaml");
   const definitionFile = path.join(dir, "workflow.json");
-  fs.writeFileSync(metadataFile, `# Name: ${spec.name}\n${spec.description ? `# ${spec.description}\n` : ""}${yamlDump(buildFlowMetadata(spec, workflowId))}`, "utf8");
-  fs.writeFileSync(definitionFile, JSON.stringify(buildFlowDefinition(spec), null, 2) + "\n", "utf8");
+  const metaText = `# Name: ${spec.name}\n${spec.description ? `# ${spec.description}\n` : ""}${yamlDump(buildFlowMetadata(spec, workflowId))}`;
+  const defText = JSON.stringify(buildFlowDefinition(spec), null, 2) + "\n";
+  if (!captureWrite(metadataFile, metaText)) fs.writeFileSync(metadataFile, metaText, "utf8");
+  if (!captureWrite(definitionFile, defText)) fs.writeFileSync(definitionFile, defText, "utf8");
   return {
     dir,
     metadataFile,

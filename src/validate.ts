@@ -9,6 +9,7 @@ import * as yaml from "js-yaml";
 import { errorMessage } from "./log.js";
 import { validateDocument, type Diagnostic } from "./schemaValidate.js";
 import { readWorkspace, type WorkspaceInfo } from "./workspace.js";
+import { readTextFile } from "./authoring/capture.js";
 import { connectorFromReference, readConnectionReferences, type ConnectionReferenceEntry } from "./authoring/tools.js";
 import { catalogDir, checkOperation } from "./catalog.js";
 import { isYamlFile, listFilesRecursive } from "./authoring/util.js";
@@ -56,8 +57,10 @@ function collectComponentFiles(root: string, only?: string): string[] {
 }
 
 function parseAndValidate(file: string): { doc: Doc | null; diagnostics: Diagnostic[] } {
-  const raw = fs.readFileSync(file, "utf8");
   try {
+    // Capture-aware: a file a previewed call would have written validates as
+    // the content it would have, not as the file that is not there yet.
+    const raw = readTextFile(file);
     const doc = yaml.load(raw);
     const diagnostics = validateDocument(doc, raw);
     return { doc: doc && typeof doc === "object" ? (doc as Doc) : null, diagnostics };

@@ -115,6 +115,37 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   knowledge (site, trigger condition); remove components with connection-reference pruning and
   dangling-redirect notes. Headers are preserved through `loadWithHeader` / `saveWithHeader` in
   `authoring/util.ts`.
+- **New-agent guidance** (`src/createAgentGuidance.ts`): a publisher prefix is welded onto every
+  component's schema name and has to match the target solution's publisher, and a project directory
+  has to be new or empty - neither is guessable, and both used to be required arguments that a model
+  filled in with "contoso" and "./agent". The module is pure: `createAgentNeeds` returns the
+  `needsInput` questions with the choices the caller could read (publishers from Dataverse,
+  unmanaged solutions from `pac solution list`, a folder named after the agent), and
+  `solutionGuidance` is the dry-run sentence about where the agent lands. The solution is guidance
+  rather than a question because omitting it is a real answer (pac names one after the agent) and the
+  dry run is already shown before anything is created. `createAgentGate` asks before it plans, and
+  `createAgentFacts` in `tools/sync.ts` does the reading - silently, so no sign-in prompt and no
+  pac call without an environment; a failed read costs the choices, not the questions.
+- **Previewed change** (`src/authoring/capture.ts`, `src/changePreview.ts`, `src/instructions.ts`):
+  every tool that changes the agent shows the change before making it. Two mechanisms, because the
+  interesting change has two shapes. For files, `capture.ts` holds an AsyncLocalStorage map: the
+  three write funnels (`writeComponentFile`, `saveWithHeader`, the handful of direct `fs` calls in
+  `authoring/`) ask it first and skip the write when it answers, and `readTextFile` gives a
+  handler that reads back what it wrote (`cs_add_topic`, `validate.ts`) the captured content, so
+  handlers need no branch of their own. `changePreview.ts` turns the captured pairs into a created
+  file shown in full or an edit shown as a diff, clipped at 200 lines with the counts kept honest.
+  For the agent's prose, `instructions.ts` adds what a diff does not say: the mode (add / replace /
+  append), the character count, and the product limit, which it refuses rather than letting the push
+  fail. `FIELD_LIMITS` holds both caps - 8000 for `instructions`, 500 for `responseInstructions`
+  (the portal's "Response formatting") - and `limitForField` resolves the dot paths
+  `cs_update_settings` accepts to the same numbers. They are observed in the product, not read from
+  the schema, so a change to either belongs there and in `test/preview.test.js` together. The gate itself is `addPreviewGate` in `tools/shared.ts`, applied by name
+  from `CAPTURED_PREVIEW_TOOLS`: it injects the `confirm` input, appends the sentence to the
+  description and wraps the handler, so a new authoring tool joins by being listed in
+  `policy.ts`, not by remembering a pattern. The handler runs twice (once captured, once for
+  real), which is why random node ids differ between the preview and the file, and why a tool whose
+  work is not repeatable - `cs_generate_instructions`, which would pay AI Builder twice - builds
+  its own preview instead and hands the text to `cs_update_agent`.
 - **Review** (`src/review.ts`): rules-based `reviewWorkspace` with a 10-point score; each finding
   names a rule and a fix. Add rules as functions in the `rules` array; keep them conservative.
 - **Attribution** (`src/attribution.ts`): which topic, tool and knowledge source an activity is
@@ -243,7 +274,11 @@ Cross-cutting behaviour in `src/index.ts`:
   mutating tool without listing it fails the build.
 - **Confirm contract**: every tool that mutates a live environment (`cs_push`, `cs_publish`,
   `cs_import_solution`, `cs_run_evaluation`, bootstrap `cs_create_agent`, non-read-only `cs_pac`)
-  returns `dryRun()` unless `confirm: true`. Keep new mutating tools on this pattern.
+  returns `dryRun()` unless `confirm: true`. Keep new mutating tools on this pattern. A tool that
+  changes the agent *on disk* asks the same way but answers differently: it returns the change
+  itself (see **Previewed change**), and `LOCAL_CONFIRM_TOOLS` / `CAPTURED_PREVIEW_TOOLS` in
+  `policy.ts` are the lists `test/policy.test.js` holds it to. Read-only mode is unaffected: these
+  tools touch no environment.
 - **Context resolution** (`cloudContext`): explicit args, then workspace sync metadata, then
   `CPS_*` env vars, then a BAP lookup for the Dataverse URL. Tenant falls back to `organizations`.
 - **Validation gate**: `cs_push` runs `validateWorkspace` from `src/validate.ts` (schema checks

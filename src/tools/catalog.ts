@@ -15,10 +15,12 @@ import { catalogDir, fetchConnectorList, fetchConnectorSwagger, listPrompts, loa
 import { scaffoldFlow } from "../authoring/flows.js";
 import { addTrigger } from "../authoring/triggers.js";
 import { addGlobalVariable } from "../authoring/variables.js";
-import { updateAgent, updateCliCopilotInstructions, updateSettings } from "../authoring/agent.js";
+import { commitAgentUpdate, planAgentUpdate, planCliCopilotInstructions, readCliCopilotInstructions, updateSettings } from "../authoring/agent.js";
+import { saveWithHeader } from "../authoring/util.js";
+import { INSTRUCTIONS_LIMIT, buildAgentPreview, limitForField, limitRefusal, singleFieldPreview } from "../instructions.js";
 
 import { BAP_SCOPE, getToken, resolveTenantId, type AuthConfig } from "../auth.js";
-import { clientArg, envArg, fail, layoutNote, resolveRoot, server, tenantArg, text, tryWorkspace, validateWorkspaceFiles, workspaceArg } from "./shared.js";
+import { clientArg, envArg, fail, layoutNote, previewConfirmArg, resolveRoot, server, tenantArg, text, tryWorkspace, validateWorkspaceFiles, workspaceArg } from "./shared.js";
 
 // ---- tool catalog ---------------------------------------------------------
 
@@ -178,7 +180,7 @@ server.registerTool(
   "cs_update_agent",
   {
     title: "Update the agent's settings",
-    description: "Edit agent.mcs.yml (standard harness): instructions, display name, conversation starters, model hint, and the settings the portal groups under responses and generative AI: response instructions (wording and formatting), response mode, conversation history, capability toggles (web browsing, code interpreter, image generation, Teams / SharePoint / email / meeting / people search), whether the model may use its own general knowledge, content moderation level, file analysis and semantic search. Local file change; cs_push applies it. For GitHub Copilot harness (cli-copilot) workspaces the instructions go into settings.mcs.yml.",
+    description: "Edit agent.mcs.yml (standard harness): instructions, display name, conversation starters, model hint, and the settings the portal groups under responses and generative AI: response instructions (wording and formatting), response mode, conversation history, capability toggles (web browsing, code interpreter, image generation, Teams / SharePoint / email / meeting / people search), whether the model may use its own general knowledge, content moderation level, file analysis and semantic search. The first call writes nothing: it returns the change - the current lines against the proposed ones, and the instruction character count against the 8000 the product allows - and the file is written on a second call with confirm: true. Local file change; cs_push applies it. For GitHub Copilot harness (cli-copilot) workspaces the instructions go into settings.mcs.yml.",
     inputSchema: {
       workspace: workspaceArg,
       instructions: z.string().optional().describe("Replace the instructions"),
@@ -187,8 +189,8 @@ server.registerTool(
       conversationStarters: z.array(z.object({ title: z.string(), text: z.string() })).optional(),
       addConversationStarters: z.array(z.object({ title: z.string(), text: z.string() })).optional(),
       modelNameHint: z.string().optional().describe("Model hint, e.g. GPT5Chat"),
-      responseInstructions: z.string().optional().describe("How answers should be worded and formatted (the portal's response instructions), separate from the main instructions"),
-      appendResponseInstructions: z.string().optional(),
+      responseInstructions: z.string().optional().describe("How answers should be worded and formatted (Settings > Responses > Response formatting in the portal), separate from the main instructions. Capped at 500 characters."),
+      appendResponseInstructions: z.string().optional().describe("Add a line to the response formatting, within the same 500 characters"),
       defaultResponseMode: z.enum(["Auto", "ThinkDeeper", "QuickResponse"]).optional().describe("Response mode: Auto, ThinkDeeper (more reasoning, slower) or QuickResponse"),
       history: z.enum(["none", "conversation"]).optional().describe("Whether the agent sees conversation history"),
       historyMessages: z.number().optional().describe("How many past user messages to include (with history: conversation)"),
@@ -210,6 +212,7 @@ server.registerTool(
       contentModeration: z.enum(["Minimum", "Low", "Medium", "High", "Maximum"]).optional(),
       isFileAnalysisEnabled: z.boolean().optional(),
       isSemanticSearchEnabled: z.boolean().optional(),
+      confirm: previewConfirmArg,
     },
   },
   async (a) => {
@@ -218,9 +221,18 @@ server.registerTool(
       const ws = readWorkspace(root);
       if (ws.harness === "github-copilot") {
         if (!a.instructions) return fail("cli-copilot workspaces only support 'instructions' here");
-        return text(updateCliCopilotInstructions(root, a.instructions));
+        const plan = planCliCopilotInstructions(root, a.instructions);
+        const preview = singleFieldPreview({ file: plan.file, field: "instructions", before: readCliCopilotInstructions(plan.before), after: a.instructions });
+        if (preview.blocked) return fail(preview.blocked);
+        if (!a.confirm) return text(preview);
+        saveWithHeader(plan.file, plan.header, plan.after);
+        return text({ file: plan.file, changed: plan.changed, instructions: { characters: a.instructions.length, limit: INSTRUCTIONS_LIMIT } });
       }
-      return text(updateAgent(root, a));
+      const plan = planAgentUpdate(root, a);
+      const preview = buildAgentPreview(plan);
+      if (preview.blocked) return fail(preview.blocked);
+      if (!a.confirm) return text(preview);
+      return text({ ...commitAgentUpdate(plan), ...(preview.instructions ? { instructions: { characters: preview.instructions.proposed.characters, limit: INSTRUCTIONS_LIMIT, remaining: preview.instructions.remaining } } : {}) });
     } catch (err) {
       return fail(errorMessage(err));
     }
@@ -231,6 +243,10 @@ server.registerTool("cs_update_settings", { title: "Update settings.mcs.yml", de
   try {
     const forbidden = Object.keys(patch).filter((k) => /authoringModel|recognizer\.kind|^template$/.test(k));
     if (forbidden.length) return fail(`Refusing to change ${forbidden.join(", ")}: the tooling relies on them`);
+    for (const [key, value] of Object.entries(patch)) {
+      const limit = limitForField(key);
+      if (limit !== null && typeof value === "string" && value.length > limit) return fail(`${limitRefusal(key, value.length, limit)} cs_update_agent shows the change before writing it.`);
+    }
     return text(updateSettings(resolveRoot(workspace), patch));
   } catch (err) {
     return fail(errorMessage(err));

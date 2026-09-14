@@ -4,6 +4,7 @@
  */
 import fs from "node:fs";
 import { readWorkspace, type WorkspaceInfo, type ComponentInfo } from "./workspace.js";
+import { INSTRUCTIONS_LIMIT } from "./instructions.js";
 import { loadWithHeader } from "./authoring/util.js";
 
 export type Severity = "error" | "warning" | "info";
@@ -57,6 +58,8 @@ const rules: Rule[] = [
     const text = (ws.agent?.instructions ?? "").trim();
     if (!ws.agent) return [];
     if (!text) return [f("instructions-missing", "error", "The agent has no instructions.", "Write them with cs_generate_instructions or cs_update_agent: role, scope, how to answer, when to use each tool, escalation, refusals.", "agent.mcs.yml")];
+    if (text.length > INSTRUCTIONS_LIMIT) return [f("instructions-too-long", "error", `Instructions are ${text.length} characters; Copilot Studio allows ${INSTRUCTIONS_LIMIT}.`, `Shorten them by ${text.length - INSTRUCTIONS_LIMIT} characters with cs_update_agent; a push would be rejected.`, "agent.mcs.yml")];
+    if (text.length > INSTRUCTIONS_LIMIT * 0.9) return [f("instructions-near-limit", "warning", `Instructions are ${text.length} characters, within ${INSTRUCTIONS_LIMIT - text.length} of the ${INSTRUCTIONS_LIMIT}-character limit.`, "Leave room for later additions: move detail into topics or knowledge sources.", "agent.mcs.yml")];
     if (text.length < 200) return [f("instructions-short", "warning", `Instructions are ${text.length} characters; that rarely covers scope, grounding and escalation.`, "Expand with cs_generate_instructions refine=true or cs_update_agent.", "agent.mcs.yml")];
     if (text.length > 8000) return [f("instructions-long", "warning", `Instructions are ${text.length} characters; very long instructions dilute the important rules.`, "Move procedures into topics or tools and keep instructions to role, scope, style and escalation.", "agent.mcs.yml")];
     return [];

@@ -5,7 +5,7 @@
  * under the original import path:
  *  - `dataverseBots.ts`: agents, their components, and publishing
  *  - `dataverseFlows.ts`: cloud flows (the `workflow` table)
- *  - `dataverseEnvironment.ts`: connection references and environment variables
+ *  - `dataverseEnvironment.ts`: connection references, environment variables, publishers
  *  - `dataverseTranscripts.ts`: conversation transcripts (read-only)
  *
  * `dataverseApi.ts` holds what they share.
@@ -31,7 +31,7 @@ export {
   type FlowRow,
   type FlowState,
 } from "./dataverseFlows.js";
-export { bindConnectionReference, listConnectionReferences, listEnvironmentVariables, type ConnectionReferenceRow, type EnvironmentVariableRow } from "./dataverseEnvironment.js";
+export { bindConnectionReference, listConnectionReferences, listEnvironmentVariables, listPublishers, solutionPublisherPrefix, type ConnectionReferenceRow, type EnvironmentVariableRow, type PublisherRow } from "./dataverseEnvironment.js";
 export {
   getTranscript,
   listTranscripts,

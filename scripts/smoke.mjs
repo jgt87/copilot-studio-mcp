@@ -7,6 +7,7 @@
  * Usage: node scripts/smoke.mjs [workspacePath]
  */
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -135,6 +136,49 @@ try {
 
   const initLocal = await callTool("cs_create_agent", { name: "Smoke", publisherPrefix: "smk", projectDir: path.join(os.tmpdir(), "cs-smoke-never-created"), environment: "00000000-0000-0000-0000-000000000000" });
   check(readOnly ? "cs_create_agent refuses the environment path in read-only mode" : "cs_create_agent dry-run without confirm", readOnly ? initLocal.isError && /CPS_READ_ONLY/.test(initLocal.text) : initLocal.json?.dryRun === true);
+
+  // Every change to an agent is shown before it is made: the first call writes
+  // nothing, the second one (confirm: true) writes what the first one showed.
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "cs-smoke-ws-"));
+  try {
+    const ws = path.join(scratch, "workspace");
+    fs.cpSync(workspace, ws, { recursive: true });
+    const topicArgs = { workspace: ws, name: "Smoke Preview", triggerPhrases: ["smoke test"], actions: [{ type: "message", text: "hello" }] };
+    let topicFile = path.join(ws, "topics", "SmokePreview.mcs.yml");
+
+    const preview = await callTool("cs_add_topic", topicArgs);
+    check("cs_add_topic previews the file it would write", preview.json?.preview === true && preview.json?.files?.[0]?.action === "create", preview.json?.files?.[0]?.file);
+    if (preview.json?.files?.[0]?.file) topicFile = path.join(ws, preview.json.files[0].file);
+    check("cs_add_topic wrote nothing without confirm", !fs.existsSync(topicFile));
+
+    const written = await callTool("cs_add_topic", { ...topicArgs, confirm: true });
+    check("cs_add_topic writes the topic with confirm", !written.isError && fs.existsSync(topicFile));
+
+    const editArgs = { workspace: ws, topic: "Smoke Preview", addTriggerPhrases: ["is my order on its way"] };
+    const editPreview = await callTool("cs_edit_topic", editArgs);
+    check("cs_edit_topic previews an edit as a diff", editPreview.json?.files?.[0]?.action === "modify" && /is my order on its way/.test(editPreview.json?.files?.[0]?.diff ?? ""), editPreview.json?.files?.[0]?.file);
+    check("cs_edit_topic left the file alone without confirm", !fs.readFileSync(topicFile, "utf8").includes("is my order on its way"));
+    const edited = await callTool("cs_edit_topic", { ...editArgs, confirm: true });
+    check("cs_edit_topic writes the edit with confirm", !edited.isError && fs.readFileSync(topicFile, "utf8").includes("is my order on its way"));
+
+    const instr = await callTool("cs_update_agent", { workspace: ws, instructions: "You answer questions about orders." });
+    check("cs_update_agent previews the instruction change", instr.json?.preview === true && instr.json?.instructions?.proposed?.characters === 34, `${instr.json?.instructions?.mode}, ${instr.json?.instructions?.remaining} characters left`);
+    check("cs_update_agent wrote no instructions without confirm", !fs.readFileSync(path.join(ws, "agent.mcs.yml"), "utf8").includes("You answer questions about orders."));
+
+    const applied = await callTool("cs_update_agent", { workspace: ws, instructions: "You answer questions about orders.", confirm: true });
+    check("cs_update_agent writes the instructions with confirm", !applied.isError && fs.readFileSync(path.join(ws, "agent.mcs.yml"), "utf8").includes("You answer questions about orders."));
+
+    const tooWordy = await callTool("cs_update_agent", { workspace: ws, responseInstructions: "y".repeat(501), confirm: true });
+    check("cs_update_agent refuses response formatting over 500 characters", tooWordy.isError && /501 characters; Copilot Studio allows 500/.test(tooWordy.text));
+
+    const tooLong = await callTool("cs_update_agent", { workspace: ws, instructions: "x".repeat(8001), confirm: true });
+    check("cs_update_agent refuses instructions over 8000 characters", tooLong.isError && /8001 characters; Copilot Studio allows 8000/.test(tooLong.text));
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 3 });
+  }
+
+  const ask = await callTool("cs_create_agent", { name: "Smoke Agent" });
+  check("cs_create_agent asks for the folder and the publisher prefix", ask.json?.needsInput === true && JSON.stringify(ask.json?.needs?.map((n) => n.argument)) === JSON.stringify(["projectDir", "publisherPrefix"]), ask.json?.needs?.[0]?.choices?.[0]?.value);
 
   const connectors = await callTool("cs_list_connectors", { offline: true, search: "Office 365 Outlook" });
   check("cs_list_connectors offline seed", connectors.json?.connectors?.[0]?.name === "shared_office365", connectors.json?.source);

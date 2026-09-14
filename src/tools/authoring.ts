@@ -11,6 +11,7 @@ import { z } from "zod";
 
 import { errorMessage } from "../log.js";
 import { describeWorkspace, readWorkspace, type WorkspaceInfo } from "../workspace.js";
+import { readTextFile } from "../authoring/capture.js";
 import { listKinds, lookupDefinition, resolveDefinition, searchDefinitions, summarizeDefinition } from "../schema.js";
 import { addTopic, type ActionSpec, type TopicSpec } from "../authoring/topics.js";
 import { addKnowledgeSource } from "../authoring/knowledge.js";
@@ -113,7 +114,7 @@ server.registerTool(
       const trigger: TopicSpec["trigger"] = a.triggerPhrases?.length ? { kind: "phrases", phrases: a.triggerPhrases } : a.triggerKind ? { kind: a.triggerKind } : { kind: "phrases", phrases: [] };
       const r = addTopic(root, { name: a.name, description: a.description, trigger, priority: a.priority, actions: a.actions, agentSchemaName: ws.schemaName ?? undefined, overwrite: a.overwrite });
       const v = validateWorkspaceFiles(root, r.file);
-      return text({ ...r, validation: v.files[0]?.diagnostics ?? [], yaml: fs.readFileSync(r.file, "utf8") });
+      return text({ ...r, validation: v.files[0]?.diagnostics ?? [], yaml: readTextFile(r.file) });
     } catch (err) {
       return fail(errorMessage(err));
     }
@@ -163,7 +164,7 @@ server.registerTool(
       const r = addKnowledgeSource(root, a);
       const yamlFile = r.files.find((f) => f.endsWith(".yml"));
       const validation = yamlFile ? validateWorkspaceFiles(root, yamlFile).files[0]?.diagnostics ?? [] : [];
-      return text({ ...r, validation, layoutNote: layoutNote(readWorkspace(root)), ...(yamlFile ? { yaml: fs.readFileSync(yamlFile, "utf8") } : {}) });
+      return text({ ...r, validation, layoutNote: layoutNote(readWorkspace(root)), ...(yamlFile ? { yaml: readTextFile(yamlFile) } : {}) });
     } catch (err) {
       return fail(errorMessage(err));
     }
@@ -262,7 +263,7 @@ server.registerTool(
       if (typeof spec === "string") return fail(spec);
       const r = addTool(root, spec, ws.schemaName ?? undefined);
       const validation = validateWorkspaceFiles(root, r.file).files[0]?.diagnostics ?? [];
-      return text({ ...r, catalog, validation, layoutNote: layoutNote(ws), yaml: fs.readFileSync(r.file, "utf8") });
+      return text({ ...r, catalog, validation, layoutNote: layoutNote(ws), yaml: readTextFile(r.file) });
     } catch (err) {
       return fail(errorMessage(err));
     }

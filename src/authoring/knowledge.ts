@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pascal, writeComponentFile } from "./util.js";
+import { captureCopy } from "./capture.js";
 
 export type KnowledgeKind = "public-site" | "sharepoint" | "graph-connector" | "files";
 
@@ -66,7 +67,7 @@ function copyKnowledgeFiles(root: string, spec: KnowledgeSpec): string[] {
     if (!fs.existsSync(f)) throw new Error(`File not found: ${f}`);
     const target = path.join(dest, path.basename(f));
     if (fs.existsSync(target) && !spec.overwrite) throw new Error(`Refusing to overwrite ${target} (pass overwrite: true)`);
-    fs.copyFileSync(f, target);
+    if (!captureCopy(f, target)) fs.copyFileSync(f, target);
     written.push(target);
   }
   return written;

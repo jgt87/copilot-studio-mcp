@@ -142,8 +142,22 @@ The server never changes a live Copilot Studio environment on its own. Every too
 the environment-changing pac wrappers) returns a **dry run** describing what it would do, and does
 nothing else, until it is called again with `confirm: true`. The calling agent is instructed, in the
 MCP handshake, to show that dry run and pass `confirm` only after you agree; one approval covers one
-call. Writing YAML, editing, reviewing and validating are local file operations and need no
-approval; sending them to Copilot Studio does.
+call.
+
+Changing the agent on disk asks the same way, for the same reason: an edit you did not intend is
+cheap to make and expensive to notice. `cs_add_topic`, `cs_add_knowledge_source`, `cs_add_tool`,
+`cs_add_flow`, `cs_add_trigger`, `cs_add_variable`, `cs_edit_topic`, `cs_edit_tool`,
+`cs_edit_knowledge`, `cs_update_settings`, `cs_update_agent` and `cs_generate_instructions` write
+nothing on the first call. They return the change instead - a file that would be created shown in
+full, a file that would be edited shown as a diff against what is there now - and write it when the
+same call is repeated with `confirm: true`. Reviewing, validating and describing read only, and ask
+nothing.
+
+The prose fields get their own accounting, because they are the change a diff alone does not
+settle: the preview carries the character count and how much of the product's limit is left, and an
+edit that would exceed it is refused outright rather than failing at push time. The limits are not
+the same - `instructions` holds 8000 characters, and the Settings > Responses > "Response
+formatting" box (`responseInstructions`) only 500.
 
 For a hard lock, set `CPS_READ_ONLY=1` in the server's environment: the environment-changing tools
 are then not registered at all, so no confirmation can reach the environment, while authoring,
@@ -198,6 +212,8 @@ that change the environment show a dry run first.
 2. **Pick or create the solution.** `cs_list_solutions` shows what exists; an existing solution
    works as long as it is unmanaged and you use its publisher prefix. To start a solution for your
    agents: `cs_create_solution uniqueName=contoso_Agents publisherPrefix=contoso confirm=true`.
+   The solution is the unit you later export and import to move the agent to test and production,
+   so it is worth choosing rather than letting one be created per agent.
 3. **Create the agent inside it.**
    `cs_create_agent name="Contoso Support" publisherPrefix=contoso projectDir=./contoso-support
    environment=<id> solutionName=contoso_Agents confirm=true` (add `createSolution=true` to fold
@@ -205,6 +221,13 @@ that change the environment show a dry run first.
    imports, then clones the live agent back so `projectDir` is a sync-connected workspace with the
    default system topics. Without `environment` you get a local scaffold only, which can pack
    settings, agent and topics but not knowledge, tools or flows.
+
+   Leave out `publisherPrefix` or `projectDir` and the tool asks instead of guessing, listing the
+   publishers in the environment (and, when you named a solution, the one prefix that solution's
+   publisher allows) and suggesting a folder named after the agent. The prefix is worth the
+   question: it becomes part of the schema name of every component the agent will ever have
+   (`contoso_contososupport.topic.Greeting`), it cannot be changed afterwards without recreating
+   them, and it has to match the publisher of the solution the agent lands in.
 4. **Say what the agent is for.** `cs_generate_instructions purpose="Answer IT questions and create
    ServiceNow tickets" audience="Employees" tone="Friendly, brief" boundaries=["never reset
    passwords"] modelName="Agent instructions"` drafts the instructions with an AI Builder prompt
@@ -659,14 +682,16 @@ pages, pcf, plugin, power-fx, telemetry, test, tool) are deliberately left there
 
 An agent's settings live in two files, and the server reads, validates and pushes both. The table
 maps what the portal shows to the field and the tool argument that writes it. Everything here is a
-local file change; `cs_push` applies it, and `cs_publish` makes it live.
+local file change, shown before it is made and written only with `confirm: true`; `cs_push` applies
+it, and `cs_publish` makes it live. `instructions` is capped at 8000 characters by the product, and
+the preview counts them.
 
 **`agent.mcs.yml`** (the agent definition), written by `cs_update_agent`:
 
 | Portal | Field | Argument |
 | --- | --- | --- |
 | Instructions | `instructions` | `instructions`, `appendInstructions` (or `cs_generate_instructions`) |
-| Responses: how answers are worded and formatted | `responseInstructions` | `responseInstructions`, `appendResponseInstructions` |
+| Responses: how answers are worded and formatted ("Response formatting") | `responseInstructions` | `responseInstructions`, `appendResponseInstructions` - 500 characters, counted in the preview |
 | Responses: response mode | `defaultResponseMode` | `defaultResponseMode`: `Auto`, `ThinkDeeper`, `QuickResponse` |
 | Conversation history the agent sees | `historyType` | `history`: `none` or `conversation`, with `historyMessages` |
 | Capabilities: web browsing, code interpreter, image generation, Teams / SharePoint / email / meeting / people search | `gptCapabilities` | `capabilities` (only the toggles you pass change) |
@@ -724,7 +749,7 @@ Permissions for your own app registration (Entra ID > App registrations > API pe
 | `cs_chat` (transport `sdk`, Entra-SSO agents) | **Power Platform API** (app id `8578e004-a5c6-46e7-913e-12f58912df43`) | `CopilotStudio.Copilots.Invoke` | Delegated is what this server uses. An application permission of the same name exists for confidential clients (Microsoft 365 Agents SDK); not used here. | Admin consent is normally required. Redirect URI `http://localhost` (Mobile and desktop applications). |
 | `cs_list_test_sets`, `cs_run_evaluation`, `cs_get_evaluation_run`, `cs_list_evaluation_runs` | **Power Platform API** | Token scope `https://api.powerplatform.com/.default`. The evaluation endpoints declare only `.default`; the permission reference has no finer-grained evaluation permission. | Delegated only. Power Platform API has no application permissions; service principals get access through RBAC roles instead. | Verified with the first-party id by Microsoft's own tooling. Not yet verified with a custom registration; if calls return 403, the signed-in user needs maker access to the agent. |
 | `cs_list_environments`, automatic Dataverse URL lookup, `cs_list_connectors`, `cs_describe_connector`, the connection lookup in `cs_bind_flow_connection` | **PowerApps Service** (app id `475226c6-020e-4fb2-8a90-7a972cbfc1d4`) | `User` ("Access the Power Apps Service API") | Delegated. | Calls the BAP environments API (`api.bap.microsoft.com`), the connector registry and the connections list (`api.powerapps.com`). Listing connections shows every one in the environment the signed-in user can see, including other people's; binding one makes the flow run as that connection's owner. |
-| `cs_list_agents` (via `dataverse`), `cs_publish` (via `dataverse`), authentication-mode detection in `cs_chat`, `cs_check_drift` (quick mode), the drift preflight in `cs_push`, the component stamps recorded by `cs_clone_agent` / `cs_pull` / `cs_push`, the flow tools (`cs_list_flows`, `cs_get_flow`, `cs_create_flow`, `cs_update_flow`, `cs_set_flow_state`, `cs_delete_flow`, and the Dataverse half of `cs_bind_flow_connection`) and the transcript tools (`cs_list_transcripts`, `cs_get_transcript`, `cs_summarize_transcripts`, `cs_test_set_from_transcripts`) | **Dynamics CRM** (Dataverse, app id `00000007-0000-0000-c000-000000000000`) | `user_impersonation` | Delegated. There is no application permission; server-to-server access to Dataverse means an **application user** with a security role in each environment. | The user still needs a Dataverse security role that can read and publish bots (System Customizer or a Copilot Studio maker role). The drift checks only read the `bot` and `botcomponent` tables, which every maker role can read; they never write to Dataverse. The transcript tools read `conversationtranscript`, which holds **what users actually said to the agent**: a more sensitive table than the rest, so the signed-in user needs a role that grants read on it, and results should be treated as customer data. When a workspace has no Dataverse URL in its sync metadata the URL is looked up through the PowerApps Service permission above. |
+| `cs_list_agents` (via `dataverse`), `cs_publish` (via `dataverse`), the publisher and solution lookup that `cs_create_agent` offers as choices, authentication-mode detection in `cs_chat`, `cs_check_drift` (quick mode), the drift preflight in `cs_push`, the component stamps recorded by `cs_clone_agent` / `cs_pull` / `cs_push`, the flow tools (`cs_list_flows`, `cs_get_flow`, `cs_create_flow`, `cs_update_flow`, `cs_set_flow_state`, `cs_delete_flow`, and the Dataverse half of `cs_bind_flow_connection`) and the transcript tools (`cs_list_transcripts`, `cs_get_transcript`, `cs_summarize_transcripts`, `cs_test_set_from_transcripts`) | **Dynamics CRM** (Dataverse, app id `00000007-0000-0000-c000-000000000000`) | `user_impersonation` | Delegated. There is no application permission; server-to-server access to Dataverse means an **application user** with a security role in each environment. | The user still needs a Dataverse security role that can read and publish bots (System Customizer or a Copilot Studio maker role). The drift checks only read the `bot` and `botcomponent` tables, which every maker role can read; they never write to Dataverse. `cs_create_agent` reads `publishers` (and the publisher of a named solution) only to offer real prefixes instead of a guess; failing that read costs the choices, not the tool. The transcript tools read `conversationtranscript`, which holds **what users actually said to the agent**: a more sensitive table than the rest, so the signed-in user needs a role that grants read on it, and results should be treated as customer data. When a workspace has no Dataverse URL in its sync metadata the URL is looked up through the PowerApps Service permission above. |
 | `cs_list_flow_runs`, `cs_get_flow_run`, `cs_run_flow`, `cs_explain_flow_run`, `cs_compare_flow_runs`, `cs_analyze_flow_health` | **Microsoft Flow** (Power Automate service, app id `7df0a125-d3be-4c96-aa54-591f83ff541c`) | `User` (token scope `https://service.flow.microsoft.com/.default`, override with `CPS_FLOW_SCOPE`) | Delegated. | A separate resource from Dataverse and the Power Platform API, so it needs its own consent: sign in with `cs_login scope='flow'`. The signed-in user must be an owner or co-owner of the flow. Endpoints and scope are taken from the service the Power Automate portal calls and are unverified against a tenant. The diagnostic tools also follow the SAS-signed content links the service returns for an action's inputs and outputs; those are fetched **without** the bearer token, because they carry their own signature, and they expire after a few days. |
 | `cs_list_org_agents`, `cs_get_org_agent` | **Microsoft Graph** (app id `00000003-0000-0000-c000-000000000000`) | `CopilotPackages.Read.All` (override the scope with `CPS_GRAPH_SCOPE`) | Delegated is what this server uses; an application permission of the same name exists for reads. | The Microsoft 365 agent catalogue, a different resource again: sign in with `cs_login scope='graph'`. **Requires a Microsoft Agent 365 licence** and is global-cloud only (no GCC, DoD or 21Vianet). Reads `/v1.0/copilot/admin/catalog/packages`. Unverified against a live tenant. |
 | `cs_block_org_agent`, `cs_reassign_org_agent` | **Microsoft Graph** | `CopilotPackages.ReadWrite.All` (override with `CPS_GRAPH_WRITE_SCOPE`) | Delegated only. Microsoft offers **no application permission** for these two actions. | Same licence and cloud limits as above; sign in with `cs_login scope='graph_write'`. These exist only on `/beta`, so they are pinned there whatever version a read used. Blocking is tenant-wide and takes effect for every user at once. Unverified against a live tenant. |

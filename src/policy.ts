@@ -60,6 +60,39 @@ const BESPOKE_CONDITIONAL_WRITES = [
  */
 export const LOCAL_DESTRUCTIVE_TOOLS: readonly string[] = ["cs_remove_component"];
 
+/**
+ * Local-only tools that show the change and wait for `confirm: true` because
+ * the edit is prose a summary cannot describe: the agent's instructions. They
+ * write nothing on the first call. Read-only mode leaves them alone.
+ */
+export const LOCAL_CONFIRM_TOOLS: readonly string[] = [
+  // These two build the preview themselves: the instructions are prose, and the
+  // character count against the product's 8000 is half of what the user needs.
+  "cs_update_agent",
+  "cs_generate_instructions",
+  // For the rest the preview is the captured file writes (src/authoring/capture.ts),
+  // which the registration wrapper in tools/shared.ts turns into a diff.
+  "cs_add_topic",
+  "cs_add_knowledge_source",
+  "cs_add_tool",
+  "cs_add_flow",
+  "cs_add_trigger",
+  "cs_add_variable",
+  "cs_edit_topic",
+  "cs_edit_tool",
+  "cs_edit_knowledge",
+  "cs_update_settings",
+  // Already had its own confirm; the no-confirm path now shows the files it
+  // would delete rather than only naming the component.
+  "cs_remove_component",
+];
+
+/** Tools that declare their own confirm and build their own preview. */
+const SELF_PREVIEW_TOOLS = ["cs_update_agent", "cs_generate_instructions", "cs_remove_component"];
+
+/** The subset whose preview the registration wrapper builds from captured writes. */
+export const CAPTURED_PREVIEW_TOOLS: readonly string[] = LOCAL_CONFIRM_TOOLS.filter((t) => !SELF_PREVIEW_TOOLS.includes(t));
+
 /** Tools that always change a live environment; hidden entirely in read-only mode. */
 export const ENVIRONMENT_WRITE_TOOLS: ReadonlySet<string> = new Set<string>([
   ...BESPOKE_ALWAYS_WRITES,
