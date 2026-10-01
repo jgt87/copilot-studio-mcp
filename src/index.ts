@@ -17,7 +17,6 @@
  * stdout is the MCP transport. All diagnostics go through `log()` to stderr.
  */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { findPac } from "./pac.js";
 import { errorMessage, log } from "./log.js";
 import { VERSION, server, skippedTools, withheldTools } from "./tools/shared.js";
 import { activePreset } from "./toolFilter.js";
@@ -49,7 +48,10 @@ process.on("unhandledRejection", (reason) => log(`unhandled rejection (server ke
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  log(`copilot-studio-mcp ${VERSION} ready (pac: ${findPac() ?? "not found"})`);
+  // No findPac() here: it stats every PATH entry synchronously, and on a machine whose PATH or home
+  // folder sits on a network share that stalls the event loop before `initialize` is answered,
+  // which clients with a short start-up timeout report as a failed server. cs_init reports pac.
+  log(`copilot-studio-mcp ${VERSION} ready`);
   if (withheldTools.length) log(`read-only mode (CPS_READ_ONLY): ${withheldTools.length} environment-changing tool(s) not registered`);
   const preset = activePreset();
   if (skippedTools.length) log(`tool filter${preset ? ` (preset ${preset})` : ""}: ${skippedTools.length} tool(s) hidden by CPS_TOOLS / CPS_TOOLS_EXCLUDE`);

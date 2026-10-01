@@ -108,6 +108,22 @@ Claude Code (user scope):
 claude mcp add-json copilot-studio '{"type":"stdio","command":"npx","args":["-y","copilot-studio-mcp"]}' --scope user
 ```
 
+Mistral Vibe, in `~/.vibe/config.toml` (or `$VIBE_HOME/config.toml`; a `./.vibe/config.toml` in
+the working folder takes precedence). Vibe gives a server 10 seconds to start by default, which a
+first `npx` fetch on a corporate network can exceed, so install globally and run the entry point
+with `node` (find the folder with `npm root -g`). On Windows, keep paths in single quotes: TOML
+reads backslashes inside double quotes as escapes, and `"C:\Users\..."` is not valid TOML.
+
+```toml
+[[mcp_servers]]
+name = "copilot-studio"
+transport = "stdio"
+command = "node"
+args = ['C:\Users\<you>\AppData\Roaming\npm\node_modules\copilot-studio-mcp\dist\index.js']
+startup_timeout_sec = 60   # default 10
+tool_timeout_sec = 300     # default 60; solution exports and evaluation runs take longer
+```
+
 `npm install -g copilot-studio-mcp` with `"command": "copilot-studio-mcp"` avoids the npx start-up
 cost. The server is published to the MCP Registry as `io.github.jgt87/copilot-studio-mcp`, which is
 what VS Code's MCP gallery (Extensions view, search `@mcp`) draws from through the GitHub MCP
