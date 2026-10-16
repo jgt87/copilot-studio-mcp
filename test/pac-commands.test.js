@@ -38,6 +38,10 @@ test("buildPacArgs maps params to flags in spec order and skips absent optionals
 test("boolstring, repeated and comma-joined lists, numbers", () => {
   assert.deepEqual(buildPacArgs(spec("cs_quarantine_agent"), { botId: "b1", quarantine: false }), ["copilot", "quarantine", "--bot-id", "b1", "--status", "false"]);
   assert.deepEqual(buildPacArgs(spec("cs_quarantine_agent"), { botId: "b1", quarantine: true }), ["copilot", "quarantine", "--bot-id", "b1", "--status", "true"]);
+  assert.deepEqual(buildPacArgs(spec("cs_reassign_agent_owner"), { botId: "b1", newOwner: "u1" }), ["copilot-studio", "reassign-copilot-agent", "--bot-id", "b1", "--new-owner-aad-user-id", "u1"]);
+  assert.equal(isMutating(spec("cs_reassign_agent_owner"), {}), true);
+  assert.deepEqual(buildPacArgs(spec("cs_get_test_set"), { environment: "env-1", botId: "b1", testSetId: "t1" }), ["copilot-studio", "get-maker-evaluation-test-set", "--environment", "env-1", "--bot-id", "b1", "--test-set-id", "t1"]);
+  assert.equal(isMutating(spec("cs_get_test_set"), {}), false);
   assert.deepEqual(buildPacArgs(spec("cs_merge_translations"), { files: ["a.resx", "b.resx"], whatIf: true }), ["copilot", "merge-translation", "--file", "a.resx", "--file", "b.resx", "--whatif"]);
   assert.throws(() => buildPacArgs(spec("cs_merge_translations"), { files: [] }), /files/);
   assert.deepEqual(buildPacArgs(spec("cs_check_solution"), { path: "out/*.zip", excludedFiles: ["a.js", "b.js"] }), ["solution", "check", "--path", "out/*.zip", "--excludedFiles", "a.js,b.js"]);
@@ -161,4 +165,10 @@ test("preset menu: every preset has a when-to-use line and keeps the session con
     const admitted = registered.filter((n) => toolEnabled(n, { CPS_TOOLS: o.preset })).length;
     assert.equal(o.offers, admitted, `${o.preset} advertises ${o.offers} but admits ${admitted}`);
   }
+});
+
+test("pac 2.12 flags: macro-region on admin create, customEndpoint on solution check", () => {
+  assert.deepEqual(buildPacArgs(spec("cs_admin_create_environment"), { name: "Dev", type: "Sandbox", macroRegion: "emea" }), ["admin", "create", "--name", "Dev", "--macro-region", "emea", "--type", "Sandbox"]);
+  assert.throws(() => buildPacArgs(spec("cs_admin_create_environment"), { type: "Sandbox", macroRegion: "mars" }), /must be one of asia-pacific/);
+  assert.deepEqual(buildPacArgs(spec("cs_check_solution"), { path: "a.zip", customEndpoint: "https://checker.contoso.test" }), ["solution", "check", "--path", "a.zip", "--customEndpoint", "https://checker.contoso.test"]);
 });

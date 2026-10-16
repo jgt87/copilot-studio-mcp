@@ -137,7 +137,7 @@ server.registerTool(
       description: z.string().optional(),
       inputs: z.array(z.object({ name: z.string(), type: z.enum(["string", "number", "boolean"]).optional(), description: z.string().optional() })).optional(),
       outputs: z.array(z.object({ name: z.string(), type: z.enum(["string", "number", "boolean"]).optional(), value: z.string().optional().describe("Power Automate expression for the response value") })).optional(),
-      actions: z.record(z.unknown()).optional().describe("Extra Power Automate actions (name -> definition) inserted before the response"),
+      actions: z.record(z.string(), z.unknown()).optional().describe("Extra Power Automate actions (name -> definition) inserted before the response"),
       addTool: z.boolean().optional().describe("Also create actions/<name>.mcs.yml invoking this flow"),
       overwrite: z.boolean().optional(),
     },
@@ -239,7 +239,7 @@ server.registerTool(
   },
 );
 
-server.registerTool("cs_update_settings", { title: "Update settings.mcs.yml", description: "Set values in settings.mcs.yml by dot path, e.g. {\"configuration.settings.GenerativeActionsEnabled\": true}. Do not change authoringModel/recognizer/template.", inputSchema: { workspace: workspaceArg, patch: z.record(z.unknown()) } }, async ({ workspace, patch }) => {
+server.registerTool("cs_update_settings", { title: "Update settings.mcs.yml", description: "Set values in settings.mcs.yml by dot path, e.g. {\"configuration.settings.GenerativeActionsEnabled\": true}. Do not change authoringModel/recognizer/template.", inputSchema: { workspace: workspaceArg, patch: z.record(z.string(), z.unknown()) } }, async ({ workspace, patch }) => {
   try {
     const forbidden = Object.keys(patch).filter((k) => /authoringModel|recognizer\.kind|^template$/.test(k));
     if (forbidden.length) return fail(`Refusing to change ${forbidden.join(", ")}: the tooling relies on them`);

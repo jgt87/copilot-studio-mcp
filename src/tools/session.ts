@@ -225,7 +225,7 @@ server.registerTool(
   {
     title: "Choose how many tools are offered",
     description:
-      "Answer 'there are too many tools': narrow, or restore, the tool list for the rest of this session. The full list is 142 tools and about 50k tokens of schema, which crowds a smaller model's context and makes it choose worse. Presets: core (the loop that builds an agent and gets it live), authoring (local files only), admin (tenant administration), solutions (moving solutions between environments), full (everything). Read-only: it changes nothing in any environment and no tool is lost, only hidden. Ask the user before calling it.",
+      "Answer 'there are too many tools': narrow, or restore, the tool list for the rest of this session. The full list is 146 tools and about 50k tokens of schema, which crowds a smaller model's context and makes it choose worse. Presets: core (the loop that builds an agent and gets it live), authoring (local files only), admin (tenant administration), solutions (moving solutions between environments), full (everything). Read-only: it changes nothing in any environment and no tool is lost, only hidden. Ask the user before calling it.",
     inputSchema: {
       preset: z.enum(["core", "authoring", "admin", "solutions", "full"]).describe("Which set to offer for the rest of this session"),
       keep: z.array(z.string()).optional().describe("Extra tool names to keep on top of the preset"),

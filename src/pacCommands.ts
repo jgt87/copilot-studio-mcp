@@ -21,9 +21,10 @@ import { SPECS as connectionSpecs } from "./pacSpecs/connection.js";
 import { SPECS as authSpecs } from "./pacSpecs/auth.js";
 import { SPECS as adminSpecs } from "./pacSpecs/admin.js";
 import { SPECS as envSpecs } from "./pacSpecs/env.js";
+import { SPECS as copilotStudioSpecs } from "./pacSpecs/copilotStudio.js";
 
 /** Every wrapped pac command, in the order the tools are registered. */
-export const PAC_COMMANDS: PacCommandSpec[] = [...copilotSpecs, ...solutionSpecs, ...pipelineSpecs, ...connectionSpecs, ...authSpecs, ...adminSpecs, ...envSpecs];
+export const PAC_COMMANDS: PacCommandSpec[] = [...copilotSpecs, ...copilotStudioSpecs, ...solutionSpecs, ...pipelineSpecs, ...connectionSpecs, ...authSpecs, ...adminSpecs, ...envSpecs];
 
 // ---------------------------------------------------------------------------
 // From spec to argv / schema

@@ -136,9 +136,9 @@ server.registerTool(
 server.registerTool(
   "cs_reassign_org_agent",
   {
-    title: "Reassign an agent's owner",
+    title: "Reassign a catalogue agent's owner",
     description:
-      "Hand ownership of a catalogue agent to another user, by their Entra object id. Used when the owner leaves the organisation. Changes a live tenant: requires confirm: true. Needs CopilotPackages.ReadWrite.All and runs against Graph beta (cs_login scope 'graph_write'). " +
+      "Hand ownership of an agent in the Microsoft 365 agent catalogue to another user, by their Entra object id. Used when the owner leaves the organisation. The agent's owner inside a Power Platform environment is cs_reassign_agent_owner. Changes a live tenant: requires confirm: true. Needs CopilotPackages.ReadWrite.All and runs against Graph beta (cs_login scope 'graph_write'). " +
       LICENCE_NOTE,
     inputSchema: {
       workspace: workspaceArg,

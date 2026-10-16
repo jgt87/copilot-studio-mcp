@@ -57,8 +57,10 @@ Three layers behind one tool list, all registered in `src/index.ts`:
   cuts the call off at ~60s), and takes an injectable `sleep`. All permissions are delegated (no
   client-credential flow);
   the README section "Authentication and app registration" is the source of truth for which API
-  and permission each tool needs. Keep it in sync when adding a cloud call. `ppapi.ts` is the evaluation API (list/run/get only; no
-  create), `dataverse.ts` lists bots and publishes via the `PvaPublish` bound action polled on
+  and permission each tool needs. Keep it in sync when adding a cloud call. `ppapi.ts` is the Power Platform API `copilotstudio` namespace: evaluations (list/run/get, the
+  run snapshot download; no create), and the per-agent admin routes beside them (connector
+  consent bypass, channel manifest download). `http.requestBytes` is the download path for those
+  zips. `dataverse.ts` lists bots and publishes via the `PvaPublish` bound action polled on
   `publishedon`, and reads and writes cloud flows on the `workflow` table (category 5): `getFlow`
   parses `clientdata`, `setFlowState` PATCHes the documented statecode/statuscode pairs, and
   `updateFlow` swaps `properties.definition` inside the existing `clientdata` so connection
@@ -418,7 +420,7 @@ update it in the same commit:
 
 ## Writing a tool description
 
-The description is the only thing a client's model reads when it decides which of 142 tools to
+The description is the only thing a client's model reads when it decides which of 148 tools to
 call, so it is routing code, not documentation. `scripts/routing-eval.mjs` measures it; these
 rules came out of what that eval actually caught, and each one is worth a re-measure before it is
 changed.
@@ -451,6 +453,21 @@ changed.
 `cs_validate` blocks `cs_push` on errors, so false positives cost more than misses. Unknown
 properties at the document root are warnings (the published schema lags the product, for example
 `displayName` on `GptComponentMetadata`); unknown properties inside dialog actions are errors.
+
+The schema describes the Dataverse row, not always the workspace file. `GlobalVariableComponent`
+is the known case: the file is flat (`name`, `aIVisibility`, `scope`, `defaultValue`, as in
+Microsoft's template) and the schema nests it under a required `variable`, so `TOLERATED_PROPS`
+and `EXEMPT_REQUIRED` in `schemaValidate.ts` hold the file to the file's shape. Holding it to the
+row blocked every push of a workspace with a global variable. Before tightening a check, run it
+over `reference/templates` (`test/yaml-quality.test.js` does) and a real clone.
+
+The checks beyond the schema each cite their source where they are implemented: Microsoft Learn,
+Microsoft's skills-for-copilot-studio, or a microsoft/vscode-copilotstudio issue carrying pac's
+own error text. Only failures a push would accept and store wrongly, or pac would reject, are
+errors (conflict markers, placeholders, schema-name characters and length, the 200-phrase cap);
+style and likely-mistake findings are warnings, and phrase-shape advice belongs in `review.ts`.
+`test/builders-validate.test.js` runs every builder and editor and requires a clean
+`validateWorkspace`; a new builder joins it.
 
 ## Fixtures and reference material
 

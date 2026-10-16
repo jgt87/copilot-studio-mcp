@@ -219,9 +219,9 @@ Knowledge is what the agent reads to answer questions it has no topic for.
 ## Add one
 \`cs_add_knowledge_source\` with \`name\` and \`kind\`.
 
-\`kind: "publicSite"\` - a public website. Pass \`site\` (the URL). Needs no connection. Start here.
-\`kind: "sharePoint"\` - a SharePoint site. Pass \`site\`. Needs a connection the user makes in the portal.
-\`kind: "graphConnector"\` - a Microsoft Graph connector already set up in the tenant.
+\`kind: "public-site"\` - a public website. Pass \`site\` (the URL). Needs no connection. Start here.
+\`kind: "sharepoint"\` - a SharePoint site. Pass \`site\`. Needs a connection the user makes in the portal.
+\`kind: "graph-connector"\` - a Microsoft Graph connector already set up in the tenant.
 \`kind: "files"\` - upload files. Pass \`files\` (paths). They are copied into \`knowledge/files/\`.
 
 IF you do not know which kind the user means -> call the tool without \`kind\`. It returns a question
@@ -313,7 +313,26 @@ redirect, planComplete. With one of these, \`triggerPhrases\` is not used.
 ## Rules
 Trigger phrases must not overlap between topics. Overlapping phrases make the agent pick the wrong
 one. \`cs_review_agent\` reports overlaps.
+Trigger phrases: 5 to 10 per topic, each two to nine words. No single words. At most 200.
 Power Fx conditions start with "=". The tool adds it if you leave it out.
+A \`setVariable\` value is text unless it starts with "=". Write "=Topic.Total + 1", not "Topic.Total + 1".
+Under generative orchestration the agent picks a topic by its description. Give each topic its own.
+Give every topic input and output a description. A topic that answers should return an output
+(for example a Boolean \`answered\`); one that returns nothing is the usual cause of duplicate replies.
+
+## Ending
+\`end\` (EndDialog) ends this topic and returns to the one that called it.
+\`endConversation\` ends the whole conversation.
+Nodes after either one never run. \`cs_validate\` warns about them.
+
+## Editing the YAML by hand
+Quote any text that contains " #": YAML drops everything after it as a comment.
+Remove git conflict markers (<<<<<<<, =======, >>>>>>>) before \`cs_push\`. A push keeps only the
+text before the first one. \`cs_validate\` blocks on them.
+The node is SendActivity with \`activity:\`. SendMessage / \`message:\` from older samples is invalid.
+Keep file names to letters, digits, _ and -. The file name becomes part of the schema name.
+Do not put a period in a topic name: the solution can then no longer be exported.
+For a line break in a message, use a \`|-\` block and <br />. Plain new lines show as spaces.
 
 ## Change an existing topic
 \`cs_edit_topic\` - change phrases, priority, or one node by position or id.
@@ -336,6 +355,12 @@ Test sets cannot be created through the API. One manual import is unavoidable.
 3. \`cs_list_test_sets\` - find the id of the imported set.
 4. \`cs_run_evaluation\` with \`confirm: true\` after the user approves.
 5. \`cs_get_evaluation_run\` - per-case results, bucketed pass / fail / error.
+6. When a result is puzzling, \`cs_download_evaluation_snapshot\` fetches the agent content that
+   run was scored against, to diff with the workspace now.
+
+An agent with authenticated knowledge or connector tools answers nothing useful anonymously: pass
+\`mcsConnectionId\` (the user's Copilot Studio connection) so the run signs in as that user, and
+\`toolsConnections\` to pick the connection each connector uses.
 
 Limit: 20 runs per agent per 24 hours.
 

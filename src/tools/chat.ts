@@ -109,7 +109,7 @@ server.registerTool(
   {
     title: "Run local conversation tests",
     description: "Run a YAML test file (tests: name, utterance, expect, continueConversation) against the published agent through cs_chat and report pass/fail. expect asserts on wording (contains, containsAny, notContains, regex, minLength, noSignIn) and on what the agent did (usedTool, notUsedTool, usedTopic, notUsedTopic, citedKnowledge), so a test can tell a real tool call from an answer that merely sounds right. Every result reports the observed topic, tool and citations whether or not it asserted on them. The CLI-native complement to portal evaluations. Pass writeExample to create a starter file.",
-    inputSchema: { file: z.string().optional(), tests: z.array(z.object({ name: z.string().optional(), utterance: z.string(), expect: z.record(z.unknown()).optional(), continueConversation: z.boolean().optional() })).optional(), writeExample: z.string().optional().describe("Path to write an example test file, then return"), stopOnFail: z.boolean().optional(), ...chatArgs },
+    inputSchema: { file: z.string().optional(), tests: z.array(z.object({ name: z.string().optional(), utterance: z.string(), expect: z.record(z.string(), z.unknown()).optional(), continueConversation: z.boolean().optional() })).optional(), writeExample: z.string().optional().describe("Path to write an example test file, then return"), stopOnFail: z.boolean().optional(), ...chatArgs },
   },
   async (a) => {
     try {

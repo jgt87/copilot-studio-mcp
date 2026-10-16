@@ -1,7 +1,7 @@
 /**
  * Environments through pac, without an MSAL sign-in.
  *
- * One entry per command; the flags come from `pac env <command> help` on pac 2.11.2.
+ * One entry per command; the flags come from `pac env <command> help` on pac 2.12.2.
  */
 import { ASYNC, ENV, SOLUTION_EXPORT, type PacCommandSpec } from "../pacParams.js";
 

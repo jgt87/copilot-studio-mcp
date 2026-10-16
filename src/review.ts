@@ -75,6 +75,32 @@ const rules: Rule[] = [
       if ((t.details.actionCount as number) === 0) out.push(f("topic-empty", "warning", `Topic '${t.name}' has no actions.`, "Add nodes with cs_edit_topic appendActions or remove the topic.", t.relPath));
       return out;
     }),
+  // Phrase shape, from Microsoft's trigger-phrase guidance: a single word matches
+  // too much, and ten or more words stop reading like what users type.
+  (ws) =>
+    customTopics(ws).flatMap((t) => {
+      const phrases = (t.details.triggerPhrases as string[] | undefined) ?? [];
+      const words = (p: string) => p.trim().split(/\s+/).filter(Boolean).length;
+      const single = phrases.filter((p) => words(p) === 1);
+      const long = phrases.filter((p) => words(p) >= 10);
+      const out: ReviewFinding[] = [];
+      if (single.length) out.push(f("topic-phrase-single-word", "warning", `Topic '${t.name}' has single-word trigger phrase(s): ${single.map((p) => `'${p}'`).join(", ")}.`, "Use short sentences of two to nine words; a single word matches too broadly and steals other topics' traffic.", t.relPath));
+      if (long.length) out.push(f("topic-phrase-long", "info", `Topic '${t.name}' has ${long.length} trigger phrase(s) of ten or more words.`, "Keep phrases under ten words, the way users actually ask; put the detail in the topic description instead.", t.relPath));
+      return out;
+    }),
+  // Generative orchestration picks a topic by its description; two that say the same thing make the choice arbitrary.
+  (ws) => {
+    const out: ReviewFinding[] = [];
+    const seen = new Map<string, string>();
+    for (const t of customTopics(ws)) {
+      const key = String(t.details.modelDescription ?? t.description ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      if (!key) continue;
+      const other = seen.get(key);
+      if (other) out.push(f("topic-description-duplicate", "warning", `Topics '${other}' and '${t.name}' have the same description.`, "Say what each topic is for and when it is NOT the right one; the orchestrator chooses between topics by their descriptions.", t.relPath));
+      else seen.set(key, t.name);
+    }
+    return out;
+  },
   // A phrase claimed by two topics makes triggering arbitrary.
   (ws) => {
     const out: ReviewFinding[] = [];

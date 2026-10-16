@@ -1,7 +1,7 @@
 /**
  * Copilot Studio agents: templates, translations and quarantine.
  *
- * One entry per command; the flags come from `pac copilot <command> help` on pac 2.11.2.
+ * One entry per command; the flags come from `pac copilot <command> help` on pac 2.12.2.
  */
 import { ASYNC, ENV, SOLUTION_EXPORT, type PacCommandSpec } from "../pacParams.js";
 

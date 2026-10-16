@@ -71,6 +71,9 @@
     { "utterance": "That agent is leaking data - stop everyone in the tenant from using it", "expect": "cs_block_org_agent", "alsoFine": ["cs_quarantine_agent"], "area": "agents" },
 
     { "utterance": "Run a pac command I can't find a tool for", "expect": "cs_pac", "area": "escape" },
-    { "utterance": "What does the AdaptiveCard node look like in the schema?", "expect": "cs_lookup_schema", "area": "escape" }
+    { "utterance": "What does the AdaptiveCard node look like in the schema?", "expect": "cs_lookup_schema", "area": "escape" },
+    { "utterance": "The maker of the HR agent in our dev environment has left - make Pieter the owner so he can keep editing it", "expect": "cs_reassign_agent_owner", "alsoFine": ["cs_list_agents"], "area": "admin", "probe": "reassign_agent_owner vs reassign_org_agent" },
+    { "utterance": "Transfer the published Teams agent in our Microsoft 365 agent store to a new owner", "expect": "cs_reassign_org_agent", "alsoFine": ["cs_list_org_agents"], "area": "admin", "probe": "reassign_agent_owner vs reassign_org_agent" },
+    { "utterance": "Show me the questions in the 'Smoke tests' evaluation set", "expect": "cs_get_test_set", "alsoFine": ["cs_list_test_sets"], "area": "quality" }
   ]
 }

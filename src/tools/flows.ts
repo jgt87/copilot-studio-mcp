@@ -35,8 +35,8 @@ const flowOutput = z.object({ name: z.string(), type: z.enum(["string", "number"
 /** One step. Nested steps (condition, foreach, scope) take the same shape, expressed loosely so zod stays finite. */
 const flowStep: z.ZodType<FlowStepSpec> = z.lazy(() =>
   z.union([
-    z.object({ type: z.literal("connector"), name: z.string(), connectorId: z.string().describe("e.g. shared_office365 (cs_list_connectors)"), operationId: z.string().describe("cs_describe_connector lists them"), parameters: z.record(z.unknown()).optional(), connectionReference: z.string().optional(), description: z.string().optional() }),
-    z.object({ type: z.literal("http"), name: z.string(), method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional(), uri: z.string(), headers: z.record(z.string()).optional(), body: z.unknown().optional() }),
+    z.object({ type: z.literal("connector"), name: z.string(), connectorId: z.string().describe("e.g. shared_office365 (cs_list_connectors)"), operationId: z.string().describe("cs_describe_connector lists them"), parameters: z.record(z.string(), z.unknown()).optional(), connectionReference: z.string().optional(), description: z.string().optional() }),
+    z.object({ type: z.literal("http"), name: z.string(), method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional(), uri: z.string(), headers: z.record(z.string(), z.string()).optional(), body: z.unknown().optional() }),
     z.object({ type: z.literal("compose"), name: z.string(), value: z.unknown() }),
     z.object({ type: z.literal("initializeVariable"), name: z.string(), variable: z.string(), valueType: z.enum(["string", "number", "boolean", "object", "array"]).optional(), value: z.unknown().optional() }),
     z.object({ type: z.literal("setVariable"), name: z.string(), variable: z.string(), value: z.unknown() }),
@@ -45,7 +45,7 @@ const flowStep: z.ZodType<FlowStepSpec> = z.lazy(() =>
     z.object({ type: z.literal("scope"), name: z.string(), actions: z.array(flowStep) }),
     z.object({ type: z.literal("terminate"), name: z.string(), status: z.enum(["Succeeded", "Failed", "Cancelled"]).optional(), message: z.string().optional() }),
     z.object({ type: z.literal("response"), name: z.string().optional(), outputs: z.array(flowOutput).optional() }),
-    z.object({ type: z.literal("raw"), name: z.string(), json: z.record(z.unknown()) }),
+    z.object({ type: z.literal("raw"), name: z.string(), json: z.record(z.string(), z.unknown()) }),
   ]) as unknown as z.ZodType<FlowStepSpec>,
 );
 
@@ -54,8 +54,8 @@ const flowTrigger: z.ZodType<FlowTriggerSpec> = z.union([
   z.object({ kind: z.literal("manual"), inputs: z.array(flowParam).optional() }),
   z.object({ kind: z.literal("http"), inputs: z.array(flowParam).optional(), method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional() }),
   z.object({ kind: z.literal("recurrence"), frequency: z.enum(["Minute", "Hour", "Day", "Week", "Month"]), interval: z.number().optional(), startTime: z.string().optional(), timeZone: z.string().optional() }),
-  z.object({ kind: z.literal("connector"), connectorId: z.string(), operationId: z.string(), parameters: z.record(z.unknown()).optional(), connectionReference: z.string().optional(), recurrence: z.object({ frequency: z.string(), interval: z.number() }).optional() }),
-  z.object({ kind: z.literal("raw"), name: z.string().optional(), json: z.record(z.unknown()) }),
+  z.object({ kind: z.literal("connector"), connectorId: z.string(), operationId: z.string(), parameters: z.record(z.string(), z.unknown()).optional(), connectionReference: z.string().optional(), recurrence: z.object({ frequency: z.string(), interval: z.number() }).optional() }),
+  z.object({ kind: z.literal("raw"), name: z.string().optional(), json: z.record(z.string(), z.unknown()) }),
 ]) as unknown as z.ZodType<FlowTriggerSpec>;
 
 const flowSpecArgs = {
@@ -165,9 +165,9 @@ server.registerTool(
       name: z.string().optional(),
       description: z.string().optional(),
       ...flowSpecArgs,
-      definition: z.record(z.unknown()).optional().describe("Power Automate definition object (properties.definition), instead of steps"),
-      clientData: z.record(z.unknown()).optional().describe("The whole clientdata document; overrides 'definition'"),
-      connectionReferences: z.record(z.unknown()).optional().describe("Connection reference entries to add or explicitly replace; existing entries are otherwise preserved"),
+      definition: z.record(z.string(), z.unknown()).optional().describe("Power Automate definition object (properties.definition), instead of steps"),
+      clientData: z.record(z.string(), z.unknown()).optional().describe("The whole clientdata document; overrides 'definition'"),
+      connectionReferences: z.record(z.string(), z.unknown()).optional().describe("Connection reference entries to add or explicitly replace; existing entries are otherwise preserved"),
       confirm: confirmArg,
     },
   },
@@ -196,9 +196,9 @@ server.registerTool(
       ...flowArgs,
       name: z.string().describe("Flow display name"),
       ...flowSpecArgs,
-      definition: z.record(z.unknown()).optional().describe("A ready-made Power Automate definition, instead of steps"),
-      clientData: z.record(z.unknown()).optional().describe("The whole clientdata document, when you have one (from cs_get_flow of another flow, for example)"),
-      connectionReferences: z.record(z.unknown()).optional().describe("properties.connectionReferences, when you pass a definition rather than steps"),
+      definition: z.record(z.string(), z.unknown()).optional().describe("A ready-made Power Automate definition, instead of steps"),
+      clientData: z.record(z.string(), z.unknown()).optional().describe("The whole clientdata document, when you have one (from cs_get_flow of another flow, for example)"),
+      connectionReferences: z.record(z.string(), z.unknown()).optional().describe("properties.connectionReferences, when you pass a definition rather than steps"),
       description: z.string().optional(),
       solution: z.string().optional().describe("Unique name of the solution to create it in"),
       confirm: confirmArg,
@@ -331,7 +331,7 @@ server.registerTool(
       clientId: clientArg,
       flowId: z.string().describe("Flow id (cs_list_flows)"),
       triggerName: z.string().optional().describe("Trigger key inside the definition (cs_get_flow lists them); default 'manual'"),
-      payload: z.record(z.unknown()).optional().describe("Body for the trigger"),
+      payload: z.record(z.string(), z.unknown()).optional().describe("Body for the trigger"),
       confirm: confirmArg,
     },
   },

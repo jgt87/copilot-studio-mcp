@@ -288,9 +288,9 @@ server.registerTool(
       solutionDir: z.string().optional().describe("Directory written by cs_pull_solution"),
       settingsFile: z.string().optional().describe("Default <solutionDir>/deployment-settings.json or next to the zip"),
       regenerate: z.boolean().optional().describe("Recreate the file even if it exists (mappings are lost)"),
-      connectionReferences: z.record(z.string()).optional().describe("logicalName -> connectionId in the target environment"),
-      environmentVariables: z.record(z.string()).optional().describe("schemaName -> value for the target"),
-      copilotAgents: z.record(z.string()).optional().describe("agent schema name -> Entra security group id allowed to use the agent in the target"),
+      connectionReferences: z.record(z.string(), z.string()).optional().describe("logicalName -> connectionId in the target environment"),
+      environmentVariables: z.record(z.string(), z.string()).optional().describe("schemaName -> value for the target"),
+      copilotAgents: z.record(z.string(), z.string()).optional().describe("agent schema name -> Entra security group id allowed to use the agent in the target"),
     },
   },
   async (a) => {

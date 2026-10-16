@@ -8,6 +8,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
@@ -77,6 +79,19 @@ export function tryWorkspace(workspace?: string): WorkspaceInfo | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Where a downloaded file lands when the caller names no path: beside the
+ * workspace as `<workspace>-<fileName>` (the same place cs_create_test_set_csv
+ * writes), else the temp folder. Never inside the workspace, where pac would
+ * refuse it as an unsupported file.
+ */
+export function downloadPath(workspace: string | undefined, fileName: string, explicit?: string): string {
+  if (explicit) return path.resolve(explicit);
+  const safe = path.basename(fileName).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_") || "download.zip";
+  const ws = tryWorkspace(workspace);
+  return ws ? path.join(path.dirname(ws.root), `${path.basename(ws.root)}-${safe}`) : path.join(os.tmpdir(), safe);
 }
 
 export interface CloudContext {

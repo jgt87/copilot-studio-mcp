@@ -63,7 +63,7 @@ test("redirects: unknown local topic warns, system topics and placeholders are h
   assert.ok(!msgs.some((m) => m.includes("topic.Escalate")), "system topic must not warn");
   assert.ok(msgs.some((m) => m.startsWith("error:") && m.includes("<AGENT_SCHEMA>")));
   assert.equal(v.errors, 1);
-  assert.equal(v.warnings, 2, "redirect target warning plus the schema validator placeholder-text warning");
+  assert.equal(v.warnings, 1, "the redirect target warning; the placeholder is reported once, as the error");
 });
 
 test("connection references: placeholder is an error, unlisted reference warns, catalog miss is informational", (t) => {

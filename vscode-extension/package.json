@@ -2,7 +2,7 @@
   "name": "copilot-studio-mcp",
   "displayName": "Copilot Studio MCP",
   "description": "MCP server for Microsoft Copilot Studio agent development: workspace sync via pac, YAML authoring (topics, knowledge, tools, flows), evaluations and chat-testing.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "publisher": "GijsTromp",
   "license": "MIT",
   "icon": "icon.png",

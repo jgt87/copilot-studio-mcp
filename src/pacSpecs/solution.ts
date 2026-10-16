@@ -1,7 +1,7 @@
 /**
  * Solution projects, Solution Checker, versioning and upgrades.
  *
- * One entry per command; the flags come from `pac solution <command> help` on pac 2.11.2.
+ * One entry per command; the flags come from `pac solution <command> help` on pac 2.12.2.
  */
 import { ASYNC, ENV, SOLUTION_EXPORT, type PacCommandSpec } from "../pacParams.js";
 
@@ -58,6 +58,7 @@ export const SPECS: PacCommandSpec[] = [
       solutionUrl: { flag: "--solutionUrl", type: "string", description: "SAS URL of a solution zip instead of path" },
       outputDirectory: { flag: "--outputDirectory", type: "string", description: "Where to write the results" },
       geo: { flag: "--geo", type: "string", description: "Checker service geography" },
+      customEndpoint: { flag: "--customEndpoint", type: "string", description: "Custom URL of the Power Apps Checker endpoint, instead of the geography's" },
       ruleSet: { flag: "--ruleSet", type: "string", description: "'Solution Checker' (default), 'AppSource Certification' or a rule set id" },
       ruleLevelOverride: { flag: "--ruleLevelOverride", type: "string", description: "JSON file with rule level overrides" },
       excludedFiles: { flag: "--excludedFiles", type: "string[]", join: "comma", description: "Files to exclude from the analysis" },

@@ -1,9 +1,9 @@
 # Tool reference
 
 Every tool the server registers, grouped by area. The README describes the workflows these tools
-serve; this page is the lookup table. Tool names are exact. Counts: 142 tools in total; the
+serve; this page is the lookup table. Tool names are exact. Counts: 148 tools in total; the
 `core`, `authoring`, `admin` and `solutions` presets (README, "Running on a smaller model") offer
-34, 25, 44 and 25 of them.
+34, 25, 49 and 25 of them.
 
 Every tool that can change a live environment returns a dry run and does nothing else until it is
 called again with `confirm: true` (README, "Approval before anything changes"). Tools marked
@@ -77,13 +77,15 @@ the MCP elicitation feature.
 | `cs_admin_create_environment`, `cs_admin_delete_environment`, `cs_admin_reset_environment`, `cs_admin_copy_environment`, `cs_admin_restore_environment`, `cs_admin_backup_environment` | environment lifecycle (`confirm`; reset and delete destroy everything in the environment, copy and restore overwrite the target) |
 | `cs_admin_list_app_templates`, `cs_admin_query`, `cs_admin_self_elevate` | Dynamics 365 templates, tenant resource queries, self-elevation (`confirm`) |
 
-## Remaining pac commands (declarative wrappers over `pac <group> <command>`; flags from pac 2.11.2)
+## Remaining pac commands (declarative wrappers over `pac <group> <command>`; flags from pac 2.12.2, `copilot-studio` from 2.13.1)
 
 | Tool | Purpose |
 | --- | --- |
 | `cs_extract_agent_template`, `cs_create_agent_from_template` | template an existing agent and create new agents from it |
 | `cs_extract_translations`, `cs_merge_translations` | localisation round trip (.resx / .json), with `whatIf` |
 | `cs_quarantine_agent` | quarantine or release an agent (`confirm`) |
+| `cs_reassign_agent_owner` | make another person the owner of an agent in its environment (`confirm`; preview `pac copilot-studio`) |
+| `cs_get_test_set` | one evaluation test set with its test cases (preview `pac copilot-studio`) |
 | `cs_init_solution_project`, `cs_clone_solution`, `cs_sync_solution`, `cs_add_solution_reference`, `cs_add_solution_license` | source-controlled solution projects (.cdsproj) |
 | `cs_check_solution` | Solution Checker as a quality gate before deploying |
 | `cs_set_solution_version`, `cs_solution_online_version`, `cs_upgrade_solution`, `cs_publish_customizations`, `cs_add_solution_component` | release numbering, staged upgrades, publish all, add components (`confirm` where the environment changes) |
@@ -134,6 +136,16 @@ Studio work and stays reachable through `cs_pac`; `pac copilot mcp` is pac's own
 is not wrapped. With that many tools, `CPS_TOOLS` / `CPS_TOOLS_EXCLUDE` (see Install) can hide the
 ones a session does not need.
 
+## Agent settings and downloads (Power Platform API, per agent)
+
+| Tool | Purpose |
+| --- | --- |
+| `cs_get_connector_consent_bypass` | whether end users are asked to consent to the agent's connectors, or an admin has switched the prompt off |
+| `cs_set_connector_consent_bypass` | switch that admin setting on or off (`confirm`; needs a Power Platform or Copilot Studio admin role) |
+| `cs_download_channel_manifest` | the Teams / Microsoft 365 app package zip for a published agent, the portal's "Download .zip" |
+
+All three follow the published reference (June and July 2026) and are not yet verified against a live tenant.
+
 ## Authoring (files, schema-validated)
 
 Every tool here that writes shows the change first: the first call returns the file it would create in
@@ -169,7 +181,8 @@ to write it. The tools that only read - describe, validate, look up, review - as
 | Tool | Purpose |
 | --- | --- |
 | `cs_create_test_set_csv` | CSV for the portal's Evaluation import, optionally suggested from the workspace |
-| `cs_list_test_sets`, `cs_run_evaluation`, `cs_get_evaluation_run`, `cs_list_evaluation_runs` | Power Platform API evaluations with pass/fail summaries |
+| `cs_list_test_sets`, `cs_run_evaluation`, `cs_get_evaluation_run`, `cs_list_evaluation_runs` | Power Platform API evaluations with pass/fail summaries; a run can sign in as a user profile (`mcsConnectionId`) and bind each connector tool to a connection (`toolsConnections`) |
+| `cs_download_evaluation_snapshot` | the agent content a run was scored against, as a zip, for comparing with the workspace now (unverified live) |
 | `cs_chat` | one utterance to the published agent (DirectLine or SDK), multi-turn via `conversationId` |
 | `cs_run_conversation_tests` | YAML test file of utterances + expectations, run through `cs_chat` |
 

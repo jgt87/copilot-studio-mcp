@@ -1,7 +1,7 @@
 /**
  * Tenant administration (Power Platform admin centre).
  *
- * One entry per command; the flags come from `pac admin: tenant administration <command> help` on pac 2.11.2.
+ * One entry per command; the flags come from `pac admin: tenant administration <command> help` on pac 2.12.2.
  */
 import { ASYNC, ENV, SOLUTION_EXPORT, type PacCommandSpec } from "../pacParams.js";
 
@@ -200,6 +200,7 @@ export const SPECS: PacCommandSpec[] = [
     params: {
       name: { flag: "--name", type: "string", description: "Environment name" },
       region: { flag: "--region", type: "string", description: "Region (default unitedstates)" },
+      macroRegion: { flag: "--macro-region", type: "string", values: ["asia-pacific", "emea", "eu-efta", "europe-uk", "north-america", "the-americas"], description: "Macro-region id instead of a region, for tenants with Advanced Data Residency (pac 2.12)" },
       type: { flag: "--type", type: "string", required: true, description: "Production, Sandbox, Trial, Developer or Teams" },
       currency: { flag: "--currency", type: "string", description: "Currency (default USD)" },
       language: { flag: "--language", type: "string", description: "Language (default English)" },
@@ -208,6 +209,11 @@ export const SPECS: PacCommandSpec[] = [
       securityGroupId: { flag: "--security-group-id", type: "string", description: "Entra security group id (required for a Teams environment)" },
       user: { flag: "--user", type: "string", description: "User to assign to the environment (object id or UPN)" },
       inputFile: { flag: "--input-file", type: "string", description: "JSON file with the arguments" },
+      enableDevTools: { flag: "--enable-dev-tools", type: "boolean", description: "(Preview) X++ developer tooling; Finance & Operations and Project Operations templates only, ignored otherwise" },
+      enableDemoData: { flag: "--enable-demo-data", type: "boolean", description: "(Preview) Install demo data; Finance & Operations and Project Operations templates only" },
+      enableTestModules: { flag: "--enable-test-modules", type: "boolean", description: "(Preview) Install the F&O test modules; Finance & Operations and Project Operations templates only" },
+      appVersion: { flag: "--app-version", type: "string", description: "(Preview) Pin the application build, e.g. 10.0.43; Finance & Operations and Project Operations templates only" },
+      platformVersion: { flag: "--platform-version", type: "string", description: "(Preview) Pin the platform build, e.g. 7.0.7256; needs appVersion" },
       ...ASYNC,
     },
     mutating: true,

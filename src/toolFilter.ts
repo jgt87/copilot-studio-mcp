@@ -10,7 +10,7 @@
  * of characters. The allow-list applies first (empty means everything), then
  * the deny-list. Presets and globs can be mixed: `CPS_TOOLS=core,cs_admin_*`.
  *
- * Why presets exist: the full list is 142 tools and about 50k tokens of schema
+ * Why presets exist: the full list is 146 tools and about 50k tokens of schema
  * before any work starts. A large model copes; a smaller one spends most of its
  * context on the menu and picks worse from it. `core` is the agent-building
  * loop and nothing else, and `cs_pac` is still there for anything it leaves out.
@@ -79,7 +79,7 @@ export const TOOL_PRESETS: Record<string, string[]> = {
   ],
 
   /** Tenant administration, for a session running as the admin account. */
-  admin: ["cs_init", "cs_guide", "cs_set_tool_preset", "cs_admin_*", "cs_backup_tenant", "cs_list_auth_profiles", "cs_list_environments", "cs_login", "cs_login_status", "cs_*_org_agent*", "cs_job_status", "cs_pac"],
+  admin: ["cs_init", "cs_guide", "cs_set_tool_preset", "cs_admin_*", "cs_backup_tenant", "cs_list_auth_profiles", "cs_list_environments", "cs_list_agents", "cs_login", "cs_login_status", "cs_*_org_agent*", "cs_*_connector_consent_bypass", "cs_quarantine_agent", "cs_reassign_agent_owner", "cs_job_status", "cs_pac"],
 
   /** Everything about moving solutions between environments. */
   solutions: ["cs_init", "cs_guide", "cs_set_tool_preset", "cs_list_solutions", "cs_describe_solution", "cs_*_solution", "cs_list_connections", "cs_list_flows", "cs_bind_flow_connection", "cs_set_flow_state", "cs_snapshot_environment", "cs_compare_*", "cs_job_status", "cs_pac"],

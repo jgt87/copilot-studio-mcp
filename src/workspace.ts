@@ -205,6 +205,7 @@ function readTopics(root: string): ComponentInfo[] {
       triggerPhrases: Array.isArray(intent.triggerQueries) ? intent.triggerQueries : [],
       actionKinds: actions.map((a) => a?.kind).filter(Boolean),
       actionCount: actions.length,
+      modelDescription: typeof d.modelDescription === "string" ? d.modelDescription : null,
     };
   });
 }

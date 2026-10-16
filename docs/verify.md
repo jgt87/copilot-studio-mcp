@@ -143,3 +143,54 @@ production environment:
 
 `cs_delete_agent` with `confirm: true`, or delete them in the portal. Worth doing before anything
 else on this list.
+
+---
+
+## Added 2026-09-21: new Power Platform API wrappers, all unverified live
+
+Written from the published reference (April to July 2026 additions to the `copilotstudio`
+namespace), never called against a tenant. Each is one call; a 200 with the expected shape closes
+the item, and the response should be recorded as a fixture.
+
+1. `cs_run_evaluation` with `mcsConnectionId` (the user's Copilot Studio connection GUID from
+   Power Automate > Connections) on an agent with authenticated knowledge: the run should answer
+   where an anonymous run says it cannot. Then with `toolsConnections` binding one connector tool.
+2. `cs_download_evaluation_snapshot` for a finished run: a zip lands beside the workspace. Note
+   what the zip contains (whole workspace layout, or something else), so the tool description can
+   say it.
+3. `cs_get_connector_consent_bypass` as a maker, then as an admin: does the read need the admin
+   role too? The 403 hint claims a maker can read it, which is a guess.
+4. `cs_set_connector_consent_bypass` dry run, then `confirm` on a throwaway agent, then the read
+   again. Check that the response echoes `adminConsentBypass`; the code treats an empty reply as
+   acceptance.
+5. `cs_download_channel_manifest` on an agent published to Teams: the zip should hold
+   `manifest.json` plus two icons. Then with `includeAgentSchema: true`. Then on an agent not
+   published to the channel, to see whether the 404 hint is right.
+
+Also from the same day: the dependency move to zod 4 changed the JSON Schema the server emits for
+every tool (draft-07 `$schema` marker, no `additionalProperties: false` on nested objects,
+`definitions` for shared shapes). Worth one `scripts/routing-eval.mjs --repeat 3` to confirm the
+routing score did not move.
+
+## Added 2026-10-17: YAML checks and the two pac copilot-studio wrappers
+
+The new `cs_validate` checks were tested against Microsoft's templates and our fixtures, not against
+a real clone. A clone with global variables, an adaptive card, a connector tool and a flow would
+settle the following:
+
+1. **Global variable file shape.** `cs_validate` now accepts the flat file (`name`, `aIVisibility`,
+   `scope`, `defaultValue`) that Microsoft's template uses, where the schema wants a nested
+   `variable`. Clone an agent that has a global variable and compare its `variables/*.mcs.yml`
+   with what `cs_add_variable` writes. Then `cs_add_variable` + `cs_push confirm` on a throwaway
+   agent: the variable should appear in the portal.
+2. **Knowledge references in a search node.** `searchKnowledge` with `sources` writes
+   `<agent>.topic.<Stem>` (Microsoft's authoring skill), but Microsoft's
+   `conversation-init` template writes `<agent>.knowledge.<stem>`. One of them is wrong. A clone of
+   an agent with a "search specific knowledge sources" node shows which.
+3. **SetVariable literals.** The guide now says a value without `=` is stored as text. Push a topic
+   with `value: Topic.X` and look at the node in the portal.
+4. **No false positives on a real clone.** Run `cs_validate` on a few cloned agents. Every new
+   warning should be a real finding; a false one is a bug, since `cs_validate` gates `cs_push`.
+5. **`cs_reassign_agent_owner`** (pac `copilot-studio reassign-copilot-agent`, preview): dry run,
+   then `confirm` on a throwaway agent, as an admin. **`cs_get_test_set`**: read one test set and
+   check the output carries the test cases.

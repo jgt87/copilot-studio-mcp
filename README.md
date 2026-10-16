@@ -264,7 +264,12 @@ that change the environment show a dry run first.
    phrases, private knowledge with no authentication, secrets in files. Each finding names the rule
    and the fix. `cs_validate` then checks every file against the authoring schema (744 definitions)
    and across files: connection references that nothing binds, catalog operations that do not
-   exist, redirects to topics that are not there.
+   exist, redirects to topics that are not there. It also blocks on the mistakes that a push
+   accepts without complaint and then stores wrongly: merge-conflict markers left by a pull (the
+   push keeps only the text before them), leftover `<AGENT_SCHEMA>` placeholders, file and schema
+   names pac rejects, and more than 200 trigger phrases. It warns about text cut off by an
+   unquoted ` #`, nodes after an end node, formulas missing their `=`, adaptive cards without a
+   submit action, and topic names with a period, which stop the solution from exporting.
 7. **Push.** `cs_push confirm=true` is the portal's Save: the draft agent now shows your topics,
    knowledge and tools. The dry run runs validation and the quick drift check first, and the push
    is refused when a colleague changed the same component in the portal since your last pull.
@@ -763,12 +768,13 @@ Permissions for your own app registration (Entra ID > App registrations > API pe
 | Used by | API to pick in Entra | Permission | Delegated or application | Notes |
 | --- | --- | --- | --- | --- |
 | `cs_chat` (transport `sdk`, Entra-SSO agents) | **Power Platform API** (app id `8578e004-a5c6-46e7-913e-12f58912df43`) | `CopilotStudio.Copilots.Invoke` | Delegated is what this server uses. An application permission of the same name exists for confidential clients (Microsoft 365 Agents SDK); not used here. | Admin consent is normally required. Redirect URI `http://localhost` (Mobile and desktop applications). |
-| `cs_list_test_sets`, `cs_run_evaluation`, `cs_get_evaluation_run`, `cs_list_evaluation_runs` | **Power Platform API** | Token scope `https://api.powerplatform.com/.default`. The evaluation endpoints declare only `.default`; the permission reference has no finer-grained evaluation permission. | Delegated only. Power Platform API has no application permissions; service principals get access through RBAC roles instead. | Verified with the first-party id by Microsoft's own tooling. Not yet verified with a custom registration; if calls return 403, the signed-in user needs maker access to the agent. |
+| `cs_list_test_sets`, `cs_run_evaluation`, `cs_get_evaluation_run`, `cs_list_evaluation_runs`, `cs_download_evaluation_snapshot` | **Power Platform API** | Token scope `https://api.powerplatform.com/.default`. The evaluation endpoints declare only `.default`; the permission reference has no finer-grained evaluation permission. | Delegated only. Power Platform API has no application permissions; service principals get access through RBAC roles instead. | Verified with the first-party id by Microsoft's own tooling. Not yet verified with a custom registration; if calls return 403, the signed-in user needs maker access to the agent. |
 | `cs_list_environments`, automatic Dataverse URL lookup, `cs_list_connectors`, `cs_describe_connector`, the connection lookup in `cs_bind_flow_connection` | **PowerApps Service** (app id `475226c6-020e-4fb2-8a90-7a972cbfc1d4`) | `User` ("Access the Power Apps Service API") | Delegated. | Calls the BAP environments API (`api.bap.microsoft.com`), the connector registry and the connections list (`api.powerapps.com`). Listing connections shows every one in the environment the signed-in user can see, including other people's; binding one makes the flow run as that connection's owner. |
 | `cs_list_agents` (via `dataverse`), `cs_publish` (via `dataverse`), the publisher and solution lookup that `cs_create_agent` offers as choices, authentication-mode detection in `cs_chat`, `cs_check_drift` (quick mode), the drift preflight in `cs_push`, the component stamps recorded by `cs_clone_agent` / `cs_pull` / `cs_push`, the flow tools (`cs_list_flows`, `cs_get_flow`, `cs_create_flow`, `cs_update_flow`, `cs_set_flow_state`, `cs_delete_flow`, and the Dataverse half of `cs_bind_flow_connection`) and the transcript tools (`cs_list_transcripts`, `cs_get_transcript`, `cs_summarize_transcripts`, `cs_test_set_from_transcripts`) | **Dynamics CRM** (Dataverse, app id `00000007-0000-0000-c000-000000000000`) | `user_impersonation` | Delegated. There is no application permission; server-to-server access to Dataverse means an **application user** with a security role in each environment. | The user still needs a Dataverse security role that can read and publish bots (System Customizer or a Copilot Studio maker role). The drift checks only read the `bot` and `botcomponent` tables, which every maker role can read; they never write to Dataverse. `cs_create_agent` reads `publishers` (and the publisher of a named solution) only to offer real prefixes instead of a guess; failing that read costs the choices, not the tool. The transcript tools read `conversationtranscript`, which holds **what users actually said to the agent**: a more sensitive table than the rest, so the signed-in user needs a role that grants read on it, and results should be treated as customer data. When a workspace has no Dataverse URL in its sync metadata the URL is looked up through the PowerApps Service permission above. |
 | `cs_list_flow_runs`, `cs_get_flow_run`, `cs_run_flow`, `cs_explain_flow_run`, `cs_compare_flow_runs`, `cs_analyze_flow_health` | **Microsoft Flow** (Power Automate service, app id `7df0a125-d3be-4c96-aa54-591f83ff541c`) | `User` (token scope `https://service.flow.microsoft.com/.default`, override with `CPS_FLOW_SCOPE`) | Delegated. | A separate resource from Dataverse and the Power Platform API, so it needs its own consent: sign in with `cs_login scope='flow'`. The signed-in user must be an owner or co-owner of the flow. Endpoints and scope are taken from the service the Power Automate portal calls and are unverified against a tenant. The diagnostic tools also follow the SAS-signed content links the service returns for an action's inputs and outputs; those are fetched **without** the bearer token, because they carry their own signature, and they expire after a few days. |
 | `cs_list_org_agents`, `cs_get_org_agent` | **Microsoft Graph** (app id `00000003-0000-0000-c000-000000000000`) | `CopilotPackages.Read.All` (override the scope with `CPS_GRAPH_SCOPE`) | Delegated is what this server uses; an application permission of the same name exists for reads. | The Microsoft 365 agent catalogue, a different resource again: sign in with `cs_login scope='graph'`. **Requires a Microsoft Agent 365 licence** and is global-cloud only (no GCC, DoD or 21Vianet). Reads `/v1.0/copilot/admin/catalog/packages`. Unverified against a live tenant. |
 | `cs_block_org_agent`, `cs_reassign_org_agent` | **Microsoft Graph** | `CopilotPackages.ReadWrite.All` (override with `CPS_GRAPH_WRITE_SCOPE`) | Delegated only. Microsoft offers **no application permission** for these two actions. | Same licence and cloud limits as above; sign in with `cs_login scope='graph_write'`. These exist only on `/beta`, so they are pinned there whatever version a read used. Blocking is tenant-wide and takes effect for every user at once. Unverified against a live tenant. |
+| `cs_get_connector_consent_bypass`, `cs_set_connector_consent_bypass`, `cs_download_channel_manifest` | **Power Platform API** | Token scope `https://api.powerplatform.com/.default`; the reference declares no finer permission. | Delegated only. | Same resource as the evaluations. Consent bypass is an admin setting on the agent, so the write (and possibly the read) needs a Power Platform or Copilot Studio admin role; the manifest download needs maker access and an agent published to the Microsoft 365 / Teams channel. All three follow the published reference and are unverified against a live tenant. |
 | `cs_chat` for no-auth or manual-auth agents (DirectLine) | none | none | not applicable | The DirectLine token endpoint of a published agent is anonymous. |
 | `pac` interactive sign-in | none | none | not applicable | Microsoft's own app; `pac auth create --environment <id>`. |
 
@@ -803,7 +809,7 @@ All environment variables are optional:
 
 ### Running on a smaller model
 
-The full tool list is 142 tools, about **50k tokens of schema** before any work starts. A frontier
+The full tool list is 148 tools, about **50k tokens of schema** before any work starts. A frontier
 model copes; a smaller one spends most of its context on the menu and chooses worse from it. Set
 `CPS_TOOLS` to a preset in the server's environment, or let the user choose during the session:
 `cs_init` returns a `toolPresets` block with the question, the option table and a live count per
@@ -811,10 +817,10 @@ preset, and `cs_set_tool_preset` applies the answer.
 
 | Preset | Tools | When to use it |
 | --- | --- | --- |
-| `full` (the default) | 142 | everything; a large model, or you do not know yet what the task needs |
+| `full` (the default) | 148 | everything; a large model, or you do not know yet what the task needs |
 | `core` | 34 | build or change one agent and get it live: the usual choice |
 | `authoring` | 25 | write and check files only; no sign-in, nothing reaches an environment |
-| `admin` | 44 | tenant administration as the admin account, plus `cs_backup_tenant` |
+| `admin` | 49 | tenant administration as the admin account, plus `cs_backup_tenant` |
 | `solutions` | 25 | pull, deploy and compare solutions, and bind the flows an import left switched off |
 
 Nothing is removed: a preset only changes which tools are *offered*, and `cs_init`, `cs_guide`,

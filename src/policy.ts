@@ -37,6 +37,7 @@ const BESPOKE_ALWAYS_WRITES = [
   "cs_admin_assign_users", // a roster of security-role grants in one environment
   "cs_block_org_agent", // blocks the agent for every user in the tenant
   "cs_reassign_org_agent", // changes package ownership in the M365 catalogue
+  "cs_set_connector_consent_bypass", // admin switch on the agent: users stop being asked to consent to its connectors
 ] as const;
 
 // Tenant administration writes (pac admin ...) are classified from PAC_COMMANDS below,

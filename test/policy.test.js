@@ -46,10 +46,10 @@ test("the environment-write list covers the pac wrappers that mutate, and nothin
     assert.ok(CONDITIONAL_WRITE_TOOLS.has(name), `${name} writes only for some inputs and must stay usable in read-only mode`);
     assert.ok(!ENVIRONMENT_WRITE_TOOLS.has(name));
   }
-  for (const name of ["cs_push", "cs_publish", "cs_deploy_solution", "cs_run_evaluation", "cs_import_solution", "cs_delete_agent", "cs_delete_solution", "cs_create_solution", "cs_deploy_pipeline", "cs_create_connection", "cs_quarantine_agent"]) {
+  for (const name of ["cs_push", "cs_publish", "cs_deploy_solution", "cs_run_evaluation", "cs_import_solution", "cs_delete_agent", "cs_delete_solution", "cs_create_solution", "cs_deploy_pipeline", "cs_create_connection", "cs_quarantine_agent", "cs_set_connector_consent_bypass"]) {
     assert.ok(ENVIRONMENT_WRITE_TOOLS.has(name), `${name} must be an environment write`);
   }
-  for (const name of ["cs_validate", "cs_add_topic", "cs_edit_tool", "cs_describe_workspace", "cs_check_drift", "cs_review_agent", "cs_guide", "cs_pull", "cs_clone_agent", "cs_env_list"]) {
+  for (const name of ["cs_validate", "cs_add_topic", "cs_edit_tool", "cs_describe_workspace", "cs_check_drift", "cs_review_agent", "cs_guide", "cs_pull", "cs_clone_agent", "cs_env_list", "cs_get_connector_consent_bypass", "cs_download_channel_manifest", "cs_download_evaluation_snapshot"]) {
     assert.ok(!ENVIRONMENT_WRITE_TOOLS.has(name), `${name} does not change an environment and must stay available in read-only mode`);
   }
 });
