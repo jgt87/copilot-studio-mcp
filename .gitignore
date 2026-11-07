@@ -31,3 +31,4 @@ runbooks/cases/*
 !runbooks/cases/.gitkeep
 runbooks/samples/*
 !runbooks/samples/.gitkeep
+.claude/
