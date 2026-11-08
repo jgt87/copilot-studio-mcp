@@ -1,3 +1,26 @@
+# Copy to the project root as .gitattributes (docs/12-line-endings.md).
+# LF in the repository and in the working tree, whatever core.autocrlf says.
 * text=auto eol=lf
+
+# cmd.exe needs CRLF: with LF it misreads labels and GOTO targets.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+# Visual Studio rewrites these with CRLF; keep them that way to avoid churn.
+*.sln text eol=crlf
+
+# Binary: never converted, never diffed as text.
 *.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
 *.zip binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.mp4 binary
+*.webm binary
+*.exe binary
+*.dll binary
