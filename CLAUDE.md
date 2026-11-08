@@ -357,6 +357,7 @@ came to be tagged with nothing behind it.
 
 ```sh
 npm version 0.1.4 --no-git-tag-version   # package.json + package-lock.json together; then server.json by hand (twice)
+                                         # CHANGELOG.md: [Unreleased] entries move under ## [0.1.4] - <date>, plus its link line
 npm run build                            # VERSION is read from package.json, so rebuild
 npm test && node scripts/smoke.mjs       # prepublishOnly runs the tests again; fail here, not at the registry
 git commit -m "0.1.4"                    # bare version number: matches v0.1.0 .. v0.1.3
@@ -375,7 +376,8 @@ mcp-publisher publish                    # MCP Registry entry io.github.jgt87/co
   rejected). A release that skips this leaves the Marketplace on the previous build.
 - `src/tools/shared.ts` reads `VERSION` from `package.json`, so never write a version anywhere
   else. `docs/CODE_REVIEW.md` names 0.1.1 on purpose: it is a dated record, not a live reference.
-- Write the notes from `git log <previous tag>..<tag>`. House style, set by `v0.1.1`: a lede
+- Write the notes from the version's `CHANGELOG.md` section, checked against
+  `git log <previous tag>..<tag>`; the 0.1.0 to 0.1.8 entries are those releases' notes. House style, set by `v0.1.1`: a lede
   saying what kind of release it is and who should upgrade, then `## Fixed` / `## Added` /
   `## Changed` with each bullet leading on the user-visible symptom in bold rather than the
   commit subject, and a closing line with the test count and what was *not* verified live.
@@ -401,6 +403,10 @@ update it in the same commit:
 - **Agent settings**: the README table "Agent settings this server can write" is the user-facing
   map of what `cs_update_agent` writes.
 - **Registry**: `server.json` mirrors `package.json` (`test/registry.test.js` guards it).
+- **Changelog**: every user-visible change adds a line under `## [Unreleased]` in `CHANGELOG.md`
+  (Fixed / Added / Changed, leading on the symptom in bold) in the same change.
+  `test/changelog.test.js` fails when the newest released heading is not the `package.json`
+  version. It ships in the tarball, so npm readers see it from the next release.
 - **Docs ship in the tarball**: `docs/` is in the package `files`, and the README links to
   `docs/tools.md` and `docs/flows.md` through `cdn.jsdelivr.net/npm/copilot-studio-mcp/...`, which
   mirrors npm, so the package page does not depend on the GitHub repo being public. A docs change
