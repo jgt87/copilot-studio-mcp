@@ -32,3 +32,6 @@ runbooks/cases/*
 runbooks/samples/*
 !runbooks/samples/.gitkeep
 .claude/
+
+# Agent lessons: machine-local (C:\Files\Apps\__CommonShared\agent)
+tasks/lessons.md
